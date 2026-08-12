@@ -182,6 +182,8 @@ py -m local_coding_agent `
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения;
 - [PROTOCOL.md](docs/PROTOCOL.md) — протокол общения с Ollama;
 - [ROADMAP.md](docs/ROADMAP.md) — этапы развития;
+- [ROADMAP_HISTORICAL.md](docs/ROADMAP_HISTORICAL.md) — историческая летопись M0–M6;
+- [AUDIT.md](docs/AUDIT.md) — аудит реализации;
 - [AGENTS.md](AGENTS.md) — правила работы с checkout.
 
 ## Проверка проекта

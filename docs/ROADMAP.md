@@ -1,81 +1,48 @@
 # Roadmap
 
-## M0 — project contract
+Дата: 2026-08-12.
 
-Статус: оформлено.
+Историческая летопись завершённых этапов (M0–M6) перенесена в [ROADMAP_HISTORICAL.md](ROADMAP_HISTORICAL.md). Этот файл — план вперёд, отсортированный по приоритету.
 
-- зафиксирована роль локальной модели;
-- описаны границы MVP;
-- описан tool-loop;
-- описаны проверки diff и test evidence;
-- зафиксированы результаты первичного теста Bonsai.
+Приоритеты согласованы с реализационным аудитом [AUDIT.md](AUDIT.md). Порядок — это оценка, а не обещание; номера аудита указаны в скобках.
 
-## M1 — Ollama adapter
+## R1 — Закрыть реализационные дыры безопасности и бюджета
 
-Статус: реализовано.
+Цель: вернуть инварианты «контекст ограничен allowlist» и «контекст ограничен лимитом токенов» к фактическому поведению.
 
-Цель: надёжно отправлять chat-запросы в Ollama.
+- ограничить `list_files` тем же allowlist, что `read_file`/`search_text` (AUDIT #1);
+- добавить кумулятивный контекстный бюджет поверх накопленных tool-results, а не только стартового envelope (AUDIT #3);
+- сделать `git` явным требованием в README или graceful fallback, когда его нет (AUDIT #2);
+- прерывать блокирующие вызовы (`model.chat`, `run_tests`) по cancellation (AUDIT #4).
 
-- UTF-8 transport;
-- '/api/chat';
-- model profile;
-- timeout;
-- 'think', 'num_ctx', 'num_predict';
-- нормализация ошибок;
-- получение '/api/ps' для диагностики loaded state.
+## R2 — Устойчивость и качество протокола
 
-## M2 — bounded tools
+Цель: убрать хрупкость, которая сейчас даёт `0%` loop reliability.
 
-Статус: реализовано.
+- пересмотреть строковую сверку evidence на структурную, не ослабляя анти-fabrication (AUDIT #5);
+- pre-read лимит для `search_text`, чтобы огромный allowlisted-файл не стал DoS (AUDIT #6);
+- убрать дублирование и O(n²) обрезки вывода (AUDIT #7);
+- закрыть обход duplicate-call guard через дефолт `path` в `list_files` (AUDIT #8);
+- пересмотреть case-insensitive allowlist на case-sensitive файловых системах (AUDIT #9).
 
-- 'read_file';
-- 'search_text';
-- 'propose_patch';
-- allowlisted 'run_tests';
-- path and output limits;
-- audit events.
+## R3 — Mediated apply
 
-## M3 — controller loop
+Цель: следующее крупное направление после закрытия R1/R2.
 
-Статус: реализовано.
+- применить patch к workspace только после отдельного подтверждения контроллера;
+- `apply_patch` остаётся недоступным локальной модели напрямую;
+- сохранить proposal-only как режим по умолчанию.
 
-- max turns;
-- duplicate-call guard;
-- tool-result correlation;
-- structured result parsing;
-- retry policy;
-- cancellation.
+## R4 — Повторный benchmark и evidence
 
-## M4 — validators
+Цель: получить ненулевые correctness/loop-reliability после R1/R2.
 
-Статус: реализовано.
+- повторить benchmark на тех же fixtures и параметрах;
+- зафиксировать новый runtime artifact;
+- пересмотреть shortlist только на основании внешнего oracle.
 
-- JSON Schema;
-- unified diff parser;
-- changed-file allowlist;
-- patch size limits;
-- check evidence;
-- clean failure states.
+## Вне MVP
 
-## M5 — model profiles and benchmark
-
-Статус: реализовано как измерительный этап; correctness gate моделей пока не пройден.
-
-- Bonsai profile;
-- Qwen coder profile;
-- comparable atomic task set;
-- latency and token metrics;
-- correctness score;
-- tool-loop reliability score.
-
-Добавлены профили исследованных GGUF, CLI `--benchmark`, внешний oracle в disposable fixture и JSON artifact. Первый запуск зафиксирован в [docs/BENCHMARK.md](BENCHMARK.md); он показал `0%` correctness и `0%` loop reliability у всех завершённых профилей, поэтому shortlist не считается доказанным рейтингом.
-
-## M6 — safe repository integration
-
-Статус: частично реализовано: proposal-only CLI, Ollama VRAM management, isolated benchmark fixture, persistent benchmark artifacts, protocol-facing repair slice, workspace applicability check и isolated allowlisted test process добавлены; mediated apply ещё впереди.
-
-- proposal-only default;
-- optional mediated apply;
-- isolated test process;
-- no implicit commit/push;
-- persistent run artifacts.
+- автоматические commit, push, публикация;
+- автономная разработка большой функции;
+- постоянная память локальной модели.
