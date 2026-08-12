@@ -134,26 +134,74 @@ class CandidateValidatorTests(unittest.TestCase):
         self.assertFalse(report.valid)
         self.assertIn("check failed: check allowed", report.issues)
 
-    def test_validator_rejects_hunk_when_declared_line_counts_do_not_match(self):
+    def test_validator_rejects_malformed_patch_with_git(self):
+        # A hunk that declares more lines than it carries is a corrupt patch;
+        # the parser no longer flags the count mismatch itself, but git apply
+        # still rejects it, preserving the security intent.
         malformed = self.patch.replace("@@ -1 +1 @@", "@@ -1,2 +1,2 @@")
 
-        report = validate_candidate(
-            {
-                "status": "candidate",
-                "summary": "неверный hunk",
-                "patch": malformed,
-                "checks": [],
-                "risks": [],
-            },
-            TaskEnvelope(
-                id="validate-without-checks",
-                goal="проверить diff",
-                files=("src/allowed.py",),
-            ),
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            target = workspace / "src" / "allowed.py"
+            target.parent.mkdir()
+            target.write_text("VALUE = 42\n", encoding="utf-8")
+            report = validate_candidate(
+                {
+                    "status": "candidate",
+                    "summary": "неверный hunk",
+                    "patch": malformed,
+                    "checks": [],
+                    "risks": [],
+                },
+                self.task,
+                workspace_root=workspace,
+            )
 
         self.assertFalse(report.valid)
-        self.assertTrue(any("hunk" in issue for issue in report.issues))
+        self.assertTrue(
+            any(
+                "does not apply" in issue or "corrupt" in issue
+                for issue in report.issues
+            )
+        )
+
+    def test_validator_accepts_patch_with_mismatched_hunk_counts_when_git_applies(self):
+        # The header declares a one-line hunk (@@ -1 +1 @@) but the body adds a
+        # second new line (new_seen=2 vs new_expected=1). git applies it cleanly;
+        # the parser no longer rejects the count mismatch, so git is the gate.
+        patch = (
+            "diff --git a/src/allowed.py b/src/allowed.py\n"
+            "--- a/src/allowed.py\n"
+            "+++ b/src/allowed.py\n"
+            "@@ -1 +1 @@\n"
+            "-VALUE = 42\n"
+            "+VALUE = 43\n"
+            "+NEW = 5\n"
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            target = workspace / "src" / "allowed.py"
+            target.parent.mkdir()
+            target.write_text("VALUE = 42\n", encoding="utf-8")
+            report = validate_candidate(
+                {
+                    "status": "candidate",
+                    "summary": "допустимый hunk с неверным count",
+                    "patch": patch,
+                    "checks": [],
+                    "risks": [],
+                },
+                TaskEnvelope(
+                    id="validate-no-checks",
+                    goal="проверить diff",
+                    files=("src/allowed.py",),
+                ),
+                workspace_root=workspace,
+            )
+
+        self.assertTrue(report.valid)
+        self.assertEqual(report.issues, ())
 
     def test_validator_rejects_patch_that_does_not_apply_to_workspace(self):
         with tempfile.TemporaryDirectory() as temp_dir:

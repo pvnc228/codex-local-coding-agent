@@ -137,7 +137,10 @@ class RepositoryToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ToolPolicyError, "allowlist"):
             tools.execute("propose_patch", {"patch": outside_patch})
 
-    def test_propose_patch_rejects_hunk_line_count_mismatch(self):
+    def test_propose_patch_rejects_malformed_corrupt_hunk(self):
+        # A hunk that declares more lines than it carries is a corrupt patch;
+        # the parser no longer flags the count mismatch itself, but git apply
+        # still rejects it, preserving the security intent.
         patch = (
             "diff --git a/src/allowed.py b/src/allowed.py\n"
             "--- a/src/allowed.py\n"
@@ -147,7 +150,7 @@ class RepositoryToolsTests(unittest.TestCase):
             "+VALUE = 43\n"
         )
 
-        with self.assertRaisesRegex(ToolPolicyError, "hunk"):
+        with self.assertRaisesRegex(ToolPolicyError, "corrupt|does not apply"):
             BoundedRepositoryTools(self.workspace, self.task).execute(
                 "propose_patch", {"patch": patch}
             )
