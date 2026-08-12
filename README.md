@@ -67,3 +67,27 @@ MVP должен принимать одну задачу и завершать�
 - 'failed' — инструмент или проверка завершились ошибкой.
 
 По умолчанию агент работает в режиме proposal-only: локальная модель предлагает diff, а контроллер применяет его только после валидации.
+
+## Локальный запуск
+
+Создай UTF-8 task envelope, например:
+
+~~~json
+{
+  "id": "read-one",
+  "goal": "прочитать разрешённый файл и вернуть результат",
+  "files": ["src/example.py"],
+  "context": "краткий контекст задачи",
+  "checks": [],
+  "constraints": [],
+  "acceptance": []
+}
+~~~
+
+Запусти proposal-only controller из корня проекта:
+
+~~~powershell
+py -m local_coding_agent --task task.json --workspace . --profile qwen2.5-1.5b
+~~~
+
+Доступны профили `qwen2.5-1.5b`, `qwen2.5-coder` и `bonsai-64k`. CLI не применяет patch, не запускает неразрешённые команды и не выполняет commit/push.

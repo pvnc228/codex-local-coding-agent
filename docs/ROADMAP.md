@@ -12,6 +12,8 @@
 
 ## M1 — Ollama adapter
 
+Статус: реализовано.
+
 Цель: надёжно отправлять chat-запросы в Ollama.
 
 - UTF-8 transport;
@@ -24,6 +26,8 @@
 
 ## M2 — bounded tools
 
+Статус: реализовано.
+
 - 'read_file';
 - 'search_text';
 - 'propose_patch';
@@ -32,6 +36,8 @@
 - audit events.
 
 ## M3 — controller loop
+
+Статус: реализовано.
 
 - max turns;
 - duplicate-call guard;
@@ -42,6 +48,8 @@
 
 ## M4 — validators
 
+Статус: реализовано.
+
 - JSON Schema;
 - unified diff parser;
 - changed-file allowlist;
@@ -51,6 +59,8 @@
 
 ## M5 — model profiles and benchmark
 
+Статус: частично реализовано: добавлены именованные профили; benchmark ещё впереди.
+
 - Bonsai profile;
 - Qwen coder profile;
 - comparable atomic task set;
@@ -59,6 +69,8 @@
 - tool-loop reliability score.
 
 ## M6 — safe repository integration
+
+Статус: частично реализовано: добавлен proposal-only CLI; mediated apply и persistent run artifacts ещё впереди.
 
 - proposal-only default;
 - optional mediated apply;
