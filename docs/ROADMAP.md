@@ -59,7 +59,7 @@
 
 ## M5 — model profiles and benchmark
 
-Статус: частично реализовано: добавлены именованные профили; benchmark ещё впереди.
+Статус: частично реализовано: добавлены именованные профили и проверяемая настройка context window; benchmark ещё впереди.
 
 - Bonsai profile;
 - Qwen coder profile;
@@ -70,7 +70,7 @@
 
 ## M6 — safe repository integration
 
-Статус: частично реализовано: добавлен proposal-only CLI; mediated apply и persistent run artifacts ещё впереди.
+Статус: частично реализовано: добавлены proposal-only CLI и Ollama VRAM management; mediated apply и persistent run artifacts ещё впереди.
 
 - proposal-only default;
 - optional mediated apply;

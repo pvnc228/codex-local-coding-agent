@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from local_coding_agent.cli import load_task_file
+from local_coding_agent.cli import build_parser, load_task_file
 
 
 class CliTests(unittest.TestCase):
@@ -26,6 +26,26 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(task.goal, "изменить текст")
         self.assertEqual(task.files, ("src/file.py",))
+
+    def test_cli_exposes_context_window_and_memory_controls(self):
+        args = build_parser().parse_args(
+            [
+                "--task",
+                "task.json",
+                "--num-ctx",
+                "16384",
+                "--unload-all",
+                "--vram-limit-bytes",
+                "1000000",
+                "--keep-model",
+                "bonsai-64k:latest",
+            ]
+        )
+
+        self.assertEqual(args.num_ctx, 16_384)
+        self.assertTrue(args.unload_all)
+        self.assertEqual(args.vram_limit_bytes, 1_000_000)
+        self.assertEqual(args.keep_model, ["bonsai-64k:latest"])
 
 
 if __name__ == "__main__":

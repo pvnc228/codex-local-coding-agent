@@ -28,6 +28,18 @@ class ModelProfile:
     num_predict: int = 256
     keep_alive: str = "10m"
     timeout_seconds: float = 30
+    max_context_length: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.num_ctx <= 0:
+            raise ValueError("num_ctx must be positive")
+        if self.max_context_length is not None:
+            if self.max_context_length <= 0:
+                raise ValueError("max_context_length must be positive")
+            if self.num_ctx > self.max_context_length:
+                raise ValueError(
+                    f"num_ctx={self.num_ctx} exceeds model context limit {self.max_context_length}"
+                )
 
 
 class Transport(Protocol):
@@ -94,6 +106,16 @@ class OllamaClient:
 
     def loaded_models(self) -> dict[str, Any]:
         return self._request_json("GET", "/api/ps")
+
+    def unload_model(self, model: str | None = None) -> dict[str, Any]:
+        target = model or self.profile.model
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError("model must be a non-empty string")
+        return self._request_json(
+            "POST",
+            "/api/generate",
+            {"model": target, "stream": False, "keep_alive": 0},
+        )
 
     def _request_json(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         body = None if payload is None else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

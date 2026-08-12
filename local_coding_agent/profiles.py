@@ -16,6 +16,7 @@ _PROFILES = {
         num_ctx=8192,
         num_predict=512,
         keep_alive="10m",
+        max_context_length=262_144,
     ),
     "qwen2.5-1.5b": ModelProfile(
         name="qwen2.5-1.5b",
@@ -25,6 +26,7 @@ _PROFILES = {
         num_ctx=4096,
         num_predict=256,
         keep_alive="10m",
+        max_context_length=32_768,
     ),
     "qwen2.5-coder": ModelProfile(
         name="qwen2.5-coder",
@@ -34,6 +36,7 @@ _PROFILES = {
         num_ctx=8192,
         num_predict=512,
         keep_alive="10m",
+        max_context_length=32_768,
     ),
 }
 

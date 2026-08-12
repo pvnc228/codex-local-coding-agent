@@ -91,3 +91,19 @@ py -m local_coding_agent --task task.json --workspace . --profile qwen2.5-1.5b
 ~~~
 
 Доступны профили `qwen2.5-1.5b`, `qwen2.5-coder` и `bonsai-64k`. CLI не применяет patch, не запускает неразрешённые команды и не выполняет commit/push.
+
+Размер контекстного окна можно задать явно, если он не превышает лимит выбранной модели:
+
+~~~powershell
+py -m local_coding_agent --task task.json --profile qwen2.5-coder --num-ctx 16384
+~~~
+
+Управление памятью Ollama:
+
+~~~powershell
+py -m local_coding_agent --unload-all
+py -m local_coding_agent --unload-model bonsai-64k:latest
+py -m local_coding_agent --vram-limit-bytes 5000000000 --keep-model qwen2.5:1.5b
+~~~
+
+`/api/ps` используется как источник фактического `size_vram`; выгрузка выполняется через `keep_alive: 0`. Защищённые модели не выгружаются автоматически, а если сами превышают бюджет, операция завершается ошибкой.

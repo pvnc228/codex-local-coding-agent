@@ -88,6 +88,19 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(transport.requests[0]["path"], "/api/ps")
         self.assertIsNone(transport.requests[0]["body"])
 
+    def test_unload_model_requests_zero_keep_alive(self):
+        transport = FakeTransport([(200, b'{"done":true}')])
+        client = OllamaClient(self.profile, transport=transport)
+
+        result = client.unload_model()
+
+        self.assertTrue(result["done"])
+        request = transport.requests[0]
+        self.assertEqual(request["method"], "POST")
+        self.assertEqual(request["path"], "/api/generate")
+        payload = json.loads(request["body"].decode("utf-8"))
+        self.assertEqual(payload, {"model": "qwen2.5:1.5b", "stream": False, "keep_alive": 0})
+
     def test_http_and_invalid_json_fail_as_normalized_ollama_errors(self):
         http_transport = FakeTransport([(503, b'{"error":"model unavailable"}')])
         client = OllamaClient(self.profile, transport=http_transport)
