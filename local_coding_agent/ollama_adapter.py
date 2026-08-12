@@ -107,6 +107,9 @@ class OllamaClient:
     def loaded_models(self) -> dict[str, Any]:
         return self._request_json("GET", "/api/ps")
 
+    def available_models(self) -> dict[str, Any]:
+        return self._request_json("GET", "/api/tags")
+
     def unload_model(self, model: str | None = None) -> dict[str, Any]:
         target = model or self.profile.model
         if not isinstance(target, str) or not target.strip():

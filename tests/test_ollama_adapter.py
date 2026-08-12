@@ -88,6 +88,17 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(transport.requests[0]["path"], "/api/ps")
         self.assertIsNone(transport.requests[0]["body"])
 
+    def test_available_models_uses_get_api_tags_and_returns_json(self):
+        transport = FakeTransport([(200, b'{"models":[{"name":"qwen2.5:1.5b"}]}')])
+        client = OllamaClient(self.profile, transport=transport)
+
+        result = client.available_models()
+
+        self.assertEqual(result["models"][0]["name"], "qwen2.5:1.5b")
+        self.assertEqual(transport.requests[0]["method"], "GET")
+        self.assertEqual(transport.requests[0]["path"], "/api/tags")
+        self.assertIsNone(transport.requests[0]["body"])
+
     def test_unload_model_requests_zero_keep_alive(self):
         transport = FakeTransport([(200, b'{"done":true}')])
         client = OllamaClient(self.profile, transport=transport)

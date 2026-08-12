@@ -59,7 +59,7 @@
 
 ## M5 — model profiles and benchmark
 
-Статус: частично реализовано: добавлены именованные профили и проверяемая настройка context window; benchmark ещё впереди.
+Статус: реализовано как измерительный этап; correctness gate моделей пока не пройден.
 
 - Bonsai profile;
 - Qwen coder profile;
@@ -68,9 +68,11 @@
 - correctness score;
 - tool-loop reliability score.
 
+Добавлены профили исследованных GGUF, CLI `--benchmark`, внешний oracle в disposable fixture и JSON artifact. Первый запуск зафиксирован в [docs/BENCHMARK.md](BENCHMARK.md); он показал `0%` correctness и `0%` loop reliability у всех завершённых профилей, поэтому shortlist не считается доказанным рейтингом.
+
 ## M6 — safe repository integration
 
-Статус: частично реализовано: добавлены proposal-only CLI и Ollama VRAM management; mediated apply и persistent run artifacts ещё впереди.
+Статус: частично реализовано: proposal-only CLI, Ollama VRAM management, isolated benchmark fixture и persistent benchmark artifacts добавлены; mediated apply и isolated test process ещё впереди.
 
 - proposal-only default;
 - optional mediated apply;

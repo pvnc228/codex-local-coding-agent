@@ -105,10 +105,22 @@ codex-ornith-9b
 
 ## Что ещё не сделано
 
-- модели Qwen3-Coder, Devstral и Ternary Bonsai ещё не импортированы в Ollama;
-- не добавлены новые model profiles в код проекта;
-- не проведён единый benchmark на одинаковом наборе задач;
-- tool-call качество и стабильность JSON для каждого кандидата ещё не измерены;
-- Gemma 4 нужно либо возобновить до полного файла, либо очистить оставшиеся partial-файлы отдельным решением.
+- Gemma 4 нужно либо возобновить до полного файла, либо очистить оставшиеся partial-файлы отдельным решением;
+- Ternary Bonsai требует отдельного решения по несовместимому с текущим Ollama GGUF;
+- benchmark повторяется после исправления protocol-facing дефектов, потому что первый запуск не дал модели с ненулевыми correctness и loop-reliability gates.
 
-До проведения benchmark нельзя считать shortlist доказанным рейтингом моделей. Сейчас это воспроизводимый набор кандидатов и проверенный способ подключения GGUF к Ollama.
+Shortlist теперь имеет runtime evidence, но не считается доказанным рейтингом: первый benchmark измерил совместимость с текущим controller contract, а не общее coding-качество.
+
+## Runtime update: 2026-08-12
+
+В Ollama успешно импортированы и получили отдельные имена:
+
+- `codex-qwen3-coder-30b:latest` — `qwen3moe`, `30.5B`, `IQ2_M`, `10,169,510,074` bytes;
+- `codex-devstral-small-2-24b:latest` — `mistral3`, `23.6B`, `Q4_K_M`, `14,334,447,131` bytes;
+- `codex-ornith-9b:latest` — `qwen35`, `9.0B`, `Q4_K_M`, `5,629,109,078` bytes.
+
+Фактические capabilities первых трёх импортов — только `completion`; native `tools` Ollama для них не заявляет. У `bonsai-64k:latest` capabilities включают `tools`, `thinking`, `vision`. Это различие сохранено в benchmark artifact.
+
+Импорт `Ternary-Bonsai-27B-Q2_0.gguf` не завершился: после копирования и проверки файла Ollama сообщил `tensor "output.weight" size overflow`. Manifest в `/api/tags` не появился, поэтому модель не считается установленной.
+
+Первый единый benchmark и его ограничения задокументированы в [docs/BENCHMARK.md](BENCHMARK.md). Он зафиксировал runtime evidence, но не подтвердил ни одного победителя: все завершённые профили набрали `0%` внешней correctness и `0%` tool-loop reliability.

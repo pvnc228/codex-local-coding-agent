@@ -10,6 +10,7 @@
 
 - отправлять запросы в Ollama через `/api/chat` в UTF-8;
 - работать с профилями `bonsai-64k`, `qwen2.5-coder` и `qwen2.5-1.5b`;
+- запускать единый proposal-only benchmark для Bonsai, Qwen coder и импортированных research-профилей;
 - ограничивать модель явным списком файлов и размером контекста;
 - предоставлять только bounded tools:
   - `list_files`;
@@ -120,6 +121,22 @@ py -m local_coding_agent `
 | `qwen2.5-coder` | `qwen2.5-coder:latest` | 8192 | 32768 |
 | `bonsai-64k` | `bonsai-64k:latest` | 8192 | 262144 |
 
+Исследовательские профили: `ornith-9b`, `qwen3-coder-30b`, `devstral-small-2-24b`, `ternary-bonsai-27b`. Последний профиль оставлен для availability check, но GGUF пока не импортируется в текущем Ollama.
+
+## Benchmark моделей
+
+Запуск из корня workspace:
+
+```powershell
+py -m local_coding_agent `
+  --benchmark `
+  --num-ctx 4096 `
+  --benchmark-timeout-seconds 600 `
+  --benchmark-output .codex-run/benchmarks/latest.json
+```
+
+Можно выбрать один профиль повторяемым параметром `--benchmark-model`. Результат сохраняется как UTF-8 JSON с audit trail, patch proposals, внешним correctness oracle и Ollama token/latency metrics. Методика и первый runtime result находятся в [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
 Размер окна можно изменить параметром `--num-ctx`. Контроллер отклоняет нулевые, отрицательные и превышающие лимит модели значения.
 
 ## Управление VRAM Ollama
@@ -183,4 +200,4 @@ git diff --check
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Следующие крупные направления — benchmark нескольких моделей, mediated apply после отдельного подтверждения и persistent run artifacts.
+Следующие крупные направления — исправление protocol-facing benchmark blockers, повторный quality gate, mediated apply после отдельного подтверждения и isolated test process.
