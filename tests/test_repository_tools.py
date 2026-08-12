@@ -119,6 +119,21 @@ class RepositoryToolsTests(unittest.TestCase):
                 "propose_patch", {"patch": patch}
             )
 
+    def test_propose_patch_rejects_valid_diff_with_wrong_file_context(self):
+        patch = (
+            "diff --git a/src/allowed.py b/src/allowed.py\n"
+            "--- a/src/allowed.py\n"
+            "+++ b/src/allowed.py\n"
+            "@@ -1 +1 @@\n"
+            "-VALUE = 41\n"
+            "+VALUE = 43\n"
+        )
+
+        with self.assertRaisesRegex(ToolPolicyError, "does not apply"):
+            BoundedRepositoryTools(self.workspace, self.task).execute(
+                "propose_patch", {"patch": patch}
+            )
+
     def test_run_tests_executes_only_an_exactly_allowlisted_command(self):
         command = f'"{sys.executable}" -B -c "print(\'check ok\')"'
         task = TaskEnvelope(

@@ -231,6 +231,7 @@ class Controller:
                 max_patch_bytes=self.max_patch_bytes,
                 max_patch_files=self.max_patch_files,
                 observed_checks=observed_checks,
+                workspace_root=self.workspace_root,
             )
             result["validation"] = {
                 "valid": report.valid,

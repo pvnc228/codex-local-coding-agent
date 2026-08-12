@@ -53,3 +53,5 @@ Benchmark запускает один и тот же набор из четыр�
 - явный tool contract для полного diff, реальных переводов строк и запрета placeholders/literal `\\n`.
 
 После repair suite вырос до `42/42`. Повторный Ornith smoke остался на `0%` correctness и `0%` loop reliability: malformed hunk counts теперь отклоняются policy layer до внешнего oracle, а один формально считанный patch всё ещё не проходит `git apply`. Это подтверждает, что исправлен safety/protocol seam, но quality gate модели не пройден.
+
+Applicability run добавил `git apply --check` без записи в workspace для `propose_patch` и final candidate validation. Suite вырос до `44/44`; Ornith v4 сохранил `0%/0%`, при этом wrong-context proposals теперь отклоняются bounded tool до выдачи результата.

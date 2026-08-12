@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .task import TaskEnvelope
-from .validators import parse_unified_diff
+from .validators import check_patch_applies, parse_unified_diff
 
 
 class ToolPolicyError(RuntimeError):
@@ -191,6 +191,9 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("patch is not a unified diff")
         if len(paths) > self.max_patch_files:
             raise ToolPolicyError(f"patch exceeds max_patch_files={self.max_patch_files}")
+        applies, detail = check_patch_applies(self.workspace_root, patch)
+        if not applies:
+            raise ToolPolicyError(f"patch does not apply cleanly: {detail}")
         return {"patch": patch, "files": sorted(paths)}
 
     def _patch_path(self, raw_path: str, *, prefix: str | None) -> str | None:

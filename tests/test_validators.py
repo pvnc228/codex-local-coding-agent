@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from local_coding_agent.task import TaskEnvelope
 from local_coding_agent.validators import validate_candidate
@@ -96,6 +98,31 @@ class CandidateValidatorTests(unittest.TestCase):
 
         self.assertFalse(report.valid)
         self.assertTrue(any("hunk" in issue for issue in report.issues))
+
+    def test_validator_rejects_patch_that_does_not_apply_to_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            target = workspace / "src" / "allowed.py"
+            target.parent.mkdir()
+            target.write_text("VALUE = 42\n", encoding="utf-8")
+            report = validate_candidate(
+                {
+                    "status": "candidate",
+                    "summary": "неверный контекст",
+                    "patch": self.patch.replace("VALUE = 42", "VALUE = 41"),
+                    "checks": [],
+                    "risks": [],
+                },
+                TaskEnvelope(
+                    id="validate-applicability",
+                    goal="проверить применимость",
+                    files=("src/allowed.py",),
+                ),
+                workspace_root=workspace,
+            )
+
+        self.assertFalse(report.valid)
+        self.assertTrue(any("does not apply" in issue for issue in report.issues))
 
 
 if __name__ == "__main__":

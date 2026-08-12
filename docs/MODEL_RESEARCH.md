@@ -126,3 +126,5 @@ Shortlist теперь имеет runtime evidence, но не считается
 Первый единый benchmark и его ограничения задокументированы в [docs/BENCHMARK.md](BENCHMARK.md). Он зафиксировал runtime evidence, но не подтвердил ни одного победителя: все завершённые профили набрали `0%` внешней correctness и `0%` tool-loop reliability.
 
 После protocol repair повторный Ornith smoke также остался на `0%/0%`: теперь malformed hunk counts отклоняются до применения, поэтому этот результат нельзя трактовать как регрессию безопасности. Следующий benchmark-блок должен добавить проверку применимости patch к фактическому disposable workspace.
+
+Applicability slice добавлен и проверен на Ornith v4: `git apply --check` выполняется без записи в workspace на границах `propose_patch` и final candidate. Quality gate по-прежнему не пройден (`0% correctness`, `0% loop reliability`), но wrong-context diff больше не доходит до внешнего применения.

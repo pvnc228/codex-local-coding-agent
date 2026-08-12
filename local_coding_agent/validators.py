@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 from .task import TaskEnvelope
@@ -23,6 +26,7 @@ def validate_candidate(
     max_patch_bytes: int = 32_000,
     max_patch_files: int = 2,
     observed_checks: Mapping[str, Mapping[str, Any]] | None = None,
+    workspace_root: str | Path | None = None,
 ) -> ValidationReport:
     issues: list[str] = []
     changed_files: tuple[str, ...] = ()
@@ -55,6 +59,10 @@ def validate_candidate(
         for path in changed_files:
             if path.casefold() not in allowed:
                 issues.append(f"patch file is outside task allowlist: {path}")
+        if workspace_root is not None and not issues:
+            applies, detail = check_patch_applies(workspace_root, patch)
+            if not applies:
+                issues.append(f"patch does not apply cleanly: {detail}")
 
     expected_checks = set(task.checks)
     seen_checks: set[str] = set()
@@ -94,6 +102,40 @@ def validate_candidate(
             issues.append(f"check has no external runner evidence: {command}")
 
     return ValidationReport(not issues, changed_files, tuple(issues))
+
+
+def check_patch_applies(
+    workspace_root: str | Path,
+    patch: str,
+    *,
+    timeout_seconds: float = 10,
+) -> tuple[bool, str]:
+    """Check a patch with git without modifying the workspace."""
+
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    executable = shutil.which("git")
+    if executable is None:
+        return False, "git executable is unavailable"
+    root = Path(workspace_root).resolve()
+    if not root.is_dir():
+        return False, f"workspace directory does not exist: {root}"
+    try:
+        completed = subprocess.run(
+            [executable, "apply", "--check", "--whitespace=nowarn", "-"],
+            cwd=root,
+            input=patch.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"git apply check failed: {error}"
+    if completed.returncode == 0:
+        return True, ""
+    detail = completed.stderr.decode("utf-8", errors="replace").strip()
+    return False, detail or f"git apply exited with code {completed.returncode}"
 
 
 def parse_unified_diff(patch: str) -> tuple[tuple[str, ...], list[str]]:
