@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -91,6 +92,9 @@ class BoundedRepositoryTools:
                 capture_output=True,
                 timeout=self.test_timeout_seconds,
                 check=False,
+                close_fds=True,
+                env=self._isolated_environment(),
+                **self._process_group_options(),
             )
             result = {
                 "command": command,
@@ -99,6 +103,7 @@ class BoundedRepositoryTools:
                 "stdout": completed.stdout.decode("utf-8", errors="replace"),
                 "stderr": completed.stderr.decode("utf-8", errors="replace"),
                 "truncated": False,
+                "isolated": True,
             }
         except subprocess.TimeoutExpired as error:
             result = {
@@ -109,9 +114,12 @@ class BoundedRepositoryTools:
                 "stderr": self._decode_process_output(error.stderr),
                 "truncated": False,
                 "timeout": True,
+                "isolated": True,
             }
         result = self._bounded_process_result(result)
         result["evidence"] = self._process_evidence(result)
+        if self._result_size(result) > self.max_tool_result_bytes and result.get("isolated") is True:
+            result.pop("isolated")
         while self._result_size(result) > self.max_tool_result_bytes and (
             result.get("stdout") or result.get("stderr")
         ):
@@ -127,9 +135,41 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("max_tool_result_bytes is too small for run_tests evidence")
         return result
 
+    @staticmethod
+    def _isolated_environment() -> dict[str, str]:
+        allowed = {
+            "COMSPEC",
+            "LANG",
+            "LC_ALL",
+            "PATH",
+            "PATHEXT",
+            "PYTHONIOENCODING",
+            "PYTHONUTF8",
+            "SystemRoot",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "WINDIR",
+        }
+        return {key: value for key, value in os.environ.items() if key in allowed}
+
+    @staticmethod
+    def _process_group_options() -> dict[str, Any]:
+        if os.name == "nt":
+            return {
+                "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            }
+        return {"start_new_session": True}
+
     def _bounded_process_result(self, result: dict[str, Any]) -> dict[str, Any]:
         if self._result_size(result) <= self.max_tool_result_bytes:
             return result
+        # Keep the externally useful process evidence available even for very
+        # small result caps.  Isolation is a provenance flag, not test output,
+        # so it is the first optional field we may omit when metadata itself
+        # would otherwise exceed the configured limit.
+        if result.get("isolated") is True:
+            result = {key: value for key, value in result.items() if key != "isolated"}
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
         while self._result_size(result) > self.max_tool_result_bytes and (stdout or stderr):

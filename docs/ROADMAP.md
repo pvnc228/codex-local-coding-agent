@@ -72,7 +72,7 @@
 
 ## M6 — safe repository integration
 
-Статус: частично реализовано: proposal-only CLI, Ollama VRAM management, isolated benchmark fixture, persistent benchmark artifacts и protocol-facing repair slice добавлены; workspace applicability check, mediated apply и isolated test process ещё впереди.
+Статус: частично реализовано: proposal-only CLI, Ollama VRAM management, isolated benchmark fixture, persistent benchmark artifacts, protocol-facing repair slice, workspace applicability check и isolated allowlisted test process добавлены; mediated apply ещё впереди.
 
 - proposal-only default;
 - optional mediated apply;

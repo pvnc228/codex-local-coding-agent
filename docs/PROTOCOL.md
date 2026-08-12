@@ -85,6 +85,8 @@
 
 Если Ollama не возвращает native `tool_calls`, контроллер допускает совместимый JSON-объект в `message.content` только в форме `{"name":"...","arguments":{...}}`, после чего всё равно прогоняет вызов через ту же policy layer. `run_tests` передаётся модели только когда task envelope содержит allowlisted `checks`.
 
+Allowlisted `run_tests` запускается в отдельном process group/session с урезанным environment: в дочерний процесс не передаются произвольные переменные окружения родителя. Ответ содержит `isolated: true` как runtime evidence, если лимит результата позволяет сохранить эту метаинформацию; при предельно малом `max_tool_result_bytes` приоритет остаётся за `stdout`, `stderr` и `evidence`.
+
 ## Повторная попытка
 
 Повтор разрешён только с конкретной причиной:

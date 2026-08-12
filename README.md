@@ -194,10 +194,10 @@ py -m compileall -q local_coding_agent tests
 git diff --check
 ```
 
-Текущий набор содержит 31 тест. Live smoke с Ollama выполняется отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+Текущий набор содержит 45 тестов. Live smoke с Ollama выполняется отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Следующие крупные направления — исправление protocol-facing benchmark blockers, повторный quality gate, mediated apply после отдельного подтверждения и isolated test process.
+Следующее крупное направление — mediated apply после отдельного подтверждения; protocol-facing blockers и isolated test process уже покрыты тестами и runtime evidence.

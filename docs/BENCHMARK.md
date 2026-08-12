@@ -55,3 +55,7 @@ Benchmark запускает один и тот же набор из четыр�
 После repair suite вырос до `42/42`. Повторный Ornith smoke остался на `0%` correctness и `0%` loop reliability: malformed hunk counts теперь отклоняются policy layer до внешнего oracle, а один формально считанный patch всё ещё не проходит `git apply`. Это подтверждает, что исправлен safety/protocol seam, но quality gate модели не пройден.
 
 Applicability run добавил `git apply --check` без записи в workspace для `propose_patch` и final candidate validation. Suite вырос до `44/44`; Ornith v4 сохранил `0%/0%`, при этом wrong-context proposals теперь отклоняются bounded tool до выдачи результата.
+
+## Isolated test process: 2026-08-12
+
+`run_tests` теперь запускает только allowlisted command с sanitized environment и отдельной process group/session. Регрессия проверяет, что переменная окружения из родительского процесса не протекает в test process, а ответ помечает `isolated: true`. При `max_tool_result_bytes=200` сохранён старый контракт: результат остаётся в лимите и содержит внешнее `evidence`; необязательная isolation metadata может быть опущена ради этого evidence.
