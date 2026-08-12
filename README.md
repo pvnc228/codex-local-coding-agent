@@ -1,109 +1,184 @@
 # Codex Local Coding Agent
 
-Минимальный делегирующий coding-agent для локальных моделей через Ollama.
+Небольшой контроллер для делегирования атомарных coding-задач локальным моделям Ollama.
 
-## Идея
+Большая модель формулирует задачу и контролирует результат, а локальная модель выполняет ограниченную работу: читает разрешённые файлы, ищет нужный код, предлагает diff и запускает заранее разрешённую проверку.
 
-Локальная модель выполняет маленькую, хорошо ограниченную coding-задачу. Codex остаётся контроллером качества:
+## Что уже умеет проект
 
-1. формирует компактный контекст;
-2. выдаёт модели только нужные инструменты;
-3. принимает tool calls и результаты;
-4. проверяет область изменений и diff;
-5. запускает targeted-проверки;
-6. принимает, отклоняет или отправляет модели конкретный feedback.
+- отправлять запросы в Ollama через `/api/chat` в UTF-8;
+- работать с профилями `bonsai-64k`, `qwen2.5-coder` и `qwen2.5-1.5b`;
+- ограничивать модель явным списком файлов и размером контекста;
+- предоставлять только bounded tools:
+  - `list_files`;
+  - `read_file`;
+  - `search_text`;
+  - `propose_patch`;
+  - allowlisted `run_tests`;
+- проверять unified diff и список изменённых файлов до принятия результата;
+- подтверждать тесты только по evidence внешнего runner-а;
+- останавливать tool-loop по лимиту ходов, повторному вызову или cancellation;
+- смотреть состояние загруженных моделей и управлять их VRAM;
+- работать в proposal-only режиме: файлы не изменяются локальной моделью.
 
-Это не попытка заменить основной агент автономным LLM. Локальная модель — дешёвый исполнитель, Codex — планировщик, ревьюер и защитный слой.
+## Безопасные границы
 
-## Статус
+Локальная модель не получает произвольный shell-доступ и не может сама применить patch. Команды проверки берутся из task envelope, а не из свободного текста модели. Пути проверяются относительно workspace, результаты инструментов ограничиваются по размеру, а повторный одинаковый tool call завершает задачу со статусом `failed`.
 
-Проект оформлен 12 августа 2026 года. Реализация ещё не начата.
+Проект не пытается заменить полноценный Codex или человека на больших задачах. В текущем MVP нет автономной разработки всей функции, постоянной памяти модели, автоматических commit/push и mediated apply.
 
-Первичный живой тест проведён на:
+## Требования
 
-- endpoint: 'http://127.0.0.1:11434';
-- model: 'bonsai-64k:latest';
-- architecture: Qwen35;
-- parameters: 26.9B;
-- quantization: Q1_0;
-- model context: 262144;
-- Modelfile default 'num_ctx': 16384.
+- Windows, Linux или macOS;
+- Python 3.10 или новее;
+- Ollama с доступным HTTP endpoint, по умолчанию `http://127.0.0.1:11434`;
+- установленная модель с поддержкой chat/tool calls.
 
-Во время тестов модель была выгружена из VRAM. Файл модели не удалён.
+Проект использует только стандартную библиотеку Python и не требует установки Python-зависимостей.
 
-## Предварительный вывод
+## Быстрый старт
 
-Модель подходит для атомарных задач при внешнем контроле:
+Проверь, что Ollama запущен и модель доступна:
 
-- диагностика небольшой функции;
-- минимальный патч одного файла;
-- написание короткого теста;
-- чтение конкретного файла через tool;
-- targeted-проверка после изменения.
+```powershell
+ollama list
+```
 
-Нельзя без проверки доверять:
+Запусти встроенные тесты:
 
-- формату unified diff;
-- заявлению о выполненных тестах;
-- завершению tool-loop;
-- работе при слишком маленьком 'num_predict';
-- широким задачам без явно заданного контекста.
+```powershell
+py -m unittest discover -s tests -v
+```
 
-## Документы
+Посмотри доступные параметры CLI:
 
-- [PROJECT.md](PROJECT.md) — цель, границы и критерии успеха.
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения.
-- [PROTOCOL.md](docs/PROTOCOL.md) — контракт общения с локальной моделью.
-- [ROADMAP.md](docs/ROADMAP.md) — этапы реализации.
-- [AGENTS.md](AGENTS.md) — правила работы Codex с этим проектом.
+```powershell
+py -m local_coding_agent --help
+```
 
-## Запланированный MVP
+## Task envelope
 
-MVP должен принимать одну задачу и завершаться одним из исходов:
+Контроллер принимает UTF-8 JSON с одной атомарной задачей. Минимальный пример:
 
-- 'accepted' — патч прошёл проверки;
-- 'rejected' — патч нарушил контракт;
-- 'needs_context' — модели не хватило данных;
-- 'failed' — инструмент или проверка завершились ошибкой.
-
-По умолчанию агент работает в режиме proposal-only: локальная модель предлагает diff, а контроллер применяет его только после валидации.
-
-## Локальный запуск
-
-Создай UTF-8 task envelope, например:
-
-~~~json
+```json
 {
   "id": "read-one",
   "goal": "прочитать разрешённый файл и вернуть результат",
   "files": ["src/example.py"],
-  "context": "краткий контекст задачи",
+  "context": "Краткий контекст, необходимый для задачи.",
+  "constraints": [
+    "не менять публичную сигнатуру"
+  ],
   "checks": [],
-  "constraints": [],
-  "acceptance": []
+  "acceptance": [
+    "прочитан только файл из allowlist"
+  ]
 }
-~~~
+```
 
-Запусти proposal-only controller из корня проекта:
+Для задачи с изменением файла команда проверки должна быть записана в `checks` заранее:
 
-~~~powershell
-py -m local_coding_agent --task task.json --workspace . --profile qwen2.5-1.5b
-~~~
+```json
+{
+  "id": "unique-preserve-order",
+  "goal": "убрать сортировку из unique и сохранить порядок первого появления",
+  "files": ["src/unique.py"],
+  "checks": ["py -m unittest tests.test_unique -v"],
+  "constraints": ["не добавлять зависимости"],
+  "acceptance": ["diff меняет только src/unique.py", "targeted test passed"]
+}
+```
 
-Доступны профили `qwen2.5-1.5b`, `qwen2.5-coder` и `bonsai-64k`. CLI не применяет patch, не запускает неразрешённые команды и не выполняет commit/push.
+Запуск из корня workspace:
 
-Размер контекстного окна можно задать явно, если он не превышает лимит выбранной модели:
+```powershell
+py -m local_coding_agent `
+  --task task.json `
+  --workspace . `
+  --profile qwen2.5-1.5b `
+  --num-ctx 4096
+```
 
-~~~powershell
-py -m local_coding_agent --task task.json --profile qwen2.5-coder --num-ctx 16384
-~~~
+Результат содержит статус, summary, предложенный patch, checks, risks, validation report и audit events.
 
-Управление памятью Ollama:
+Возможные статусы:
 
-~~~powershell
+- `accepted` — структурированный результат прошёл проверки;
+- `rejected` — результат нарушил контракт или validation rules;
+- `needs_context` — контекст задачи превышает установленный лимит;
+- `failed` — ошибка модели, инструмента, проверки, cancellation или tool-loop.
+
+## Профили и контекстное окно
+
+Доступные профили:
+
+| Профиль | Модель Ollama | Значение `num_ctx` по умолчанию | Максимум модели |
+| --- | --- | ---: | ---: |
+| `qwen2.5-1.5b` | `qwen2.5:1.5b` | 4096 | 32768 |
+| `qwen2.5-coder` | `qwen2.5-coder:latest` | 8192 | 32768 |
+| `bonsai-64k` | `bonsai-64k:latest` | 8192 | 262144 |
+
+Размер окна можно изменить параметром `--num-ctx`. Контроллер отклоняет нулевые, отрицательные и превышающие лимит модели значения.
+
+## Управление VRAM Ollama
+
+Посмотреть и выгрузить все модели:
+
+```powershell
 py -m local_coding_agent --unload-all
-py -m local_coding_agent --unload-model bonsai-64k:latest
-py -m local_coding_agent --vram-limit-bytes 5000000000 --keep-model qwen2.5:1.5b
-~~~
+```
 
-`/api/ps` используется как источник фактического `size_vram`; выгрузка выполняется через `keep_alive: 0`. Защищённые модели не выгружаются автоматически, а если сами превышают бюджет, операция завершается ошибкой.
+Выгрузить одну модель:
+
+```powershell
+py -m local_coding_agent --unload-model bonsai-64k:latest
+```
+
+Удержать VRAM в заданном бюджете и не выгружать выбранную модель:
+
+```powershell
+py -m local_coding_agent `
+  --vram-limit-bytes 5000000000 `
+  --keep-model qwen2.5:1.5b
+```
+
+Состояние берётся из Ollama `/api/ps`, включая фактическое поле `size_vram`. Выгрузка выполняется запросом с `keep_alive: 0`. Если защищённые модели сами превышают бюджет, операция завершается ошибкой, а не выгружает их молча.
+
+## Архитектура
+
+| Файл | Назначение |
+| --- | --- |
+| `local_coding_agent/ollama_adapter.py` | HTTP adapter Ollama, профили параметров, unload и нормализация ошибок |
+| `local_coding_agent/task.py` | валидация task envelope и относительных путей |
+| `local_coding_agent/repository_tools.py` | bounded repository tools и audit events |
+| `local_coding_agent/controller.py` | tool-loop, retry, cancellation и duplicate-call guard |
+| `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
+| `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
+| `local_coding_agent/profiles.py` | именованные профили локальных моделей |
+| `local_coding_agent/cli.py` | proposal-only CLI |
+
+Подробные контракты находятся в документации:
+
+- [PROJECT.md](PROJECT.md) — цель и границы проекта;
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения;
+- [PROTOCOL.md](docs/PROTOCOL.md) — протокол общения с Ollama;
+- [ROADMAP.md](docs/ROADMAP.md) — этапы развития;
+- [AGENTS.md](AGENTS.md) — правила работы с checkout.
+
+## Проверка проекта
+
+Полный локальный test gate:
+
+```powershell
+py -m unittest discover -s tests -v
+py -m compileall -q local_coding_agent tests
+git diff --check
+```
+
+Текущий набор содержит 31 тест. Live smoke с Ollama выполняется отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+
+## Статус
+
+Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
+
+Следующие крупные направления — benchmark нескольких моделей, mediated apply после отдельного подтверждения и persistent run artifacts.
