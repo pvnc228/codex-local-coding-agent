@@ -53,6 +53,32 @@ class MemoryManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryBudgetError, "protected"):
             ModelMemoryManager(client).enforce_limit(150, keep=("large",))
 
+    def test_enforce_limit_handles_async_unload_without_spinning(self):
+        # A client whose unload_model does not immediately change the snapshot
+        # (async/stale unload) must not make the loop spin on zero progress:
+        # every candidate is attempted exactly once, then MemoryBudgetError is
+        # raised because the budget still cannot be met.
+        class StaleUnloadClient(FakeMemoryClient):
+            def unload_model(self, model=None):
+                self.unloaded.append(model or "")
+                return {"done": True, "model": model}  # deliberately no-op on state
+
+        client = StaleUnloadClient(
+            [
+                {"name": "small", "size_vram": 100},
+                {"name": "large", "size_vram": 300},
+                {"name": "mid", "size_vram": 200},
+            ]
+        )
+
+        # No candidate is protected; unload does nothing visible to the
+        # snapshot, so every candidate is attempted exactly once (no infinite
+        # spin), the budget is never met, and MemoryBudgetError is raised.
+        with self.assertRaisesRegex(MemoryBudgetError, "still use"):
+            ModelMemoryManager(client).enforce_limit(100)
+
+        self.assertEqual(client.unloaded, ["large", "mid", "small"])
+
     def test_unload_all_releases_every_loaded_model(self):
         client = FakeMemoryClient(
             [{"name": "one", "size_vram": 100}, {"name": "two", "size_vram": 200}]

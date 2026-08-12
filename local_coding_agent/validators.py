@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -12,11 +13,45 @@ from typing import Any, Mapping
 from .task import TaskEnvelope
 
 
+def _fold_path(path: str) -> str:
+    # ponytail: treat only Windows as case-insensitive; macOS default is
+    # case-insensitive but this keeps the common Linux case strict.
+    return path.casefold() if os.name == "nt" else path
+
+
 @dataclass(frozen=True)
 class ValidationReport:
     valid: bool
     changed_files: tuple[str, ...]
     issues: tuple[str, ...]
+
+
+def _evidence_facts(evidence: str | None) -> dict[str, str | None]:
+    """Extract security-relevant facts from an evidence string.
+
+    The evidence is a `key=value; ` segment list produced by
+    `_process_evidence` (e.g. `exit_code=0; passed=True; stdout_bytes=...`).
+    Only `exit_code` and `passed` matter for anti-fabrication; the byte-count
+    metadata may be rephrased by the model. Missing keys are parsed as None.
+
+    Fallback: if neither side parses an `exit_code`, the comparison falls back
+    to `passed` equality (already enforced separately as the core gate), so a
+    model that rephrases evidence without structural values is not falsely
+    rejected as long as `passed` matches.
+    """
+
+    facts: dict[str, str | None] = {"exit_code": None, "passed": None}
+    if not evidence:
+        return facts
+    for segment in evidence.split(";"):
+        if "=" not in segment:
+            continue
+        key, _, value = segment.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key in facts and value:
+            facts[key] = value
+    return facts
 
 
 def validate_candidate(
@@ -57,7 +92,7 @@ def validate_candidate(
             issues.append(f"patch exceeds max_patch_files={max_patch_files}")
         allowed = {_normalize_task_path(path) for path in task.files}
         for path in changed_files:
-            if path.casefold() not in allowed:
+            if _fold_path(path) not in allowed:
                 issues.append(f"patch file is outside task allowlist: {path}")
         if workspace_root is not None and not issues:
             applies, detail = check_patch_applies(workspace_root, patch)
@@ -92,7 +127,17 @@ def validate_candidate(
             observed = observed_checks[command]
             if check.get("passed") != observed.get("passed"):
                 issues.append(f"check result disagrees with external runner: {command}")
-            if check.get("evidence") != observed.get("evidence"):
+            candidate_facts = _evidence_facts(check.get("evidence"))
+            observed_facts = _evidence_facts(observed.get("evidence"))
+            if (
+                candidate_facts.get("exit_code") is not None
+                and candidate_facts.get("exit_code") != observed_facts.get("exit_code")
+            ):
+                issues.append(f"check evidence disagrees with external runner: {command}")
+            elif (
+                candidate_facts.get("passed") is not None
+                and candidate_facts.get("passed") != observed_facts.get("passed")
+            ):
                 issues.append(f"check evidence disagrees with external runner: {command}")
 
     missing_checks = expected_checks - seen_checks
@@ -230,4 +275,4 @@ def _normalize_diff_path(raw_path: str) -> tuple[str | None, str | None]:
 
 
 def _normalize_task_path(path: str) -> str:
-    return path.replace("\\", "/").strip("/").casefold()
+    return _fold_path(path.replace("\\", "/").strip("/"))

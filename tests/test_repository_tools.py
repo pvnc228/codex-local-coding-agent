@@ -3,11 +3,26 @@ import tempfile
 import unittest
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
-from local_coding_agent.repository_tools import BoundedRepositoryTools, ToolPolicyError
+from local_coding_agent.repository_tools import (
+    BoundedRepositoryTools,
+    ToolCancelled,
+    ToolPolicyError,
+    _fold_path,
+)
 from local_coding_agent.task import TaskEnvelope
+
+
+class AllowlistFoldTests(unittest.TestCase):
+    def test_allowlist_matching_is_case_sensitive_on_case_sensitive_fs(self):
+        if os.name == "nt":
+            self.assertEqual(_fold_path("SRC/allowed.py"), _fold_path("src/allowed.py"))
+        else:
+            self.assertNotEqual(_fold_path("SRC/allowed.py"), _fold_path("src/allowed.py"))
 
 
 class RepositoryToolsTests(unittest.TestCase):
@@ -76,10 +91,26 @@ class RepositoryToolsTests(unittest.TestCase):
             },
         )
 
+    def test_search_text_rejects_oversized_file(self):
+        large = "x" * 200
+        (self.workspace / "src" / "allowed.py").write_text(large, encoding="utf-8")
+        tools = BoundedRepositoryTools(self.workspace, self.task, max_patch_bytes=100)
+
+        with self.assertRaises(ToolPolicyError):
+            tools.execute("search_text", {"query": "x", "paths": ["src/allowed.py"]})
+
     def test_list_files_stays_inside_requested_workspace_directory(self):
         result = BoundedRepositoryTools(self.workspace, self.task).execute(
             "list_files",
             {"path": "src"},
+        )
+
+        self.assertEqual(result, {"files": ["src/allowed.py"], "truncated": False})
+
+    def test_list_files_does_not_expose_non_allowlisted_files_from_workspace_root(self):
+        result = BoundedRepositoryTools(self.workspace, self.task).execute(
+            "list_files",
+            {"path": "."},
         )
 
         self.assertEqual(result, {"files": ["src/allowed.py"], "truncated": False})
@@ -184,6 +215,34 @@ class RepositoryToolsTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["stdout"].strip(), "missing")
         self.assertTrue(result["isolated"])
+
+    def test_run_tests_cancels_running_command(self):
+        command = f'"{sys.executable}" -B -c "import time; time.sleep(30)"'
+        task = TaskEnvelope(
+            id="cancel-check",
+            goal="запустить и прервать проверку",
+            files=("src/allowed.py",),
+            checks=(command,),
+        )
+        tools = BoundedRepositoryTools(
+            self.workspace, task, cancel_event=threading.Event()
+        )
+        holder = {}
+
+        def run_tool():
+            try:
+                holder["result"] = tools.execute("run_tests", {"command": command})
+            except Exception as error:  # noqa: BLE001 - captured to inspect in main thread
+                holder["error"] = error
+
+        thread = threading.Thread(target=run_tool)
+        thread.start()
+        time.sleep(0.2)
+        tools.cancel_event.set()
+        thread.join(timeout=10)
+
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(holder.get("error"), ToolCancelled)
 
     def test_tool_calls_are_recorded_as_audit_events(self):
         tools = BoundedRepositoryTools(self.workspace, self.task)

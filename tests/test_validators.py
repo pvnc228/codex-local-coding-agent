@@ -60,6 +60,62 @@ class CandidateValidatorTests(unittest.TestCase):
         self.assertTrue(any("allowlist" in issue for issue in report.issues))
         self.assertTrue(any("allowlisted" in issue for issue in report.issues))
 
+    def test_validator_accepts_rephrased_evidence_with_matching_exit_code(self):
+        report = validate_candidate(
+            {
+                "status": "candidate",
+                "summary": "перефразировано",
+                "patch": "",
+                "checks": [
+                    {
+                        "command": "check allowed",
+                        "passed": True,
+                        "evidence": "exit_code=0; passed=True; stdout_bytes=123",
+                    }
+                ],
+                "risks": [],
+            },
+            self.task,
+            observed_checks={
+                "check allowed": {
+                    "passed": True,
+                    "evidence": "exit_code=0; passed=True; stdout_bytes=999; stderr_bytes=0; truncated=False",
+                }
+            },
+        )
+
+        self.assertTrue(report.valid)
+        self.assertEqual(report.issues, ())
+
+    def test_validator_rejects_evidence_with_wrong_exit_code(self):
+        report = validate_candidate(
+            {
+                "status": "candidate",
+                "summary": "неверный код выхода",
+                "patch": "",
+                "checks": [
+                    {
+                        "command": "check allowed",
+                        "passed": True,
+                        "evidence": "exit_code=1; passed=True; stdout_bytes=0",
+                    }
+                ],
+                "risks": [],
+            },
+            self.task,
+            observed_checks={
+                "check allowed": {
+                    "passed": True,
+                    "evidence": "exit_code=0; passed=True; stdout_bytes=0",
+                }
+            },
+        )
+
+        self.assertFalse(report.valid)
+        self.assertTrue(
+            any("evidence disagrees" in issue for issue in report.issues)
+        )
+
     def test_validator_rejects_candidate_when_external_check_failed(self):
         report = validate_candidate(
             {

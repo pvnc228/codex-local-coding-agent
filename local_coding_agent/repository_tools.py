@@ -6,15 +6,27 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from .task import TaskEnvelope
 from .validators import check_patch_applies, parse_unified_diff
 
 
+def _fold_path(path: str) -> str:
+    # ponytail: treat only Windows as case-insensitive; macOS default is
+    # case-insensitive but this keeps the common Linux case strict.
+    return path.casefold() if os.name == "nt" else path
+
+
 class ToolPolicyError(RuntimeError):
     """A tool call rejected by the repository policy."""
+
+
+class ToolCancelled(RuntimeError):
+    """A running command was cancelled."""
 
 
 class BoundedRepositoryTools:
@@ -29,6 +41,7 @@ class BoundedRepositoryTools:
         max_patch_bytes: int = 32_000,
         max_patch_files: int = 2,
         test_timeout_seconds: float = 60,
+        cancel_event: Event | None = None,
     ) -> None:
         if max_tool_result_bytes <= 0:
             raise ValueError("max_tool_result_bytes must be positive")
@@ -48,6 +61,7 @@ class BoundedRepositoryTools:
         self.max_patch_bytes = max_patch_bytes
         self.max_patch_files = max_patch_files
         self.test_timeout_seconds = test_timeout_seconds
+        self.cancel_event = cancel_event
         self._allowlist = {self._normalize_declared_path(path) for path in task.files}
         if len(self._allowlist) > max_files:
             raise ToolPolicyError(f"task exceeds max_files={max_files}")
@@ -84,56 +98,101 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("command must be a non-empty string")
         if command not in self.task.checks:
             raise ToolPolicyError("command is not allowlisted")
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=self.workspace_root,
-                shell=True,
-                capture_output=True,
-                timeout=self.test_timeout_seconds,
-                check=False,
-                close_fds=True,
-                env=self._isolated_environment(),
-                **self._process_group_options(),
-            )
-            result = {
-                "command": command,
-                "passed": completed.returncode == 0,
-                "exit_code": completed.returncode,
-                "stdout": completed.stdout.decode("utf-8", errors="replace"),
-                "stderr": completed.stderr.decode("utf-8", errors="replace"),
-                "truncated": False,
-                "isolated": True,
-            }
-        except subprocess.TimeoutExpired as error:
+        process: subprocess.Popen[bytes] = subprocess.Popen(
+            command,
+            cwd=self.workspace_root,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self._isolated_environment(),
+            **self._process_group_options(),
+        )
+        deadline = time.monotonic() + self.test_timeout_seconds
+        timed_out = False
+        while True:
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                self._terminate(process)
+                raise ToolCancelled("task was cancelled")
+            if process.poll() is not None:
+                break
+            if self._deadline_exceeded(process, deadline):
+                timed_out = True
+                break
+            time.sleep(0.05)
+        stdout, stderr = process.communicate()
+        if timed_out:
             result = {
                 "command": command,
                 "passed": False,
                 "exit_code": None,
-                "stdout": self._decode_process_output(error.output),
-                "stderr": self._decode_process_output(error.stderr),
+                "stdout": self._decode_process_output(stdout),
+                "stderr": self._decode_process_output(stderr),
                 "truncated": False,
                 "timeout": True,
+                "isolated": True,
+            }
+        elif process.returncode != 0:
+            result = {
+                "command": command,
+                "passed": False,
+                "exit_code": process.returncode,
+                "stdout": self._decode_process_output(stdout),
+                "stderr": self._decode_process_output(stderr),
+                "truncated": False,
+                "isolated": True,
+            }
+        else:
+            result = {
+                "command": command,
+                "passed": True,
+                "exit_code": process.returncode,
+                "stdout": self._decode_process_output(stdout),
+                "stderr": self._decode_process_output(stderr),
+                "truncated": False,
                 "isolated": True,
             }
         result = self._bounded_process_result(result)
         result["evidence"] = self._process_evidence(result)
         if self._result_size(result) > self.max_tool_result_bytes and result.get("isolated") is True:
             result.pop("isolated")
-        while self._result_size(result) > self.max_tool_result_bytes and (
-            result.get("stdout") or result.get("stderr")
-        ):
-            stdout = result.get("stdout", "")
-            stderr = result.get("stderr", "")
-            if len(stdout) >= len(stderr) and stdout:
-                result["stdout"] = stdout[:-1]
-            elif stderr:
-                result["stderr"] = stderr[:-1]
-            result["truncated"] = True
-            result["evidence"] = self._process_evidence(result)
+        result = self._trim_stdout_stderr(
+            result, after_trim=lambda r: {**r, "evidence": self._process_evidence(r)}
+        )
         if self._result_size(result) > self.max_tool_result_bytes:
             raise ToolPolicyError("max_tool_result_bytes is too small for run_tests evidence")
         return result
+
+    def _terminate(self, process: subprocess.Popen) -> None:
+        # ponytail: kill the whole tree so grandchild processes (cmd.exe
+        # shells herding the real command) cannot hold the workspace open.
+        self._kill_tree(process)
+        process.wait()
+
+    @staticmethod
+    def _deadline_exceeded(process: subprocess.Popen, deadline: float) -> bool:
+        # ponytail: cancellable timeout — kill now rather than waiting for
+        # subprocess.run's own timeout to fire.
+        if time.monotonic() >= deadline:
+            BoundedRepositoryTools._kill_tree(process)
+            process.wait()
+            return True
+        return False
+
+    @staticmethod
+    def _kill_tree(process: subprocess.Popen) -> None:
+        if os.name == "nt":
+            # /T terminates every descendant process, /F forces it.
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        else:
+            try:
+                os.killpg(process.pid, 9)
+            except (ProcessLookupError, PermissionError):
+                process.kill()
 
     @staticmethod
     def _isolated_environment() -> dict[str, str]:
@@ -170,6 +229,14 @@ class BoundedRepositoryTools:
         # would otherwise exceed the configured limit.
         if result.get("isolated") is True:
             result = {key: value for key, value in result.items() if key != "isolated"}
+        result = self._trim_stdout_stderr(result)
+        if self._result_size(result) > self.max_tool_result_bytes:
+            raise ToolPolicyError("max_tool_result_bytes is too small for run_tests metadata")
+        return result
+
+    def _trim_stdout_stderr(
+        self, result: dict[str, Any], *, after_trim: Any = None
+    ) -> dict[str, Any]:
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
         while self._result_size(result) > self.max_tool_result_bytes and (stdout or stderr):
@@ -177,9 +244,9 @@ class BoundedRepositoryTools:
                 stdout = stdout[:-1]
             elif stderr:
                 stderr = stderr[:-1]
-        result = {**result, "stdout": stdout, "stderr": stderr, "truncated": True}
-        if self._result_size(result) > self.max_tool_result_bytes:
-            raise ToolPolicyError("max_tool_result_bytes is too small for run_tests metadata")
+            result = {**result, "stdout": stdout, "stderr": stderr, "truncated": True}
+            if after_trim is not None:
+                result = after_trim(result)
         return result
 
     @staticmethod
@@ -253,7 +320,9 @@ class BoundedRepositoryTools:
         files = sorted(
             path.relative_to(self.workspace_root).as_posix()
             for path in directory.rglob("*")
-            if path.is_file() and not ignored_parts.intersection(path.relative_to(self.workspace_root).parts)
+            if path.is_file()
+            and _fold_path(path.relative_to(self.workspace_root).as_posix()) in self._allowlist
+            and not ignored_parts.intersection(path.relative_to(self.workspace_root).parts)
         )
         truncated = len(files) > self.max_files
         result = {"files": files[: self.max_files], "truncated": truncated}
@@ -284,6 +353,8 @@ class BoundedRepositoryTools:
             path, relative = self._resolve_allowlisted(raw_path)
             if not path.is_file():
                 raise ToolPolicyError(f"file does not exist: {relative}")
+            if path.stat().st_size > self.max_patch_bytes:
+                raise ToolPolicyError(f"file exceeds max_patch_bytes={self.max_patch_bytes}: {relative}")
             try:
                 content = path.read_text(encoding="utf-8")
             except UnicodeDecodeError as error:
@@ -350,7 +421,7 @@ class BoundedRepositoryTools:
             relative = candidate.relative_to(self.workspace_root).as_posix()
         except ValueError as error:
             raise ToolPolicyError("path escapes workspace") from error
-        if relative.casefold() not in self._allowlist:
+        if _fold_path(relative) not in self._allowlist:
             raise ToolPolicyError(f"path is outside task allowlist: {relative}")
         return candidate, relative
 
@@ -372,7 +443,7 @@ class BoundedRepositoryTools:
         candidate = Path(raw_path)
         if candidate.is_absolute() or candidate.drive or candidate.root or "\x00" in raw_path:
             raise ValueError(f"task file must be a relative valid path: {raw_path!r}")
-        return candidate.as_posix().casefold()
+        return _fold_path(candidate.as_posix())
 
     def _record(
         self,

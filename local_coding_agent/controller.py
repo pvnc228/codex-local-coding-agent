@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any, Protocol
 
-from .repository_tools import BoundedRepositoryTools, ToolPolicyError
+from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
 from .task import TaskEnvelope
 from .validators import validate_candidate
 
@@ -135,6 +136,7 @@ class Controller:
         except ValueError as error:
             return self._failure("needs_context", "context_limit", str(error), audit)
 
+        active_cancel = cancel_event or self.cancel_event
         tools = BoundedRepositoryTools(
             self.workspace_root,
             task,
@@ -142,18 +144,64 @@ class Controller:
             max_files=self.max_files,
             max_patch_bytes=self.max_patch_bytes,
             max_patch_files=self.max_patch_files,
+            cancel_event=active_cancel,
         )
         seen_calls: dict[str, int] = {}
         observed_checks: dict[str, dict[str, Any]] = {}
         retries = 0
-        active_cancel = cancel_event or self.cancel_event
+        executor = ThreadPoolExecutor(max_workers=1)
 
+        try:
+            return self._run_turns(
+                task,
+                messages,
+                tools,
+                active_cancel,
+                seen_calls,
+                observed_checks,
+                retries,
+                executor,
+                audit,
+            )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _run_turns(
+        self,
+        task: TaskEnvelope,
+        messages: list[dict[str, Any]],
+        tools: BoundedRepositoryTools,
+        active_cancel: Event | None,
+        seen_calls: dict[str, int],
+        observed_checks: dict[str, dict[str, Any]],
+        retries: int,
+        executor: ThreadPoolExecutor,
+        audit: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         for turn in range(1, self.max_turns + 1):
             if active_cancel is not None and active_cancel.is_set():
                 return self._failure("failed", "cancelled", "task was cancelled", audit)
+            if self._messages_size(messages) > self.max_context_bytes:
+                return self._failure(
+                    "failed",
+                    "context_limit",
+                    f"cumulative context exceeds max_context_bytes={self.max_context_bytes}",
+                    audit,
+                )
             audit.append({"event": "model_request", "turn": turn, "message_count": len(messages)})
             try:
-                response = self.model.chat(messages, tools=self._tools_for_task(task))
+                future = executor.submit(
+                    self.model.chat, messages, tools=self._tools_for_task(task)
+                )
+                while True:
+                    try:
+                        response = future.result(timeout=0.05)
+                        break
+                    except TimeoutError:
+                        if active_cancel is not None and active_cancel.is_set():
+                            # ponytail: the abandoned chat thread keeps running
+                            # until its own ~30s HTTP timeout.
+                            return self._failure("failed", "cancelled", "task was cancelled", audit)
             except Exception as error:  # model boundary: normalize executor failures
                 return self._failure("failed", "model_error", str(error), audit)
             audit.append({"event": "model_response", "turn": turn})
@@ -180,8 +228,11 @@ class Controller:
                 for call in tool_calls:
                     try:
                         name, arguments, call_id = self._decode_tool_call(call)
+                        signature_arguments = arguments
+                        if name == "list_files" and "path" not in signature_arguments:
+                            signature_arguments = {**arguments, "path": "."}
                         signature = json.dumps(
-                            {"name": name, "arguments": arguments},
+                            {"name": name, "arguments": signature_arguments},
                             ensure_ascii=False,
                             sort_keys=True,
                         )
@@ -211,6 +262,8 @@ class Controller:
                         audit.append({"event": "tool_result", "name": name, "turn": turn})
                     except (ToolPolicyError, ValueError, TypeError, json.JSONDecodeError) as error:
                         return self._failure("failed", "policy", str(error), audit)
+                    except ToolCancelled:
+                        return self._failure("failed", "cancelled", "task was cancelled", audit)
                 continue
 
             content = message.get("content")
@@ -252,6 +305,9 @@ class Controller:
             return result
 
         return self._failure("failed", "max_turns", f"max_turns={self.max_turns} exceeded", audit)
+
+    def _messages_size(self, messages) -> int:
+        return len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
 
     def _initial_messages(self, task: TaskEnvelope) -> list[dict[str, Any]]:
         payload = {

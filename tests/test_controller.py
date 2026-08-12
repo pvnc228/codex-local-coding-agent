@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from threading import Event
+from threading import Event, Timer
 import sys
 from pathlib import Path
 
@@ -17,6 +17,21 @@ class FakeModel:
     def chat(self, messages, *, tools=None):
         self.requests.append({"messages": messages, "tools": tools})
         return self.responses.pop(0)
+
+
+class BlockingFakeModel:
+    def __init__(self, block_event, release_event):
+        self.requests = []
+        self._block = block_event
+        self._release = release_event
+
+    def chat(self, messages, *, tools=None):
+        self.requests.append({"messages": messages, "tools": tools})
+        try:
+            self._block.wait(timeout=10)
+        finally:
+            self._release.set()
+        return {"message": {"role": "assistant", "content": "{}"}}
 
 
 class ControllerTests(unittest.TestCase):
@@ -179,6 +194,33 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["error"]["kind"], "duplicate_tool_call")
         self.assertEqual(len(model.requests), 2)
 
+    def test_controller_fails_on_repeated_list_files_with_default_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(id="duplicate-list-files", goal="прочитать файлы", files=("allowed.py",))
+            call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"function": {"name": "list_files", "arguments": {"path": "."}}}
+                    ],
+                }
+            }
+            default_call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{"function": {"name": "list_files", "arguments": {}}}],
+                }
+            }
+            model = FakeModel([default_call, call])
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "duplicate_tool_call")
+        self.assertEqual(len(model.requests), 2)
+
     def test_controller_retries_invalid_json_with_changed_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -214,6 +256,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"]["kind"], "cancelled")
         self.assertEqual(model.requests, [])
+
+    def test_controller_cancels_during_blocking_model_call(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(id="cancel-block", goal="не ждать", files=("allowed.py",))
+            block_event = Event()
+            release_event = Event()
+            model = BlockingFakeModel(block_event, release_event)
+            cancelled = Event()
+            timer = Timer(0.2, cancelled.set)
+            timer.start()
+
+            result = Controller(model, workspace).run(task, cancel_event=cancelled)
+
+            timer.cancel()
+            release_event.set()
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "cancelled")
+        self.assertEqual(len(model.requests), 1)
 
     def test_controller_accepts_check_only_with_external_runner_evidence(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -268,6 +331,50 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "accepted")
         self.assertTrue(result["validation"]["valid"])
+
+    def test_controller_fails_when_cumulative_context_exceeds_budget(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("x" * 500, encoding="utf-8")
+            task = TaskEnvelope(id="cumulative-context", goal="прочитать файл", files=("allowed.py",))
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": {"path": "allowed.py"},
+                                    },
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "готово",
+                                    "patch": "",
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            result = Controller(model, workspace, max_context_bytes=2000).run(task)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "context_limit")
+        self.assertEqual(len(model.requests), 1)
 
     def test_controller_rejects_invalid_schema_without_crashing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
