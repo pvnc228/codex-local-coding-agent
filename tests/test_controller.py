@@ -5,7 +5,7 @@ from threading import Event
 import sys
 from pathlib import Path
 
-from local_coding_agent.controller import Controller
+from local_coding_agent.controller import Controller, TOOL_DEFINITIONS
 from local_coding_agent.task import TaskEnvelope
 
 
@@ -72,6 +72,93 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(second_messages[-1]["role"], "tool")
         self.assertEqual(second_messages[-1]["tool_name"], "read_file")
         self.assertIn("VALUE = 42", second_messages[-1]["content"])
+
+    def test_controller_does_not_advertise_run_tests_without_allowlisted_checks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(id="no-check-tool", goal="прочитать файл", files=("allowed.py",))
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "готово",
+                                    "patch": "",
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    }
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        advertised = {
+            definition["function"]["name"]
+            for definition in model.requests[0]["tools"]
+        }
+        self.assertNotIn("run_tests", advertised)
+
+    def test_propose_patch_tool_contract_requires_counted_complete_diff(self):
+        definition = next(
+            definition
+            for definition in TOOL_DEFINITIONS
+            if definition["function"]["name"] == "propose_patch"
+        )
+        description = definition["function"]["description"]
+
+        self.assertIn("hunk", description)
+        self.assertIn("counts", description)
+        self.assertIn("real newlines", description)
+        self.assertIn("literal \\n", description)
+
+    def test_controller_converts_json_tool_call_in_content_to_bounded_tool_call(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(id="content-tool", goal="прочитать файл", files=("allowed.py",))
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "name": "read_file",
+                                    "arguments": {"path": "allowed.py"},
+                                }
+                            ),
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "прочитан файл",
+                                    "patch": "",
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(model.requests[1]["messages"][-1]["tool_name"], "read_file")
+        self.assertIn("VALUE = 42", model.requests[1]["messages"][-1]["content"])
 
     def test_controller_fails_on_repeated_identical_tool_call(self):
         with tempfile.TemporaryDirectory() as temp_dir:

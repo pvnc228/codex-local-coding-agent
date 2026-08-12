@@ -19,6 +19,7 @@ SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной �
 Для файлов используй только относительные пути из task allowlist; абсолютные пути и '..' запрещены.
 Если данных не хватает, задай один точный вопрос.
 Патч должен быть минимальным и затрагивать только разрешённые файлы.
+Для propose_patch верни полный unified diff с реальными переводами строк; hunk counts должны точно совпадать с числом строк старой и новой стороны. Не используй placeholders, абсолютные пути или literal \\n в качестве перевода строки.
 После завершения верни только структурированный JSON-результат."""
 
 
@@ -65,7 +66,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "propose_patch",
-            "description": "Return a unified diff proposal without writing files.",
+            "description": (
+                "Return only a complete unified diff proposal without writing files. "
+                "Use real newlines and relative allowlisted paths. Include diff --git, ---, +++, "
+                "and hunk headers whose old/new counts exactly match the hunk lines. "
+                "Do not use placeholders, prose, absolute paths, or literal \\n."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"patch": {"type": "string"}},
@@ -147,7 +153,7 @@ class Controller:
                 return self._failure("failed", "cancelled", "task was cancelled", audit)
             audit.append({"event": "model_request", "turn": turn, "message_count": len(messages)})
             try:
-                response = self.model.chat(messages, tools=TOOL_DEFINITIONS)
+                response = self.model.chat(messages, tools=self._tools_for_task(task))
             except Exception as error:  # model boundary: normalize executor failures
                 return self._failure("failed", "model_error", str(error), audit)
             audit.append({"event": "model_response", "turn": turn})
@@ -161,6 +167,14 @@ class Controller:
                 return self._failure("failed", "invalid_response", "model response has no message object", audit)
 
             tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                compatible_call = self._decode_content_tool_call(message.get("content"))
+                if compatible_call is not None:
+                    message = dict(message)
+                    message["tool_calls"] = [compatible_call]
+                    message["content"] = ""
+                    tool_calls = message["tool_calls"]
+                    audit.append({"event": "content_tool_call_compatibility", "turn": turn})
             if tool_calls:
                 messages.append(message)
                 for call in tool_calls:
@@ -282,6 +296,32 @@ class Controller:
         if call_id is not None and not isinstance(call_id, str):
             raise ValueError("tool call id must be a string")
         return name, arguments, call_id
+
+    @staticmethod
+    def _decode_content_tool_call(content: Any) -> dict[str, Any] | None:
+        if not isinstance(content, str) or not content.strip():
+            return None
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        name = payload.get("name")
+        arguments = payload.get("arguments")
+        if not isinstance(name, str) or not name or not isinstance(arguments, (dict, str)):
+            return None
+        return {"function": {"name": name, "arguments": arguments}}
+
+    @staticmethod
+    def _tools_for_task(task: TaskEnvelope) -> list[dict[str, Any]]:
+        if task.checks:
+            return TOOL_DEFINITIONS
+        return [
+            definition
+            for definition in TOOL_DEFINITIONS
+            if definition["function"]["name"] != "run_tests"
+        ]
 
     @staticmethod
     def _parse_final_result(content: Any) -> dict[str, Any]:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .task import TaskEnvelope
+from .validators import parse_unified_diff
 
 
 class ToolPolicyError(RuntimeError):
@@ -164,6 +165,9 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("patch must be a non-empty string")
         if len(patch.encode("utf-8")) > self.max_patch_bytes:
             raise ToolPolicyError(f"patch exceeds max_patch_bytes={self.max_patch_bytes}")
+        _, diff_issues = parse_unified_diff(patch)
+        if diff_issues:
+            raise ToolPolicyError("; ".join(diff_issues))
 
         paths: list[str] = []
         has_hunk = False

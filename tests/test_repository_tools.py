@@ -104,6 +104,21 @@ class RepositoryToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(ToolPolicyError, "allowlist"):
             tools.execute("propose_patch", {"patch": outside_patch})
 
+    def test_propose_patch_rejects_hunk_line_count_mismatch(self):
+        patch = (
+            "diff --git a/src/allowed.py b/src/allowed.py\n"
+            "--- a/src/allowed.py\n"
+            "+++ b/src/allowed.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            "-VALUE = 42\n"
+            "+VALUE = 43\n"
+        )
+
+        with self.assertRaisesRegex(ToolPolicyError, "hunk"):
+            BoundedRepositoryTools(self.workspace, self.task).execute(
+                "propose_patch", {"patch": patch}
+            )
+
     def test_run_tests_executes_only_an_exactly_allowlisted_command(self):
         command = f'"{sys.executable}" -B -c "print(\'check ok\')"'
         task = TaskEnvelope(

@@ -76,6 +76,27 @@ class CandidateValidatorTests(unittest.TestCase):
         self.assertFalse(report.valid)
         self.assertIn("check failed: check allowed", report.issues)
 
+    def test_validator_rejects_hunk_when_declared_line_counts_do_not_match(self):
+        malformed = self.patch.replace("@@ -1 +1 @@", "@@ -1,2 +1,2 @@")
+
+        report = validate_candidate(
+            {
+                "status": "candidate",
+                "summary": "неверный hunk",
+                "patch": malformed,
+                "checks": [],
+                "risks": [],
+            },
+            TaskEnvelope(
+                id="validate-without-checks",
+                goal="проверить diff",
+                files=("src/allowed.py",),
+            ),
+        )
+
+        self.assertFalse(report.valid)
+        self.assertTrue(any("hunk" in issue for issue in report.issues))
+
 
 if __name__ == "__main__":
     unittest.main()

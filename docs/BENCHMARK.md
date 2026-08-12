@@ -42,3 +42,14 @@ Benchmark запускает один и тот же набор из четыр�
 - Ternary Bonsai не прошёл импорт: Ollama завершил parsing ошибкой `tensor "output.weight" size overflow`. Он не считается установленным или протестированным.
 
 Следующий разумный этап — не объявлять победителя, а улучшить protocol-facing regression set: добавить тесты на malformed hunk counts, plain-text tool-call compatibility и явный запрет `run_tests`, когда `checks` пуст. После этого benchmark нужно повторить с теми же fixtures и параметрами.
+
+## Protocol repair follow-up: 2026-08-12
+
+Добавлены и проверены:
+
+- строгая проверка old/new hunk line counts в validator и `propose_patch`;
+- отсутствие `run_tests` в tool schema при пустом `checks`;
+- совместимость с JSON tool-call в `message.content` через ту же policy layer;
+- явный tool contract для полного diff, реальных переводов строк и запрета placeholders/literal `\\n`.
+
+После repair suite вырос до `42/42`. Повторный Ornith smoke остался на `0%` correctness и `0%` loop reliability: malformed hunk counts теперь отклоняются policy layer до внешнего oracle, а один формально считанный patch всё ещё не проходит `git apply`. Это подтверждает, что исправлен safety/protocol seam, но quality gate модели не пройден.

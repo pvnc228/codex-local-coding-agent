@@ -124,3 +124,5 @@ Shortlist теперь имеет runtime evidence, но не считается
 Импорт `Ternary-Bonsai-27B-Q2_0.gguf` не завершился: после копирования и проверки файла Ollama сообщил `tensor "output.weight" size overflow`. Manifest в `/api/tags` не появился, поэтому модель не считается установленной.
 
 Первый единый benchmark и его ограничения задокументированы в [docs/BENCHMARK.md](BENCHMARK.md). Он зафиксировал runtime evidence, но не подтвердил ни одного победителя: все завершённые профили набрали `0%` внешней correctness и `0%` tool-loop reliability.
+
+После protocol repair повторный Ornith smoke также остался на `0%/0%`: теперь malformed hunk counts отклоняются до применения, поэтому этот результат нельзя трактовать как регрессию безопасности. Следующий benchmark-блок должен добавить проверку применимости patch к фактическому disposable workspace.

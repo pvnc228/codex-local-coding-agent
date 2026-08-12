@@ -47,7 +47,7 @@ def validate_candidate(
     if patch:
         if max_patch_bytes <= 0 or len(patch.encode("utf-8")) > max_patch_bytes:
             issues.append(f"patch exceeds max_patch_bytes={max_patch_bytes}")
-        changed_files, diff_issues = _parse_unified_diff(patch)
+        changed_files, diff_issues = parse_unified_diff(patch)
         issues.extend(diff_issues)
         if len(changed_files) > max_patch_files:
             issues.append(f"patch exceeds max_patch_files={max_patch_files}")
@@ -96,14 +96,29 @@ def validate_candidate(
     return ValidationReport(not issues, changed_files, tuple(issues))
 
 
-def _parse_unified_diff(patch: str) -> tuple[tuple[str, ...], list[str]]:
+def parse_unified_diff(patch: str) -> tuple[tuple[str, ...], list[str]]:
     paths: list[str] = []
     issues: list[str] = []
     saw_old = False
     saw_new = False
     saw_hunk = False
+    hunk: dict[str, int] | None = None
+
+    def finish_hunk() -> None:
+        nonlocal hunk
+        if hunk is None:
+            return
+        if hunk["old_seen"] != hunk["old_expected"] or hunk["new_seen"] != hunk["new_expected"]:
+            issues.append(
+                "hunk line count mismatch: "
+                f"expected old={hunk['old_expected']}, new={hunk['new_expected']}; "
+                f"got old={hunk['old_seen']}, new={hunk['new_seen']}"
+            )
+        hunk = None
+
     for line in patch.splitlines():
         if line.startswith("diff --git "):
+            finish_hunk()
             match = re.fullmatch(r"diff --git a/(.+) b/(.+)", line)
             if not match:
                 issues.append("patch has invalid diff header")
@@ -114,6 +129,31 @@ def _parse_unified_diff(patch: str) -> tuple[tuple[str, ...], list[str]]:
                     issues.append(path_issue)
                 elif normalized is not None and normalized not in paths:
                     paths.append(normalized)
+        elif line.startswith("@@ "):
+            finish_hunk()
+            saw_hunk = True
+            match = re.fullmatch(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@.*", line)
+            if not match:
+                issues.append("patch has invalid hunk header")
+                continue
+            hunk = {
+                "old_expected": int(match.group(2) or "1"),
+                "new_expected": int(match.group(4) or "1"),
+                "old_seen": 0,
+                "new_seen": 0,
+            }
+        elif hunk is not None:
+            if line.startswith("\\"):
+                continue
+            if line.startswith(" "):
+                hunk["old_seen"] += 1
+                hunk["new_seen"] += 1
+            elif line.startswith("-"):
+                hunk["old_seen"] += 1
+            elif line.startswith("+"):
+                hunk["new_seen"] += 1
+            else:
+                issues.append("patch has invalid hunk line")
         elif line.startswith("--- "):
             saw_old = True
             normalized, path_issue = _normalize_diff_path(line[4:].split("\t", 1)[0].strip())
@@ -128,8 +168,7 @@ def _parse_unified_diff(patch: str) -> tuple[tuple[str, ...], list[str]]:
                 issues.append(path_issue)
             elif normalized is not None and normalized not in paths:
                 paths.append(normalized)
-        elif line.startswith("@@ "):
-            saw_hunk = True
+    finish_hunk()
     if not paths or not saw_old or not saw_new or not saw_hunk:
         issues.append("patch is not a unified diff")
     return tuple(sorted(paths)), issues
