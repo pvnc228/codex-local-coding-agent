@@ -144,41 +144,15 @@ py -m local_coding_agent `
 
 Состояние берётся из Ollama `/api/ps`, включая фактическое поле `size_vram`. Выгрузка выполняется запросом с `keep_alive: 0`. Если защищённые модели сами превышают бюджет, операция завершается ошибкой, а не выгружает их молча.
 
-## Архитектура
+## Документация
 
-| Файл | Назначение |
-| --- | --- |
-| `local_coding_agent/ollama_adapter.py` | HTTP adapter Ollama, профили параметров, unload и нормализация ошибок |
-| `local_coding_agent/task.py` | валидация task envelope и относительных путей |
-| `local_coding_agent/repository_tools.py` | bounded repository tools и audit events |
-| `local_coding_agent/controller.py` | tool-loop, retry, cancellation и duplicate-call guard |
-| `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
-| `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
-| `local_coding_agent/profiles.py` | именованные профили локальных моделей |
-| `local_coding_agent/cli.py` | proposal-only CLI |
-
-Подробные контракты находятся в документации:
+Подробные контракты:
 
 - [PROJECT.md](PROJECT.md) — цель и границы проекта;
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения;
 - [PROTOCOL.md](docs/PROTOCOL.md) — протокол общения с Ollama;
 - [ROADMAP.md](docs/ROADMAP.md) — этапы развития;
-- [AGENTS.md](AGENTS.md) — правила работы с checkout.
-
-## Проверка проекта
-
-Полный локальный test gate:
-
-```powershell
-py -m unittest discover -s tests -v
-py -m compileall -q local_coding_agent tests
-git diff --check
-```
-
-Текущий набор содержит 31 тест. Live smoke с Ollama выполняется отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
-Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
-
-Следующие крупные направления — benchmark нескольких моделей, mediated apply после отдельного подтверждения и persistent run artifacts.
+Рабочий MVP опубликован в репозитории
