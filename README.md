@@ -167,7 +167,7 @@ py -m local_coding_agent `
 
 Состояние берётся из Ollama `/api/ps`, включая фактическое поле `size_vram`. Выгрузка выполняется запросом с `keep_alive: 0`. Если защищённые модели сами превышают бюджет, операция завершается ошибкой, а не выгружает их молча.
 
-## Архитектура
+## Документация
 
 | Файл | Назначение |
 | --- | --- |
@@ -181,6 +181,7 @@ py -m local_coding_agent `
 | `local_coding_agent/cli.py` | proposal-only CLI и opt-in mediated apply |
 
 Подробные контракты находятся в документации:
+
 
 - [PROJECT.md](PROJECT.md) — цель и границы проекта;
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения;
