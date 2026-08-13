@@ -2,6 +2,7 @@
 
 from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
 from .controller import Controller
+from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_failure
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
 from .service import DelegationRequest, DelegationService
@@ -16,6 +17,9 @@ __all__ = [
     "DelegationService",
     "BoundedWorkerPool",
     "StdioDelegationAdapter",
+    "DelegatingAgent",
+    "DecompositionTemplate",
+    "is_decomposable_failure",
     "Decomposition",
     "PreflightReport",
     "TaskBudget",
