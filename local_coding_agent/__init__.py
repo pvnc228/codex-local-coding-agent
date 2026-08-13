@@ -4,6 +4,7 @@ from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, pre
 from .controller import Controller
 from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_failure
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
+from .mcp_server import McpStdioServer
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
 from .service import DelegationRequest, DelegationService
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
@@ -36,6 +37,7 @@ __all__ = [
     "ModelProfile",
     "OllamaClient",
     "OllamaError",
+    "McpStdioServer",
     "TaskEnvelope",
     "ValidationReport",
     "validate_candidate",
