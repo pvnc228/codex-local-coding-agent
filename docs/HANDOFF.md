@@ -6,15 +6,16 @@
 
 - Ветка: `main`.
 - Review fixes P0/P1/P2 смержены и опубликованы: `3e951bb`, merge `b879b03`.
-- Свежий локальный gate этой documentation-сессии: **67/67 OK**, `compileall`, UTF-8 Markdown и `git diff --check` прошли. Live chat и benchmark после review не запускались.
+- Свежий локальный gate этой сессии: **72/72 OK**, `compileall` и `git diff --check` прошли. Live chat и benchmark после review не запускались.
 - Ollama: `http://127.0.0.1:11434`, read-only `/api/ps` отвечает; сейчас загруженных моделей нет. Live chat и benchmark после review не запускались.
-- Исследование следующей волны моделей и MCP `2026-07-28` оформлено в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md) и [MCP_DESIGN.md](MCP_DESIGN.md). Это планы, не runtime evidence и не реализованный MCP.
+- Исследование следующей волны моделей и MCP `2026-07-28` оформлено в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md) и [MCP_DESIGN.md](MCP_DESIGN.md). R5.1 transport-neutral core seam реализован; MCP transport R5.2 и runtime evidence остаются впереди.
 
 ## Что закрыто в этой сессии
 
 - **R1/R2** (ранее, commits `c09ec0c` и `2033c2a`): все 10 пунктов `docs/AUDIT.md` + hunk-relaxation.
 - **R3 — Mediated apply**: новый флаг `--apply` (`cli.py`), controller-only seam `apply_patch` (`validators.py`) — применяется patch к workspace только после подтверждения контроллера; локальная модель не имеет прямого доступа к `apply_patch` (`controller.py` параметр `apply=`); proposal-only как режим по умолчанию.
 - **Review fixes**: benchmark oracle вынесен в restricted child process; audit/applied стали controller-owned; `--apply` получил post-apply checks и rollback; subprocess output/termination bounded; fallback patch и trimming исправлены.
+- **R5.1 core service seam**: добавлены `ServiceRequest`/`ServiceResult`, opaque `WorkspaceRegistry`, allowlisted direct adapter, idempotency и machine-readable policy errors; proposal-only и controller-owned result semantics сохранены.
 - **Документация**: flow, hunk-count contract, benchmark artifact status и branch handoff синхронизированы.
 
 ## Benchmark baseline до REQUEST_CHANGES

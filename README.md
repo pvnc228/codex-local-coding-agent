@@ -21,6 +21,7 @@
 - проверять unified diff и список изменённых файлов до принятия результата;
 - подтверждать тесты только по evidence внешнего runner-а;
 - останавливать tool-loop по лимиту ходов, повторному вызову или cancellation;
+- принимать bounded requests через прямой transport-neutral Python seam с opaque workspace registry, allowlisted model profiles и idempotency;
 - смотреть состояние загруженных моделей и управлять их VRAM;
 - работать в proposal-only режиме: файлы не изменяются локальной моделью.
 
@@ -178,6 +179,7 @@ py -m local_coding_agent `
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |
+| `local_coding_agent/service.py` | transport-neutral request/result dataclasses, workspace registry и direct adapter |
 | `local_coding_agent/cli.py` | proposal-only CLI и opt-in mediated apply |
 
 Подробные контракты находятся в документации:

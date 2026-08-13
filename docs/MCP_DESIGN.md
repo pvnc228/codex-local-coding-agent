@@ -2,7 +2,7 @@
 
 Дата фиксации: 2026-08-13.
 
-Статус: принятое направление для R5, реализация не начата. Документ проектирует границу, но не утверждает совместимость с конкретным host до отдельного conformance/runtime evidence.
+Статус: R5.1 transport-neutral core seam реализован в `local_coding_agent.service`; MCP transport R5.2 ещё не реализован. Документ проектирует границу, но не утверждает совместимость с конкретным host до отдельного conformance/runtime evidence.
 
 ## Решение
 
@@ -52,6 +52,8 @@ flowchart TD
 ## Transport-neutral contract сначала
 
 До MCP нужно зафиксировать обычный Python/service contract поверх существующего `TaskEnvelope`.
+
+R5.1 закрывает этот первый срез: `ServiceRequest`, `ServiceResult`, `WorkspaceRegistry` и `DirectCodingAdapter` находятся в `local_coding_agent.service`. Adapter принимает только зарегистрированный `workspace_ref`, выбирает профиль через встроенный allowlist, ограничивает `attempt_budget` значением не выше 10 и повторяет один результат для одинакового `(workspace_ref, request_id)`. Изменение payload при повторном request ID возвращает machine-readable `idempotency_conflict`. Apply и transport-specific lifecycle в этот срез не входят.
 
 Предлагаемый request:
 

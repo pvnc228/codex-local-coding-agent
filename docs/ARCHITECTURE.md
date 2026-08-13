@@ -21,6 +21,10 @@
 - 'apply_patch' — controller-only seam, не является tool-ом модели: применяется только после валидации и только при `--apply`;
 - 'run_tests' — только allowlisted-команда.
 
+### Transport-neutral service seam
+
+`local_coding_agent.service` предоставляет прямой in-process boundary поверх `Controller`. `ServiceRequest` принимает только opaque `workspace_ref`, зарегистрированный в `WorkspaceRegistry`, и имя профиля из встроенного allowlist. `DirectCodingAdapter` сохраняет proposal-only режим, передаёт controller-owned result без доверия к полям модели и делает повторный `(workspace_ref, request_id)` идемпотентным. Transport-specific lifecycle, MCP Tasks и apply остаются за пределами этого seam.
+
 ## Поток
 
 ~~~mermaid

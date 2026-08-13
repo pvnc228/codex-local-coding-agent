@@ -101,6 +101,8 @@
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
+Статус: R5.1 реализован в `main`; R5.2 local stdio MCP ещё не начат. Contract tests покрывают UTF-8 mapping, workspace/profile policy errors, controller-owned fields и idempotency.
+
 Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
 
 - определить стабильный transport-neutral request/result contract поверх `TaskEnvelope` и controller-owned result;
