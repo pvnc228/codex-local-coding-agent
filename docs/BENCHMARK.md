@@ -112,6 +112,26 @@ Applicability run добавил `git apply --check` без записи в work
 
 Итог идентичен post-review baseline: Devstral единственный с ненулевой correctness (25%), loop reliability 0% у всех. R7/R8 не меняют качество предложений модели — это ожидаемо, оба этапа про protocol/queueing, а не про выбор модели. Новые модели из MODEL_EVALUATION_PLAN (Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse, Nemotron) в `/api/tags` отсутствуют и не участвовали в прогоне.
 
+## SEARCH/REPLACE (R9): 2026-08-13
+
+После добавления SEARCH/REPLACE-формата изменения (`edits`) повторён benchmark на тех же четырёх fixtures. Прогон прерван сбоем машины на стадии записи, но artifact `.codex-run/benchmarks/search-replace-20260813.json` (gitignored) сохранился полностью: все четыре профиля завершились. Correctness считается тем же внешним oracle.
+
+| Profile | Correctness (diff → edits) | Loop reliability | Valid proposal |
+| --- | ---: | ---: | ---: |
+| `qwen3-coder-30b-iq2` | 0% → **75%** | 0% | 75% |
+| `qwen3-8b-q6k` | 0% → **50%** | 0% | 75% |
+| `devstral-small-2-24b` | 25% → 25% | 0% | 25% |
+| `qwen2.5-coder-14b-q6k` | 0% → 0% | 0% | 0% |
+
+### Интерпретация
+
+- **Гипотеза подтверждена**: unified diff был основным барьером. На SEARCH/REPLACE `qwen3-coder-30b-iq2` (10 GB, IQ2_M) поднялся с 0% до 75% correctness — модели теперь не нужно вычислять номера строк и hunk-заголовки.
+- `qwen3-8b-q6k` (6.7 GB) поднялся до 50% — самый дешёвый новый профиль теперь продуктивно решает часть задач.
+- Loop reliability остаётся 0% у всех: модели предлагают корректные edits через `propose_patch` tool-call, но финальный structured JSON не завершает цикл чисто (`accepted` не достигается). Это следующий дефект протокола, не качества модели.
+- Остаточные причины провала: `edit search block is not line-aligned` (модель копирует блок не с границы строки) и семантически неверный `replace` (oracle mismatch). `qwen2.5-coder-14b-q6k` по-прежнему не выдаёт ни patch, ни edits (retry budget exhausted).
+
+Вывод: SEARCH/REPLACE — правильное направление для слабых моделей. Дальше стоит улучшать loop-завершение (чтобы модель корректно закрывала цикл финальным JSON после `propose_patch`) и подсказку про выравнивание `search` по строкам.
+
 ## Вторая волна (quant A/B + product race): 2026-08-13
 
 Скачаны и импортированы шесть новых GGUF (см. [MODEL_RESEARCH.md](MODEL_RESEARCH.md)); все размеры и SHA-256 сверены с upstream. Muse Glimmer импорт не прошёл: Ollama 0.32.5 отклонил quant `UD-Q4_K_XL` (`failed to validate GGUF with llama-quantize`), модель не считается установленной.
