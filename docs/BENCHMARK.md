@@ -81,3 +81,18 @@ Applicability run добавил `git apply --check` без записи в work
 - `qwen2.5-coder` по-прежнему не выдаёт валидный структурированный proposal.
 - `ternary-bonsai-27b` остаётся недоступным (отсутствует в Ollama `/api/tags`).
 - Ни один профиль не достиг ненулевой loop reliability; correctness в целом остаётся низкой.
+
+## Post-review baseline: 2026-08-13
+
+Повторный прогон выполнен после review fixes на тех же четырёх fixtures с `repeats=1`, `num_ctx=4096`, `temperature=0`, `num_predict=512`, `max_turns=4`. Внешний oracle исполнялся в isolated child process. Полный artifact расположен локально в `.codex-run/benchmarks/post-review-20260813.json` и намеренно не публикуется, поэтому таблица ниже — сводка, а не ссылка на доступный читателю файл.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `bonsai-64k` | completed | 0% | 0% | 100% | 0% |
+| `qwen2.5-coder` | completed | 0% | 0% | 50% | 0% |
+| `ornith-9b` | completed | 0% | 0% | 100% | 25% |
+| `qwen3-coder-30b` | completed | 0% | 0% | 75% | 25% |
+| `devstral-small-2-24b` | completed | 25% | 0% | 75% | 50% |
+| `ternary-bonsai-27b` | unavailable | — | — | — | — |
+
+Вывод не изменился: Devstral остаётся единственным профилем с ненулевой correctness (25%), но ни один профиль не доставил корректный результат через loop надёжно. Это закрывает runtime gate R4, но не является основанием объявлять итоговый shortlist или обходить quantization A/B.
