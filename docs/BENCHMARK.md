@@ -96,3 +96,18 @@ Applicability run добавил `git apply --check` без записи в work
 | `ternary-bonsai-27b` | unavailable | — | — | — | — |
 
 Вывод не изменился: Devstral остаётся единственным профилем с ненулевой correctness (25%), но ни один профиль не доставил корректный результат через loop надёжно. Это закрывает runtime gate R4, но не является основанием объявлять итоговый shortlist или обходить quantization A/B.
+
+## Post-R7/R8 live benchmark: 2026-08-13
+
+Повторный прогон после реализации R7 (атомаризация) и R8 (bounded retries/escalation) на тех же четырёх fixtures с `repeats=1`, `num_ctx=4096`, `temperature=0`, `num_predict=512`, `max_turns=4`. Полный artifact локально в `.codex-run/benchmarks/post-r7-r8.json` (gitignored, не публикуется).
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `bonsai-64k` | completed | 0% | 0% | 100% | 0% |
+| `qwen2.5-coder` | completed | 0% | 0% | 50% | 0% |
+| `ornith-9b` | completed | 0% | 0% | 100% | 25% |
+| `qwen3-coder-30b` | completed | 0% | 0% | 75% | 25% |
+| `devstral-small-2-24b` | completed | 25% | 0% | 75% | 50% |
+| `ternary-bonsai-27b` | unavailable | — | — | — | — |
+
+Итог идентичен post-review baseline: Devstral единственный с ненулевой correctness (25%), loop reliability 0% у всех. R7/R8 не меняют качество предложений модели — это ожидаемо, оба этапа про protocol/queueing, а не про выбор модели. Новые модели из MODEL_EVALUATION_PLAN (Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse, Nemotron) в `/api/tags` отсутствуют и не участвовали в прогоне.
