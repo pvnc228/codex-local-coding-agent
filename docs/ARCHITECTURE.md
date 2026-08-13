@@ -14,6 +14,10 @@
 
 `StdioDelegationAdapter` — тонкий UTF-8 JSONL process boundary с одной операцией `delegate_code`. Он декодирует ограниченную строку, строит тот же `DelegationRequest` и передаёт её в `DelegationService`; он не владеет workspace registry, model allowlist, validation, audit или apply. Это process-bound seam для будущего MCP adapter, но не заявка на полную MCP conformance, Tasks или reconnect.
 
+### Bounded worker pool (R6 first slice)
+
+`BoundedWorkerPool` — in-memory execution layer поверх `DelegationService`. Он ограничивает число worker slots и ожидающих jobs, сохраняет caller-scoped idempotency и job state, изолирует request/result между workers и передаёт cooperative cancellation в controller. При отмене slot удерживается до фактического завершения model-call executor. Этот срез не является durable store, не реализует MCP Tasks lifecycle и не выбирает Ollama scheduling policy.
+
 ### Local model executor
 
 Локальная модель Ollama. Она читает разрешённые данные, делает рассуждение и предлагает изменение через инструменты.

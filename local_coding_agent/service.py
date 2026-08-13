@@ -94,63 +94,87 @@ class DelegationService:
         self._cache: OrderedDict[tuple[str, str, str], _CachedResult] = OrderedDict()
         self._cache_lock = RLock()
 
-    def delegate(self, caller_id: str, request: DelegationRequest) -> dict[str, Any]:
+    def delegate(
+        self,
+        caller_id: str,
+        request: DelegationRequest,
+        *,
+        cancel_event: Event | None = None,
+        completion_event: Event | None = None,
+    ) -> dict[str, Any]:
         """Run one proposal-only delegation with caller-scoped idempotency."""
 
-        if not isinstance(caller_id, str) or not caller_id.strip():
-            return self._policy_failure("invalid_caller", "caller_id must be a non-empty string")
-        if not isinstance(request, DelegationRequest):
-            return self._policy_failure("invalid_request", "request must be a DelegationRequest")
-
-        cache_key = (caller_id, request.workspace_ref, request.request_id)
-        fingerprint = self._fingerprint(request)
-        with self._cache_lock:
-            cached = self._cache.get(cache_key)
-            if cached is None:
-                if len(self._cache) >= self._max_cached_results:
-                    for stale_key, stale_record in self._cache.items():
-                        if stale_record.completed.is_set():
-                            self._cache.pop(stale_key)
-                            break
-                    else:
-                        return self._policy_failure(
-                            "idempotency_capacity",
-                            "in-memory idempotency capacity is exhausted by active requests",
-                        )
-                cached = _CachedResult(fingerprint=fingerprint, completed=Event())
-                self._cache[cache_key] = cached
-                owner = True
-            elif cached.fingerprint != fingerprint:
-                return self._policy_failure(
-                    "idempotency_conflict",
-                    "request_id was already used with a different request payload",
-                )
-            else:
-                self._cache.move_to_end(cache_key)
-                owner = False
-
-        if not owner:
-            cached.completed.wait()
-            assert cached.result is not None
-            return copy.deepcopy(cached.result)
-
+        controller_started = Event()
         try:
-            result = self._execute(request)
-        except (OSError, ToolPolicyError, ValueError) as error:
-            result = self._policy_failure("controller_policy", str(error))
-        except Exception:
-            # This is the transport boundary: unexpected infrastructure errors
-            # must still complete the reservation so duplicate callers cannot
-            # wait forever on an in-flight idempotency key.
-            result = self._policy_failure("controller_error", "controller execution failed")
-        normalized = self._normalize_result(result)
-        with self._cache_lock:
-            cached.result = copy.deepcopy(normalized)
-            cached.completed.set()
-            self._evict_completed_results()
-        return copy.deepcopy(normalized)
+            if not isinstance(caller_id, str) or not caller_id.strip():
+                return self._policy_failure("invalid_caller", "caller_id must be a non-empty string")
+            if not isinstance(request, DelegationRequest):
+                return self._policy_failure("invalid_request", "request must be a DelegationRequest")
 
-    def _execute(self, request: DelegationRequest) -> dict[str, Any]:
+            cache_key = (caller_id, request.workspace_ref, request.request_id)
+            fingerprint = self._fingerprint(request)
+            with self._cache_lock:
+                cached = self._cache.get(cache_key)
+                if cached is None:
+                    if len(self._cache) >= self._max_cached_results:
+                        for stale_key, stale_record in self._cache.items():
+                            if stale_record.completed.is_set():
+                                self._cache.pop(stale_key)
+                                break
+                        else:
+                            return self._policy_failure(
+                                "idempotency_capacity",
+                                "in-memory idempotency capacity is exhausted by active requests",
+                            )
+                    cached = _CachedResult(fingerprint=fingerprint, completed=Event())
+                    self._cache[cache_key] = cached
+                    owner = True
+                elif cached.fingerprint != fingerprint:
+                    return self._policy_failure(
+                        "idempotency_conflict",
+                        "request_id was already used with a different request payload",
+                    )
+                else:
+                    self._cache.move_to_end(cache_key)
+                    owner = False
+
+            if not owner:
+                cached.completed.wait()
+                assert cached.result is not None
+                return copy.deepcopy(cached.result)
+
+            try:
+                result = self._execute(
+                    request,
+                    cancel_event=cancel_event,
+                    completion_event=completion_event,
+                    controller_started=controller_started,
+                )
+            except (OSError, ToolPolicyError, ValueError) as error:
+                result = self._policy_failure("controller_policy", str(error))
+            except Exception:
+                # This is the transport boundary: unexpected infrastructure errors
+                # must still complete the reservation so duplicate callers cannot
+                # wait forever on an in-flight idempotency key.
+                result = self._policy_failure("controller_error", "controller execution failed")
+            normalized = self._normalize_result(result)
+            with self._cache_lock:
+                cached.result = copy.deepcopy(normalized)
+                cached.completed.set()
+                self._evict_completed_results()
+            return copy.deepcopy(normalized)
+        finally:
+            if completion_event is not None and not controller_started.is_set():
+                completion_event.set()
+
+    def _execute(
+        self,
+        request: DelegationRequest,
+        *,
+        cancel_event: Event | None = None,
+        completion_event: Event | None = None,
+        controller_started: Event | None = None,
+    ) -> dict[str, Any]:
         workspace = self._workspaces.get(request.workspace_ref)
         if workspace is None:
             return self._policy_failure(
@@ -166,7 +190,13 @@ class DelegationService:
             )
         model = self._model_factory(profile)
         # apply is intentionally absent: direct delegation always remains a proposal.
-        return Controller(model, workspace, max_turns=self._max_turns).run(request.task)
+        if controller_started is not None:
+            controller_started.set()
+        return Controller(model, workspace, max_turns=self._max_turns).run(
+            request.task,
+            cancel_event=cancel_event,
+            completion_event=completion_event,
+        )
 
     def _evict_completed_results(self) -> None:
         while len(self._cache) > self._max_cached_results:

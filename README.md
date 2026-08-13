@@ -25,6 +25,7 @@
 - работать в proposal-only режиме: файлы не изменяются локальной моделью.
 - вызывать тот же controller через transport-neutral Python API с зарегистрированным `workspace_ref`, allowlisted profile и caller-scoped idempotency.
 - принимать тот же proposal-only `delegate_code` через bounded UTF-8 JSONL process-bound adapter.
+- ставить proposal-only delegations в bounded in-memory worker pool с caller-scoped job state и cancellation.
 
 ## Безопасные границы
 
@@ -208,6 +209,7 @@ py -m local_coding_agent `
 | `local_coding_agent/controller.py` | tool-loop, retry, cancellation и duplicate-call guard |
 | `local_coding_agent/service.py` | R5.1 direct proposal-only service, request parsing, workspace registry и idempotency |
 | `local_coding_agent/stdio.py` | bounded UTF-8 JSONL process-bound `delegate_code` adapter |
+| `local_coding_agent/worker_pool.py` | bounded in-memory delegation queue, job state и cooperative cancellation |
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |
@@ -237,10 +239,10 @@ py -m compileall -q local_coding_agent tests
 git diff --check
 ```
 
-Текущий набор содержит 80 тестов. Live smoke с Ollama и benchmark выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+Текущий набор содержит 88 тестов. Live smoke с Ollama и benchmark выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. R5.1 direct seam и первый process-bound stdio slice R5.2 реализованы; полноценный MCP adapter, Tasks и очередь остаются следующими этапами.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. R5.1 direct seam, первый process-bound stdio slice R5.2 и R6 bounded in-memory worker-pool slice реализованы; полноценный MCP adapter/conformance, durable Tasks store, fairness и Ollama-specific scheduling остаются следующими этапами.

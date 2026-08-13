@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+from threading import Event, Thread
 from typing import Any, Protocol
 
 from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
@@ -134,30 +134,33 @@ class Controller:
         task: TaskEnvelope,
         *,
         cancel_event: Event | None = None,
+        completion_event: Event | None = None,
         apply: bool = False,
     ) -> dict[str, Any]:
         audit: list[dict[str, Any]] = [{"event": "task_received", "task_id": task.id}]
         try:
             messages = self._initial_messages(task)
         except ValueError as error:
+            if completion_event is not None:
+                completion_event.set()
             return self._failure("needs_context", "context_limit", str(error), audit)
 
-        active_cancel = cancel_event or self.cancel_event
-        tools = BoundedRepositoryTools(
-            self.workspace_root,
-            task,
-            max_tool_result_bytes=self.max_tool_result_bytes,
-            max_files=self.max_files,
-            max_patch_bytes=self.max_patch_bytes,
-            max_patch_files=self.max_patch_files,
-            cancel_event=active_cancel,
-        )
-        seen_calls: dict[str, int] = {}
-        observed_checks: dict[str, dict[str, Any]] = {}
-        retries = 0
-        executor = ThreadPoolExecutor(max_workers=1)
-
+        executor: ThreadPoolExecutor | None = None
         try:
+            active_cancel = cancel_event or self.cancel_event
+            tools = BoundedRepositoryTools(
+                self.workspace_root,
+                task,
+                max_tool_result_bytes=self.max_tool_result_bytes,
+                max_files=self.max_files,
+                max_patch_bytes=self.max_patch_bytes,
+                max_patch_files=self.max_patch_files,
+                cancel_event=active_cancel,
+            )
+            seen_calls: dict[str, int] = {}
+            observed_checks: dict[str, dict[str, Any]] = {}
+            retries = 0
+            executor = ThreadPoolExecutor(max_workers=1)
             return self._run_turns(
                 task,
                 messages,
@@ -171,7 +174,24 @@ class Controller:
                 apply=apply,
             )
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            if executor is None:
+                if completion_event is not None:
+                    completion_event.set()
+            else:
+                executor.shutdown(wait=False, cancel_futures=True)
+                if completion_event is not None:
+                    Thread(
+                        target=self._wait_for_executor,
+                        args=(executor, completion_event),
+                        daemon=True,
+                    ).start()
+
+    @staticmethod
+    def _wait_for_executor(executor: ThreadPoolExecutor, completion_event: Event) -> None:
+        try:
+            executor.shutdown(wait=True)
+        finally:
+            completion_event.set()
 
     def _run_turns(
         self,

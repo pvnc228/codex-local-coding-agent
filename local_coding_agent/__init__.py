@@ -7,11 +7,13 @@ from .service import DelegationRequest, DelegationService
 from .stdio import StdioDelegationAdapter
 from .task import TaskEnvelope
 from .validators import ValidationReport, validate_candidate
+from .worker_pool import BoundedWorkerPool
 
 __all__ = [
     "Controller",
     "DelegationRequest",
     "DelegationService",
+    "BoundedWorkerPool",
     "StdioDelegationAdapter",
     "LoadedModel",
     "MemoryBudgetError",
