@@ -241,7 +241,7 @@ class BenchmarkTests(unittest.TestCase):
         result = run_case(model, case)
 
         self.assertTrue(result.correct)
-        self.assertEqual(result.patch_source, "tool_proposal")
+        self.assertEqual(result.patch_source, "accepted_result")
 
     def test_run_case_scores_search_replace_edits_proposal(self):
         case = BenchmarkCase(

@@ -410,6 +410,64 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(result["risks"])
 
 
+    def test_controller_reuses_tool_proposed_patch_when_final_json_omits_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="reuse-tool-patch",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            patch = (
+                "diff --git a/src/value.py b/src/value.py\n"
+                "--- a/src/value.py\n"
+                "+++ b/src/value.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "propose_patch",
+                                        "arguments": {"patch": patch},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменено значение",
+                                    "checks": [],
+                                    "risks": [],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(result["patch"], patch)
+        self.assertTrue(
+            any(e.get("event") == "patch_reused_from_tool_proposal" for e in result["audit"])
+        )
+
     def test_controller_applies_accepted_patch_when_requested(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)

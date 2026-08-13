@@ -20,8 +20,8 @@ SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной �
 Для файлов используй только относительные пути из task allowlist; абсолютные пути и '..' запрещены.
 Если данных не хватает, задай один точный вопрос.
 Патч должен быть минимальным и затрагивать только разрешённые файлы.
-Для propose_patch предпочтителен формат SEARCH/REPLACE: список edits, каждый с полями file, search (точная копия текущего кода) и replace (новый код); номера строк не нужны. Либо верните полный unified diff с реальными переводами строк и корректными hunk headers. Применимость и структура diff проверяются controller-owned validator и git; не используй placeholders, абсолютные пути или literal \\n в качестве перевода строки.
-После завершения верни только структурированный JSON-результат."""
+Для propose_patch предпочтителен SEARCH/REPLACE (edits: file+search+replace, номера строк не нужны) либо полный unified diff с корректными hunk headers. Применимость проверяют validator и git.
+После завершения верни один JSON без markdown: {"status":"candidate","summary":"...","patch":"<diff>","checks":[],"risks":[]}. Вместо "patch" можно "edits":[{"file","search","replace"}]. Патч из propose_patch можно не дублировать."""
 
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
@@ -378,6 +378,12 @@ class Controller:
                 "validation",
             ):
                 result.pop(controller_field, None)
+            # A patch already accepted by propose_patch (validated + git-checked at
+            # tool time) is the source of truth. Weak models often fail to repeat
+            # it in the final JSON; reuse it instead of discarding valid work.
+            if not result.get("patch") and not result.get("edits") and last_patch:
+                result["patch"] = last_patch[-1]
+                audit.append({"event": "patch_reused_from_tool_proposal"})
             report = validate_candidate(
                 result,
                 task,
