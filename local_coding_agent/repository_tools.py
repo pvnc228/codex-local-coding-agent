@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import ctypes
+from ctypes import wintypes
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from threading import Event
@@ -19,6 +22,68 @@ def _fold_path(path: str) -> str:
     # ponytail: treat only Windows as case-insensitive; macOS default is
     # case-insensitive but this keeps the common Linux case strict.
     return path.casefold() if os.name == "nt" else path
+
+
+def _windows_descendants(root_pid: int) -> tuple[list[int], str | None]:
+    if os.name != "nt":
+        return [root_pid], None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    invalid_handle = ctypes.c_void_p(-1).value
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+    if snapshot == invalid_handle:
+        return [], f"process snapshot failed: {ctypes.get_last_error()}"
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(ProcessEntry)
+        parents: dict[int, int] = {}
+        if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            while True:
+                parents[entry.th32ProcessID] = entry.th32ParentProcessID
+                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    break
+        children: dict[int, list[int]] = {}
+        for pid, parent in parents.items():
+            children.setdefault(parent, []).append(pid)
+        descendants: list[int] = []
+        pending = list(children.get(root_pid, []))
+        while pending:
+            pid = pending.pop()
+            descendants.append(pid)
+            pending.extend(children.get(pid, []))
+        return descendants, None
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+def _terminate_windows_pid(pid: int) -> tuple[bool, str | None]:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(0x0001, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error in {2, 3, 87, 1168}:
+            return True, None
+        return False, f"OpenProcess({pid}) failed: {error}"
+    try:
+        if kernel32.TerminateProcess(handle, 1):
+            return True, None
+        return False, f"TerminateProcess({pid}) failed: {ctypes.get_last_error()}"
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 class ToolPolicyError(RuntimeError):
@@ -98,28 +163,51 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("command must be a non-empty string")
         if command not in self.task.checks:
             raise ToolPolicyError("command is not allowlisted")
-        process: subprocess.Popen[bytes] = subprocess.Popen(
-            command,
-            cwd=self.workspace_root,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=self._isolated_environment(),
-            **self._process_group_options(),
-        )
+        stdout_sink = tempfile.TemporaryFile(mode="w+b")
+        stderr_sink = tempfile.TemporaryFile(mode="w+b")
+        try:
+            process: subprocess.Popen[bytes] = subprocess.Popen(
+                command,
+                cwd=self.workspace_root,
+                shell=True,
+                stdout=stdout_sink,
+                stderr=stderr_sink,
+                env=self._isolated_environment(),
+                **self._process_group_options(),
+            )
+        except BaseException:
+            stdout_sink.close()
+            stderr_sink.close()
+            raise
         deadline = time.monotonic() + self.test_timeout_seconds
         timed_out = False
-        while True:
-            if self.cancel_event is not None and self.cancel_event.is_set():
-                self._terminate(process)
-                raise ToolCancelled("task was cancelled")
-            if process.poll() is not None:
-                break
-            if self._deadline_exceeded(process, deadline):
-                timed_out = True
-                break
-            time.sleep(0.05)
-        stdout, stderr = process.communicate()
+        termination_warning: str | None = None
+        finished = False
+        try:
+            while True:
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    termination_warning = self._terminate(process)
+                    finished = True
+                    raise ToolCancelled("task was cancelled")
+                if process.poll() is not None:
+                    finished = True
+                    break
+                if time.monotonic() >= deadline:
+                    termination_warning = self._terminate(process)
+                    timed_out = True
+                    finished = True
+                    break
+                time.sleep(0.05)
+        finally:
+            try:
+                if not finished and process.poll() is None:
+                    termination_warning = self._terminate(process)
+            finally:
+                stdout, stdout_truncated = self._read_process_output(stdout_sink)
+                stderr, stderr_truncated = self._read_process_output(stderr_sink)
+                stdout_sink.close()
+                stderr_sink.close()
+        truncated = stdout_truncated or stderr_truncated
         if timed_out:
             result = {
                 "command": command,
@@ -127,7 +215,7 @@ class BoundedRepositoryTools:
                 "exit_code": None,
                 "stdout": self._decode_process_output(stdout),
                 "stderr": self._decode_process_output(stderr),
-                "truncated": False,
+                "truncated": truncated,
                 "timeout": True,
                 "isolated": True,
             }
@@ -138,7 +226,7 @@ class BoundedRepositoryTools:
                 "exit_code": process.returncode,
                 "stdout": self._decode_process_output(stdout),
                 "stderr": self._decode_process_output(stderr),
-                "truncated": False,
+                "truncated": truncated,
                 "isolated": True,
             }
         else:
@@ -148,9 +236,11 @@ class BoundedRepositoryTools:
                 "exit_code": process.returncode,
                 "stdout": self._decode_process_output(stdout),
                 "stderr": self._decode_process_output(stderr),
-                "truncated": False,
+                "truncated": truncated,
                 "isolated": True,
             }
+        if termination_warning:
+            result["termination_warning"] = termination_warning
         result = self._bounded_process_result(result)
         result["evidence"] = self._process_evidence(result)
         if self._result_size(result) > self.max_tool_result_bytes and result.get("isolated") is True:
@@ -162,37 +252,92 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("max_tool_result_bytes is too small for run_tests evidence")
         return result
 
-    def _terminate(self, process: subprocess.Popen) -> None:
+    def _read_process_output(self, sink: Any) -> tuple[bytes, bool]:
+        sink.flush()
+        sink.seek(0)
+        output = sink.read(self.max_tool_result_bytes + 1)
+        return output[: self.max_tool_result_bytes], len(output) > self.max_tool_result_bytes
+
+    def _terminate(self, process: subprocess.Popen) -> str | None:
         # ponytail: kill the whole tree so grandchild processes (cmd.exe
         # shells herding the real command) cannot hold the workspace open.
-        self._kill_tree(process)
-        process.wait()
+        if process.poll() is not None:
+            return None
+        killed, detail = self._kill_tree(process)
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except OSError as error:
+                raise ToolPolicyError(f"failed to terminate process: {error}") from error
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired as error:
+                raise ToolPolicyError(
+                    f"process did not terminate after bounded wait: {detail or error}"
+                ) from error
+        if not killed and process.poll() is None:
+            raise ToolPolicyError(f"failed to terminate process: {detail or 'unknown error'}")
+        return detail if not killed else None
 
     @staticmethod
-    def _deadline_exceeded(process: subprocess.Popen, deadline: float) -> bool:
-        # ponytail: cancellable timeout — kill now rather than waiting for
-        # subprocess.run's own timeout to fire.
-        if time.monotonic() >= deadline:
-            BoundedRepositoryTools._kill_tree(process)
-            process.wait()
-            return True
-        return False
-
-    @staticmethod
-    def _kill_tree(process: subprocess.Popen) -> None:
+    def _kill_tree(process: subprocess.Popen) -> tuple[bool, str | None]:
         if os.name == "nt":
             # /T terminates every descendant process, /F forces it.
-            subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
+            system_root = os.environ.get("SystemRoot", r"C:\Windows")
+            taskkill = str(Path(system_root) / "System32" / "taskkill.exe")
+            if not Path(taskkill).is_file():
+                taskkill = "taskkill"
+            try:
+                completed = subprocess.run(
+                    [taskkill, "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=5,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                tree, snapshot_detail = _windows_descendants(process.pid)
+                errors = [snapshot_detail] if snapshot_detail else []
+                for pid in reversed(list(dict.fromkeys([*tree, process.pid]))):
+                    killed, kill_detail = _terminate_windows_pid(pid)
+                    if not killed and kill_detail:
+                        errors.append(kill_detail)
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                    except OSError as kill_error:
+                        errors.append(f"process.kill failed: {kill_error}")
+                detail = f"taskkill failed: {error}"
+                return False, f"{detail}; {'; '.join(errors)}" if errors else detail
+            tree, snapshot_detail = _windows_descendants(process.pid)
+            remaining, _ = _windows_descendants(process.pid)
+            if completed.returncode == 0 and not remaining:
+                return True, None
+            detail = f"taskkill exited with code {completed.returncode}"
+            errors = [snapshot_detail] if snapshot_detail else []
+            for pid in reversed(list(dict.fromkeys([*tree, *remaining, process.pid]))):
+                killed, kill_detail = _terminate_windows_pid(pid)
+                if not killed and kill_detail:
+                    errors.append(kill_detail)
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except OSError as error:
+                    errors.append(f"process.kill failed: {error}")
+            if errors:
+                return False, f"{detail}; {'; '.join(errors)}"
+            return False, detail
         else:
             try:
                 os.killpg(process.pid, 9)
             except (ProcessLookupError, PermissionError):
-                process.kill()
+                try:
+                    process.kill()
+                except OSError as error:
+                    return False, f"process kill failed: {error}"
+            return True, None
 
     @staticmethod
     def _isolated_environment() -> dict[str, str]:
@@ -239,15 +384,36 @@ class BoundedRepositoryTools:
     ) -> dict[str, Any]:
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
-        while self._result_size(result) > self.max_tool_result_bytes and (stdout or stderr):
-            if len(stdout) >= len(stderr) and stdout:
-                stdout = stdout[:-1]
-            elif stderr:
-                stderr = stderr[:-1]
-            result = {**result, "stdout": stdout, "stderr": stderr, "truncated": True}
-            if after_trim is not None:
-                result = after_trim(result)
-        return result
+        total_length = len(stdout) + len(stderr)
+        if self._result_size(result) <= self.max_tool_result_bytes or total_length == 0:
+            return result
+
+        def candidate(length: int) -> dict[str, Any]:
+            stdout_length = min(len(stdout), round(length * len(stdout) / total_length))
+            stderr_length = min(len(stderr), length - stdout_length)
+            retained = stdout_length + stderr_length
+            if retained < length:
+                stdout_length = min(len(stdout), stdout_length + length - retained)
+            bounded = {
+                **result,
+                "stdout": stdout[:stdout_length],
+                "stderr": stderr[:stderr_length],
+                "truncated": True,
+            }
+            return after_trim(bounded) if after_trim is not None else bounded
+
+        low = 0
+        high = total_length
+        best = candidate(0)
+        while low <= high:
+            middle = (low + high) // 2
+            bounded = candidate(middle)
+            if self._result_size(bounded) <= self.max_tool_result_bytes:
+                best = bounded
+                low = middle + 1
+            else:
+                high = middle - 1
+        return best
 
     @staticmethod
     def _decode_process_output(output: bytes | str | None) -> str:

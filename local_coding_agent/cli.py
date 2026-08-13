@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", choices=list_profiles(), default="qwen2.5-1.5b")
     parser.add_argument("--endpoint", help="Override the profile Ollama endpoint")
     parser.add_argument("--max-turns", type=int, default=4)
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Применить принятый патч к рабочей области вместо proposal-only",
+    )
     parser.add_argument("--num-ctx", type=int, help="Override model context window in tokens")
     parser.add_argument(
         "--benchmark",
@@ -178,7 +183,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             client,
             args.workspace,
             max_turns=args.max_turns,
-        ).run(task)
+        ).run(task, apply=args.apply)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, OllamaError) as error:
         print(json.dumps({"status": "failed", "error": {"kind": "input", "message": str(error)}}, ensure_ascii=False))
         return 2

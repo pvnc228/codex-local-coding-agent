@@ -18,7 +18,7 @@
 - 'read_file' — только allowlist;
 - 'search_text' — ограниченный поиск;
 - 'propose_patch' — вернуть diff без записи;
-- 'apply_patch' — только после проверки контроллера;
+- 'apply_patch' — controller-only seam, не является tool-ом модели: применяется только после валидации и только при `--apply`;
 - 'run_tests' — только allowlisted-команда.
 
 ## Поток
@@ -32,12 +32,16 @@ flowchart TD
     E --> F["Execute bounded tool"]
     F --> C
     D -- "no" --> G["Parse structured result"]
-    G --> H["Validate scope and diff"]
-    H --> I{"Checks required?"}
-    I -- "yes" --> J["Run targeted checks"]
-    I -- "no" --> K["Accept or reject"]
-    J --> K
-    K --> L["Result and audit log"]
+    G --> H["Validate scope, diff and evidence"]
+    H --> I{"Candidate valid?"}
+    I -- "no" --> L["Rejected result and audit log"]
+    I -- "yes, proposal-only" --> L2["Accepted proposal and audit log"]
+    I -- "yes, --apply" --> J["Controller applies patch"]
+    J --> K["Re-run all targeted checks"]
+    K --> M{"Post-apply checks pass?"}
+    M -- "yes" --> L3["Accepted applied result and audit log"]
+    M -- "no" --> R["Rollback patch"]
+    R --> L
 ~~~
 
 ## Состояния задачи
@@ -60,7 +64,12 @@ received
 - Абсолютные пути отбрасываются или нормализуются внутри workspace.
 - Размер tool-result ограничивается.
 - Команды тестов берутся из конфигурации задачи, а не из свободного текста модели.
-- 'apply_patch' не вызывается напрямую локальной моделью в proposal-only режиме.
+- `run_tests` пишет stdout/stderr в bounded temporary sinks, чтобы verbose child не мог заблокировать controller на заполненном pipe.
+- Завершение процесса и всего его дерева имеет bounded wait; ошибка termination не превращается в безлимитный `wait()`.
+- 'apply_patch' не вызывается напрямую локальной моделью: это controller-only seam.
+- Proposal-only является режимом по умолчанию; mediated apply — opt-in через `--apply`.
+- При `--apply` targeted checks запускаются после изменения; `applied: true` выдаётся только после успешного post-apply результата, иначе patch откатывается.
+- `audit`, `validation` и `applied` принадлежат controller и не принимаются из model result.
 - При повторном tool call с теми же именем и аргументами цикл завершается.
 - После достижения 'max_turns' задача считается незавершённой.
 

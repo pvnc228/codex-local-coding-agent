@@ -1,67 +1,60 @@
-# Handoff — состояние на конец сессии 2026-08-12
+# Handoff — состояние на конец сессии 2026-08-13
 
 Короткая сводка для передачи в следующую сессию. Перед началом работы сверься с этим файлом.
 
 ## Где мы находимся
 
-- Ветка: `agent/document-model-shortlist`, синхронизирована с `origin` (последний commit `2033c2a`).
-- Все правки закоммичены и запушены, рабочая копия чистая.
-- Тесты: **56/56 OK** — `py -m unittest discover -s tests`.
-- Ollama: `http://127.0.0.1:11434`, отвечает. VRAM в конце сессии освобождён (`total_vram_bytes: 0`).
+- Ветка: `main`.
+- Рабочая копия содержит незакоммиченные изменения review-fix: P0/P1/P2 исправлены, документация синхронизирована.
+- Полный локальный gate: **67/67 OK**, `compileall` и `git diff --check` прошли через bundled Python/git. Live chat и benchmark после review не запускались.
+- Ollama: `http://127.0.0.1:11434`, read-only `/api/ps` отвечает; сейчас загруженных моделей нет. Live chat и benchmark после review не запускались.
 
-## Что закрыто в этой сессии (R1/R2 из ROADMAP.md)
+## Что закрыто в этой сессии
 
-Все 10 пунктов `docs/AUDIT.md` закрыты и запушены:
+- **R1/R2** (ранее, commits `c09ec0c` и `2033c2a`): все 10 пунктов `docs/AUDIT.md` + hunk-relaxation.
+- **R3 — Mediated apply**: новый флаг `--apply` (`cli.py`), controller-only seam `apply_patch` (`validators.py`) — применяется patch к workspace только после подтверждения контроллера; локальная модель не имеет прямого доступа к `apply_patch` (`controller.py` параметр `apply=`); proposal-only как режим по умолчанию.
+- **Review fixes**: benchmark oracle вынесен в restricted child process; audit/applied стали controller-owned; `--apply` получил post-apply checks и rollback; subprocess output/termination bounded; fallback patch и trimming исправлены.
+- **Документация**: flow, hunk-count contract, benchmark artifact status и branch handoff синхронизированы.
 
-- Commit `c09ec0c` — R1/R2: allowlist для `list_files` (#1), git в README + graceful fallback (#2), кумулятивный контекстный бюджет (#3), cancellation блокирующих вызовов (#4), структурная сверка evidence (#5), pre-read лимит `search_text` (#6), убрано дублирование/O(n²) обрезки (#7), duplicate-call guard через canonical signature `list_files` (#8), case-sensitive allowlist (#9), снапшот после unload в `enforce_limit` (#10).
+## Benchmark baseline до REQUEST_CHANGES
 
-### Hunk-relaxation (последнее изменение, commit `2033c2a`)
+Это baseline предыдущего runtime-прогона, не evidence текущего исправления. Артефакт `.codex-run/benchmarks/latest.json` gitignored и не публикуется. `repeats=1`, профильные значения по умолчанию, `temperature=0`, `num_predict=512`, `max_turns=4`.
 
-- Убрана избыточная проверка old/new hunk line counts в `parse_unified_diff` (`validators.py`), оставлены структурные проверки.
-- Мотивация: `git apply --check` уже отвергает malformed hunks (`corrupt patch`), поэтому наш подсчёт строк был дублирующим барьером. Безопасность не ослаблена.
-- **Итог — нейтрально**: повторный benchmark не дал прироста correctness (см. ниже). Это подтверждает, что узкое место не в парсере, а в том, что модели генерируют патчи, которые `git` сам отвергает.
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Avg wall, ms | Model calls | Tool calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `bonsai-64k` | completed | 0% | 0% | 100% | 0% | 5,980 | 8 | 8 |
+| `qwen2.5-coder` | completed | 0% | 0% | 0% | 0% | 3,589 | 10 | 6 |
+| `ornith-9b` | completed | 0% | 0% | 100% | 25% | 6,643 | 10 | 8 |
+| `qwen3-coder-30b` | completed | 0% | 0% | 75% | 25% | 15,260 | 10 | 7 |
+| `devstral-small-2-24b` | completed | 25% | 0% | 75% | 50% | 50,734 | 15 | 13 |
+| `ternary-bonsai-27b` | unavailable | — | — | — | — | — | — | — |
 
-## Benchmark (повторный прогон 2 моделей, артефакт gitignored)
-
-Артефакт: `.codex-run/benchmarks/latest.json` (в `.gitignore`).
-
-| model | correct | valid | apply |
-| --- | ---: | ---: | ---: |
-| devstral-small-2-24b | 25% | 75% | 50% |
-| qwen3-coder-30b | 0% | 75% | 25% |
-
-- Недетерминизм: кейс `utf8-json`, который в прошлом анализе давал единственный oracle-`correct`, в этом прогоне упал на структурной проверке. Выводы по отдельным кейсам ненадёжны.
-- Доминирующий отказ по-прежнему — `git apply` возвращает `corrupt patch` / `patch does not apply` (не наш парсер).
+- `devstral-small-2-24b` — единственный профиль с ненулевой correctness (25%) и единственный, кто применил patch (50%); лучший текущий кандидат в shortlist, хотя loop reliability всё ещё 0%.
+- Ни один профиль не достиг ненулевой loop reliability; correctness в целом остаётся низкой.
+- `ternary-bonsai-27b` остаётся недоступным (отсутствует в Ollama `/api/tags`).
 
 ## Модели
 
 - Установлены и отвечают: `codex-devstral-small-2-24b`, `codex-qwen3-coder-30b`, `codex-ornith-9b`, `bonsai-64k`, `qwen2.5:1.5b`, `qwen2.5-coder`.
-- **НЕ установлен**: `codex-ternary-bonsai-27b:latest` — Ollama отклонил импорт (`tensor "output.weight" size overflow`). Benchmark-профиль для него помечается `UNAVAILABLE`.
-- `bonsai-64k` заявляет capabilities `tools/thinking/vision`; остальные импорты — только `completion`.
+- **НЕ установлен**: `codex-ternary-bonsai-27b:latest` — отсутствует в `/api/tags`; benchmark-профиль помечается `UNAVAILABLE`.
 
-## Roadmap — что осталось (это и есть "делай роадмапу")
+## Что осталось
 
-Из `docs/ROADMAP.md`:
-
-- **R1 — закрыто.** **R2 — закрыто.**
-- **R3 — Mediated apply** (не начато): применять patch к workspace только после отдельного подтверждения контроллера; `apply_patch` остаётся недоступен локальной модели напрямую; proposal-only как режим по умолчанию.
-- **R4 — повторный benchmark + evidence** (частично): повторить benchmark на тех же fixtures; зафиксировать runtime artifact; пересмотреть shortlist только по внешнему oracle.
-
-## Следующий рычаг роста correctness (если решим лезть в качество, а не только в R3/R4)
-
-Принимать «голый» hunk без `diff --git` / `---` / `+++` заголовка — `git apply` умеет применять bare hunks. Сейчас модели часто падают именно на форматировании заголовка. Это отдельная гипотеза, не входит в R3/R4 по умолчанию.
-
-## Операционные детали
-
-- Субагенты-кодеры: `flash-coder` — надёжный основной; `nemotron-coder` один раз вернул пустой результат (переделегировали на `flash-coder`).
-- Релевантные скиллы: `tdd`, `securing-agentic-ai-tool-invocation`, `ponytail`.
-- CLI: `py -m local_coding_agent --benchmark --benchmark-model <profile> [--benchmark-repeats N] [--benchmark-timeout-seconds N]`.
-- Освободить VRAM: `py -m local_coding_agent --unload-all` (или `--unload-model <name>`).
+- **Loop-reliability gap**: содержательные proposal пока ненадёжно доставляются через protocol loop (0% у всех профилей).
+- **Следующий рычаг роста correctness**: принимать «голый» hunk без `diff --git` / `---` / `+++` заголовка — `git apply` умеет применять bare hunks. Сейчас модели часто падают именно на форматировании заголовка. Это отдельная гипотеза, не входит в закрытые R1–R4.
+- **Незапущено после review**: live chat, benchmark, полный test gate и публикация. Не считать текущий workspace опубликованным или полностью закрытым без этих artifacts.
+- **Операционные детали** из прежней сессии всё ещё актуальны:
+  - Субагенты-кодеры: `flash-coder` — надёжный основной; `nemotron-coder` один раз вернул пустой результат (переделегировали на `flash-coder`).
+  - Релевантные скиллы: `tdd`, `securing-agentic-ai-tool-invocation`, `ponytail`.
+  - CLI: `py -m local_coding_agent --benchmark --benchmark-model <profile> [--benchmark-repeats N] [--benchmark-timeout-seconds N]`.
+  - Освободить VRAM: `py -m local_coding_agent --unload-all` (или `--unload-model <name>`).
 
 ## Ключевые файлы
 
-- `local_coding_agent/validators.py` — `parse_unified_diff` (hunk-count gate убран), `check_patch_applies`, `_fold_path`, `_evidence_facts`.
-- `local_coding_agent/controller.py` — `_messages_size` (кумулятивный бюджет), cancellation, canonical signature `list_files`, `ThreadPoolExecutor` для `model.chat`.
+- `local_coding_agent/validators.py` — `apply_patch` (controller-only seam), `parse_unified_diff`, `check_patch_applies`, `_fold_path`, `_evidence_facts`.
+- `local_coding_agent/controller.py` — параметр `apply=` (mediated apply), `_messages_size` (кумулятивный бюджет), cancellation, canonical signature `list_files`, `ThreadPoolExecutor` для `model.chat`.
+- `local_coding_agent/benchmark.py` + `benchmark_oracle_worker.py` — fallback patch capture и restricted external oracle process.
+- `local_coding_agent/cli.py` — флаг `--apply`.
 - `local_coding_agent/repository_tools.py` — allowlist в `list_files`, pre-read лимит `search_text`, `_kill_tree`, `_trim_stdout_stderr`, `ToolCancelled`.
 - `tests/` — новые/переписанные: `test_validators.py`, `test_controller.py`, `test_repository_tools.py`, `test_memory_manager.py`.
 - Документы: `ROADMAP.md` (план вперёд), `ROADMAP_HISTORICAL.md` (M0–M6), `AUDIT.md`, `BENCHMARK.md`, `MODEL_RESEARCH.md`.

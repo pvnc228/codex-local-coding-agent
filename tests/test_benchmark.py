@@ -23,6 +23,19 @@ class FakeBenchmarkModel:
         return self.response
 
 
+class SequenceBenchmarkModel:
+    def __init__(self, responses):
+        self.responses = list(responses)
+
+    def chat(self, messages, *, tools=None):
+        return self.responses.pop(0)
+
+
+def restricted_process_oracle(workspace):
+    read = _load_function(workspace / "src/value.py", "read")
+    return read() == "restricted", "oracle process allowed an unsafe import"
+
+
 class BenchmarkTests(unittest.TestCase):
     def test_default_cases_are_comparable_and_have_unique_ids(self):
         cases = default_cases()
@@ -100,6 +113,135 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(model.prompt_tokens, 3)
         self.assertEqual(model.eval_count, 4)
         self.assertEqual(model.total_duration_ns, 10)
+
+    def test_instrumented_model_keeps_compatible_content_tool_patch(self):
+        patch = (
+            "diff --git a/src/value.py b/src/value.py\n"
+            "--- a/src/value.py\n"
+            "+++ b/src/value.py\n"
+            "@@ -1 +1 @@\n"
+            "-VALUE = 1\n"
+            "+VALUE = 2\n"
+        )
+        response = {
+            "message": {
+                "role": "assistant",
+                "content": json.dumps(
+                    {"name": "propose_patch", "arguments": {"patch": patch}}
+                ),
+            }
+        }
+        model = InstrumentedModel(FakeBenchmarkModel(response))
+
+        model.chat([], tools=[])
+
+        self.assertEqual(model.proposed_patches, [patch])
+
+    def test_benchmark_oracle_runs_in_restricted_child_process(self):
+        case = BenchmarkCase(
+            id="restricted-oracle",
+            task=TaskEnvelope(
+                id="restricted-oracle",
+                goal="проверить ограничение oracle",
+                files=("src/value.py",),
+            ),
+            fixture={"src/value.py": "def read():\n    return 'original'\n"},
+            expected_files={
+                "src/value.py": (
+                    "def read():\n"
+                    "    try:\n"
+                    "        import os\n"
+                    "        return 'unsafe'\n"
+                    "    except ImportError:\n"
+                    "        return 'restricted'\n"
+                )
+            },
+            oracle=restricted_process_oracle,
+        )
+        patch = (
+            "diff --git a/src/value.py b/src/value.py\n"
+            "--- a/src/value.py\n"
+            "+++ b/src/value.py\n"
+            "@@ -1,2 +1,6 @@\n"
+            " def read():\n"
+            "-    return 'original'\n"
+            "+    try:\n"
+            "+        import os\n"
+            "+        return 'unsafe'\n"
+            "+    except ImportError:\n"
+            "+        return 'restricted'\n"
+        )
+        model = FakeBenchmarkModel(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "ограничение oracle проверено",
+                            "patch": patch,
+                            "checks": [],
+                            "risks": [],
+                        }
+                    ),
+                }
+            }
+        )
+
+        result = run_case(model, case)
+
+        self.assertTrue(result.correct, result.patch_error)
+
+    def test_benchmark_uses_content_tool_patch_as_fallback(self):
+        patch = (
+            "diff --git a/src/value.py b/src/value.py\n"
+            "--- a/src/value.py\n"
+            "+++ b/src/value.py\n"
+            "@@ -1 +1 @@\n"
+            "-VALUE = 1\n"
+            "+VALUE = 2\n"
+        )
+        model = SequenceBenchmarkModel(
+            [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {"name": "propose_patch", "arguments": {"patch": patch}}
+                        ),
+                    }
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "status": "candidate",
+                                "summary": "proposal завершён",
+                                "patch": "",
+                                "checks": [],
+                                "risks": [],
+                            }
+                        ),
+                    }
+                },
+            ]
+        )
+        case = BenchmarkCase(
+            id="content-tool-fallback",
+            task=TaskEnvelope(
+                id="content-tool-fallback",
+                goal="заменить значение",
+                files=("src/value.py",),
+            ),
+            fixture={"src/value.py": "VALUE = 1\n"},
+            expected_files={"src/value.py": "VALUE = 2\n"},
+        )
+
+        result = run_case(model, case)
+
+        self.assertTrue(result.correct)
+        self.assertEqual(result.patch_source, "tool_proposal")
 
     def test_summarize_results_reports_correctness_and_reliability_rates(self):
         cases = default_cases()

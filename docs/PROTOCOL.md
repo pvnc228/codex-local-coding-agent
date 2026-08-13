@@ -81,11 +81,17 @@
 
 Значение 'patch' обязательно проверяется отдельно. Наличие текста в поле 'patch' не означает, что это настоящий unified diff.
 
-Инструмент `propose_patch` принимает только полный unified diff. Hunk header обязан содержать корректные old/new line counts, совпадающие с фактическими строками hunk; `\n` внутри patch должен быть реальным переводом строки, а не двумя символами backslash и `n`. До применения diff дополнительно проверяется через внешний patch validator.
+## Mediated apply
+
+Модель только предлагает изменение через `propose_patch`; сама применить его не может. При запуске с `--apply` controller сначала валидирует и применяет patch во workspace, затем повторно запускает все allowlisted checks. Только после успешных post-apply checks результат получает `"applied": true`; при провале patch откатывается, а статус становится `rejected` с риском kind `post_apply_check_failed`. При ошибке самого применения используется риск kind `apply_failed`. По умолчанию (без `--apply`) режим — proposal-only: на диск ничего не пишется.
+
+Инструмент `propose_patch` принимает только полный unified diff с синтаксически корректными hunk headers; `\n` внутри patch должен быть реальным переводом строки, а не двумя символами backslash и `n`. Validator проверяет структуру, allowlist и размер, а controller-owned `git apply --check` является источником истины для фактических hunk counts и применимости. До записи diff не модифицирует workspace.
 
 Если Ollama не возвращает native `tool_calls`, контроллер допускает совместимый JSON-объект в `message.content` только в форме `{"name":"...","arguments":{...}}`, после чего всё равно прогоняет вызов через ту же policy layer. `run_tests` передаётся модели только когда task envelope содержит allowlisted `checks`.
 
-Allowlisted `run_tests` запускается в отдельном process group/session с урезанным environment: в дочерний процесс не передаются произвольные переменные окружения родителя. Ответ содержит `isolated: true` как runtime evidence, если лимит результата позволяет сохранить эту метаинформацию; при предельно малом `max_tool_result_bytes` приоритет остаётся за `stdout`, `stderr` и `evidence`.
+Allowlisted `run_tests` запускается в отдельном process group/session с урезанным environment: в дочерний процесс не передаются произвольные переменные окружения родителя. stdout/stderr сразу направляются в bounded temporary sinks, а завершение process tree имеет bounded wait и явную ошибку при failure. Ответ содержит `isolated: true` как runtime evidence, если лимит результата позволяет сохранить эту метаинформацию; при предельно малом `max_tool_result_bytes` приоритет остаётся за `stdout`, `stderr` и `evidence`.
+
+Поля `audit`, `validation`, `applied`, `post_apply_checks` и `error` являются controller-owned. Модель может предложить только candidate fields; её значения этих полей отбрасываются перед финальным результатом.
 
 ## Повторная попытка
 

@@ -68,6 +68,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.benchmark_timeout_seconds, 120)
         self.assertEqual(str(args.benchmark_output), ".codex-run\\bench.json")
 
+    def test_cli_exposes_apply_flag(self):
+        args = build_parser().parse_args(["--task", "task.json", "--apply"])
+        self.assertIs(args.apply, True)
+
+        args = build_parser().parse_args(["--task", "task.json"])
+        self.assertIs(args.apply, False)
+
 
 if __name__ == "__main__":
     unittest.main()

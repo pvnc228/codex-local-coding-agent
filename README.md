@@ -28,7 +28,7 @@
 
 Локальная модель не получает произвольный shell-доступ и не может сама применить patch. Команды проверки берутся из task envelope, а не из свободного текста модели. Пути проверяются относительно workspace, результаты инструментов ограничиваются по размеру, а повторный одинаковый tool call завершает задачу со статусом `failed`.
 
-Проект не пытается заменить полноценный Codex или человека на больших задачах. В текущем MVP нет автономной разработки всей функции, постоянной памяти модели, автоматических commit/push и mediated apply.
+Проект не пытается заменить полноценный Codex или человека на больших задачах. В текущем MVP нет автономной разработки всей функции, постоянной памяти модели и автоматических commit/push. Proposal-only остаётся режимом по умолчанию; mediated apply — opt-in через `--apply`.
 
 ## Требования
 
@@ -100,8 +100,11 @@ py -m local_coding_agent `
   --task task.json `
   --workspace . `
   --profile qwen2.5-1.5b `
-  --num-ctx 4096
+  --num-ctx 4096 `
+  --apply
 ```
+
+`--apply` включает mediated apply: принятый patch применяется к workspace после валидации. Без него режим остаётся proposal-only, и файлы не изменяются.
 
 Результат содержит статус, summary, предложенный patch, checks, risks, validation report и audit events.
 
@@ -175,7 +178,7 @@ py -m local_coding_agent `
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |
-| `local_coding_agent/cli.py` | proposal-only CLI |
+| `local_coding_agent/cli.py` | proposal-only CLI и opt-in mediated apply |
 
 Подробные контракты находятся в документации:
 
@@ -197,10 +200,10 @@ py -m compileall -q local_coding_agent tests
 git diff --check
 ```
 
-Текущий набор содержит 45 тестов. Live smoke с Ollama выполняется отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+Текущий набор содержит 67 тестов. Live smoke с Ollama и benchmark выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Следующее крупное направление — mediated apply после отдельного подтверждения; protocol-facing blockers и isolated test process уже покрыты тестами и runtime evidence.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Следующий runtime шаг — повторить live chat и benchmark после закрытия review.

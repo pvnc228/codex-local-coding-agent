@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from local_coding_agent.controller import Controller, TOOL_DEFINITIONS
+from local_coding_agent.repository_tools import BoundedRepositoryTools, ToolPolicyError
 from local_coding_agent.task import TaskEnvelope
 
 
@@ -130,7 +131,7 @@ class ControllerTests(unittest.TestCase):
         description = definition["function"]["description"]
 
         self.assertIn("hunk", description)
-        self.assertIn("counts", description)
+        self.assertIn("git", description)
         self.assertIn("real newlines", description)
         self.assertIn("literal \\n", description)
 
@@ -404,6 +405,231 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "rejected")
         self.assertTrue(result["risks"])
+
+
+    def test_controller_applies_accepted_patch_when_requested(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="controller-apply",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            patch = (
+                "diff --git a/src/value.py b/src/value.py\n"
+                "--- a/src/value.py\n"
+                "+++ b/src/value.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменено значение",
+                                    "patch": patch,
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    }
+                ]
+            )
+
+            result = Controller(model, workspace).run(task, apply=True)
+
+            self.assertEqual(result["status"], "accepted")
+            self.assertIs(result["applied"], True)
+            self.assertEqual(
+                (workspace / "src" / "value.py").read_text(encoding="utf-8"),
+                "VALUE = 2\n",
+            )
+
+    def test_controller_does_not_apply_by_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="controller-no-apply",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            patch = (
+                "diff --git a/src/value.py b/src/value.py\n"
+                "--- a/src/value.py\n"
+                "+++ b/src/value.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменено значение",
+                                    "patch": patch,
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    }
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+            self.assertEqual(result["status"], "accepted")
+            self.assertNotIn("applied", result)
+            self.assertEqual(
+                (workspace / "src" / "value.py").read_text(encoding="utf-8"),
+                "VALUE = 1\n",
+            )
+
+    def test_controller_ignores_model_owned_audit_and_applied_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="controller-provenance",
+                goal="вернуть предложение",
+                files=("value.py",),
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "подделано",
+                                    "patch": "",
+                                    "checks": [],
+                                    "risks": [],
+                                    "applied": True,
+                                    "audit": [{"event": "forged", "success": True}],
+                                }
+                            ),
+                        }
+                    }
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertNotIn("applied", result)
+        self.assertNotIn("forged", json.dumps(result["audit"], ensure_ascii=False))
+        self.assertEqual(result["audit"][0]["event"], "task_received")
+
+    def test_controller_rejects_and_rolls_back_when_post_apply_check_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            target = workspace / "src" / "value.py"
+            target.write_text("VALUE = 1\n", encoding="utf-8")
+            command = (
+                f'"{sys.executable}" -B -c "import pathlib; '
+                "raise SystemExit(0 if pathlib.Path('src/value.py').read_text() == "
+                "'VALUE = 1\\n' else 1)"
+            )
+            task = TaskEnvelope(
+                id="controller-post-check",
+                goal="изменить значение с post-check",
+                files=("src/value.py",),
+                checks=(command,),
+            )
+            patch = (
+                "diff --git a/src/value.py b/src/value.py\n"
+                "--- a/src/value.py\n"
+                "+++ b/src/value.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "run_tests",
+                                        "arguments": {"command": command},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменение предложено",
+                                    "patch": patch,
+                                    "checks": [
+                                        {
+                                            "command": command,
+                                            "passed": True,
+                                            "evidence": "exit_code=0; passed=True",
+                                        }
+                                    ],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            result = Controller(model, workspace).run(task, apply=True)
+
+            restored = target.read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertNotIn("applied", result)
+        self.assertEqual(restored, "VALUE = 1\n")
+        self.assertTrue(
+            any(risk["kind"] == "post_apply_check_failed" for risk in result["risks"])
+        )
+        self.assertTrue(
+            any(event["event"] == "post_apply_check" for event in result["audit"])
+        )
+
+    def test_apply_patch_is_not_a_model_tool(self):
+        function_names = {
+            definition["function"]["name"] for definition in TOOL_DEFINITIONS
+        }
+        self.assertNotIn("apply_patch", function_names)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="no-apply-tool",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            tools = BoundedRepositoryTools(workspace, task)
+            with self.assertRaises(ToolPolicyError):
+                tools.execute("apply_patch", {"patch": "x"})
 
 
 if __name__ == "__main__":

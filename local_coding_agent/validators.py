@@ -157,6 +157,40 @@ def check_patch_applies(
 ) -> tuple[bool, str]:
     """Check a patch with git without modifying the workspace."""
 
+    return _run_git_apply(workspace_root, patch, check=True, timeout_seconds=timeout_seconds)
+
+
+def apply_patch(
+    workspace_root: str | Path,
+    patch: str,
+    *,
+    timeout_seconds: float = 10,
+    reverse: bool = False,
+) -> tuple[bool, str]:
+    """Apply an already-validated patch to the workspace.
+
+    This is the controller-only mediated-apply seam. The local model never
+    reaches it directly: it has no `apply_patch` tool, and the controller only
+    calls this after `validate_candidate` has accepted the proposal.
+    """
+
+    return _run_git_apply(
+        workspace_root,
+        patch,
+        check=False,
+        reverse=reverse,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _run_git_apply(
+    workspace_root: str | Path,
+    patch: str,
+    *,
+    check: bool,
+    reverse: bool = False,
+    timeout_seconds: float,
+) -> tuple[bool, str]:
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     executable = shutil.which("git")
@@ -165,9 +199,15 @@ def check_patch_applies(
     root = Path(workspace_root).resolve()
     if not root.is_dir():
         return False, f"workspace directory does not exist: {root}"
+    command = [executable, "apply", "--whitespace=nowarn"]
+    if check:
+        command.append("--check")
+    if reverse:
+        command.append("--reverse")
+    command.append("-")
     try:
         completed = subprocess.run(
-            [executable, "apply", "--check", "--whitespace=nowarn", "-"],
+            command,
             cwd=root,
             input=patch.encode("utf-8"),
             stdout=subprocess.PIPE,
@@ -176,7 +216,7 @@ def check_patch_applies(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return False, f"git apply check failed: {error}"
+        return False, f"git apply{' check' if check else ''} failed: {error}"
     if completed.returncode == 0:
         return True, ""
     detail = completed.stderr.decode("utf-8", errors="replace").strip()

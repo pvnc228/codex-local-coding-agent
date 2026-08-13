@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import inspect
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, median
@@ -71,7 +75,12 @@ class InstrumentedModel:
         message = response.get("message")
         if not isinstance(message, Mapping):
             return
-        for call in message.get("tool_calls") or []:
+        calls = message.get("tool_calls") or []
+        if not calls:
+            compatible_call = _decode_content_tool_call(message.get("content"))
+            if compatible_call is not None:
+                calls = [compatible_call]
+        for call in calls:
             if not isinstance(call, Mapping):
                 continue
             function = call.get("function")
@@ -231,14 +240,88 @@ def _no_mutation_oracle(workspace: Path) -> tuple[bool, str]:
     return True, ""
 
 
-def _load_function(path: Path, name: str) -> Any:
-    namespace: dict[str, Any] = {}
-    source = path.read_text(encoding="utf-8")
-    exec(compile(source, str(path), "exec"), namespace)
-    function = namespace.get(name)
-    if not callable(function):
-        raise ValueError(f"external oracle could not load {name} from {path.name}")
-    return function
+def _decode_content_tool_call(content: Any) -> dict[str, Any] | None:
+    if not isinstance(content, str) or not content.strip():
+        return None
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    name = payload.get("name")
+    arguments = payload.get("arguments")
+    if not isinstance(name, str) or not name or not isinstance(arguments, (Mapping, str)):
+        return None
+    return {"function": {"name": name, "arguments": arguments}}
+
+
+def _run_oracle_in_restricted_process(
+    oracle: Callable[[Path], tuple[bool, str]], workspace: Path
+) -> tuple[bool, str]:
+    """Run model-controlled fixture code outside the controller process."""
+
+    try:
+        oracle_source = textwrap.dedent(inspect.getsource(oracle))
+    except (OSError, TypeError) as error:
+        return False, f"external oracle source is unavailable: {error}"
+    payload = {
+        "workspace": str(workspace),
+        "oracle_name": getattr(oracle, "__name__", ""),
+        "oracle_source": oracle_source,
+    }
+    worker = Path(__file__).with_name("benchmark_oracle_worker.py")
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-I", "-u", str(worker)],
+            cwd=workspace,
+            env=_benchmark_worker_environment(workspace),
+            input=(json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+            **_benchmark_process_options(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"external oracle process failed: {error}"
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        return False, detail[:2000] or f"external oracle exited with code {completed.returncode}"
+    try:
+        result = json.loads(completed.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return False, f"external oracle returned invalid JSON: {error}"
+    if not isinstance(result, Mapping) or result.get("ok") is not True:
+        detail = result.get("error") if isinstance(result, Mapping) else None
+        return False, f"external oracle error: {detail or 'unknown worker error'}"
+    correct = result.get("correct")
+    detail = result.get("detail", "")
+    if not isinstance(correct, bool) or not isinstance(detail, str):
+        return False, "external oracle returned an invalid result shape"
+    return correct, detail
+
+
+def _benchmark_worker_environment(workspace: Path) -> dict[str, str]:
+    python_dir = str(Path(sys.executable).resolve().parent)
+    environment = {
+        "PATH": python_dir,
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+        "TEMP": str(workspace),
+        "TMP": str(workspace),
+    }
+    for key in ("SystemRoot", "WINDIR"):
+        value = os.environ.get(key)
+        if value:
+            environment[key] = value
+    return environment
+
+
+def _benchmark_process_options() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
 
 
 def run_case(
@@ -367,6 +450,9 @@ def _judge_patch(
 ) -> tuple[bool, bool, str, str]:
     patch_source = "accepted_result" if result.get("status") == "accepted" else "tool_proposal"
     patch = result.get("patch") if patch_source == "accepted_result" else fallback_patch
+    if (not isinstance(patch, str) or not patch.strip()) and fallback_patch:
+        patch_source = "tool_proposal"
+        patch = fallback_patch
     if not isinstance(patch, str) or not patch.strip():
         return False, False, "candidate did not contain a patch", "none"
     validation = _validate_patch_for_case(patch, case)
@@ -382,7 +468,7 @@ def _judge_patch(
         return False, False, _process_error(applied), patch_source
     try:
         if case.oracle is not None:
-            correct, oracle_error = case.oracle(workspace)
+            correct, oracle_error = _run_oracle_in_restricted_process(case.oracle, workspace)
         else:
             correct, oracle_error = _exact_file_oracle(case, workspace)
     except Exception as error:  # external oracle must turn malformed proposals into a score

@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
 from .task import TaskEnvelope
-from .validators import validate_candidate
+from .validators import apply_patch, validate_candidate
 
 
 SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной атомарной задачи.
@@ -20,7 +20,7 @@ SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной �
 Для файлов используй только относительные пути из task allowlist; абсолютные пути и '..' запрещены.
 Если данных не хватает, задай один точный вопрос.
 Патч должен быть минимальным и затрагивать только разрешённые файлы.
-Для propose_patch верни полный unified diff с реальными переводами строк; hunk counts должны точно совпадать с числом строк старой и новой стороны. Не используй placeholders, абсолютные пути или literal \\n в качестве перевода строки.
+Для propose_patch верни полный unified diff с реальными переводами строк и корректными hunk headers. Применимость и структура diff проверяются controller-owned validator и git; не используй placeholders, абсолютные пути или literal \\n в качестве перевода строки.
 После завершения верни только структурированный JSON-результат."""
 
 
@@ -70,7 +70,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": (
                 "Return only a complete unified diff proposal without writing files. "
                 "Use real newlines and relative allowlisted paths. Include diff --git, ---, +++, "
-                "and hunk headers whose old/new counts exactly match the hunk lines. "
+                "and valid hunk headers; applicability is checked by the controller-owned validator and git. "
                 "Do not use placeholders, prose, absolute paths, or literal \\n."
             ),
             "parameters": {
@@ -129,7 +129,13 @@ class Controller:
         self.max_retries = max_retries
         self.cancel_event = cancel_event
 
-    def run(self, task: TaskEnvelope, *, cancel_event: Event | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        task: TaskEnvelope,
+        *,
+        cancel_event: Event | None = None,
+        apply: bool = False,
+    ) -> dict[str, Any]:
         audit: list[dict[str, Any]] = [{"event": "task_received", "task_id": task.id}]
         try:
             messages = self._initial_messages(task)
@@ -162,6 +168,7 @@ class Controller:
                 retries,
                 executor,
                 audit,
+                apply=apply,
             )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -177,6 +184,8 @@ class Controller:
         retries: int,
         executor: ThreadPoolExecutor,
         audit: list[dict[str, Any]],
+        *,
+        apply: bool = False,
     ) -> dict[str, Any]:
         for turn in range(1, self.max_turns + 1):
             if active_cancel is not None and active_cancel.is_set():
@@ -278,6 +287,14 @@ class Controller:
                     continue
                 return self._failure("failed", "invalid_json", str(error), audit)
             result = dict(result)
+            for controller_field in (
+                "audit",
+                "applied",
+                "error",
+                "post_apply_checks",
+                "validation",
+            ):
+                result.pop(controller_field, None)
             report = validate_candidate(
                 result,
                 task,
@@ -292,19 +309,137 @@ class Controller:
                 "issues": list(report.issues),
             }
             result["status"] = "accepted" if report.valid else "rejected"
-            if not report.valid:
-                risks = result.get("risks")
-                if not isinstance(risks, list):
-                    risks = []
-                    result["risks"] = risks
-                risks.append(
-                    {"kind": "validation", "message": "; ".join(report.issues)}
-                )
             audit.append({"event": "candidate_validated", "valid": report.valid})
-            result.setdefault("audit", audit)
+            if report.valid and apply:
+                patch = result.get("patch")
+                if not isinstance(patch, str) or not patch.strip():
+                    audit.append({"event": "apply_skipped", "reason": "candidate has no patch"})
+                else:
+                    applied, apply_detail = apply_patch(self.workspace_root, patch)
+                    if not applied:
+                        result["status"] = "rejected"
+                        self._add_risk(
+                            result,
+                            "apply_failed",
+                            f"patch could not be applied: {apply_detail}",
+                        )
+                        audit.append({"event": "apply_failed", "detail": apply_detail})
+                    else:
+                        audit.append({"event": "patch_applied"})
+                        try:
+                            post_checks, post_checks_passed = self._run_post_apply_checks(
+                                task, tools, active_cancel, audit
+                            )
+                        except ToolCancelled:
+                            rollback_ok, rollback_detail = apply_patch(
+                                self.workspace_root, patch, reverse=True
+                            )
+                            result["status"] = "failed"
+                            self._add_risk(result, "cancelled", "post-apply checks were cancelled")
+                            audit.append({"event": "post_apply_cancelled"})
+                            if rollback_ok:
+                                audit.append({"event": "patch_rolled_back"})
+                            else:
+                                self._add_risk(
+                                    result,
+                                    "rollback_failed",
+                                    f"patch rollback failed: {rollback_detail}",
+                                )
+                                audit.append(
+                                    {"event": "rollback_failed", "detail": rollback_detail}
+                                )
+                        except ToolPolicyError as error:
+                            rollback_ok, rollback_detail = apply_patch(
+                                self.workspace_root, patch, reverse=True
+                            )
+                            result["status"] = "rejected"
+                            self._add_risk(
+                                result,
+                                "post_apply_check_failed",
+                                f"post-apply check could not complete: {error}",
+                            )
+                            audit.append({"event": "post_apply_check_error", "detail": str(error)})
+                            if rollback_ok:
+                                audit.append({"event": "patch_rolled_back"})
+                            else:
+                                self._add_risk(
+                                    result,
+                                    "rollback_failed",
+                                    f"patch rollback failed: {rollback_detail}",
+                                )
+                                audit.append(
+                                    {"event": "rollback_failed", "detail": rollback_detail}
+                                )
+                        else:
+                            result["post_apply_checks"] = post_checks
+                            if post_checks_passed:
+                                result["checks"] = post_checks
+                                result["applied"] = True
+                                audit.append({"event": "post_apply_checks_passed"})
+                            else:
+                                rollback_ok, rollback_detail = apply_patch(
+                                    self.workspace_root, patch, reverse=True
+                                )
+                                result["status"] = "rejected"
+                                self._add_risk(
+                                    result,
+                                    "post_apply_check_failed",
+                                    "a targeted check failed after applying the patch",
+                                )
+                                if rollback_ok:
+                                    audit.append({"event": "patch_rolled_back"})
+                                else:
+                                    self._add_risk(
+                                        result,
+                                        "rollback_failed",
+                                        f"patch rollback failed: {rollback_detail}",
+                                    )
+                                    audit.append(
+                                        {"event": "rollback_failed", "detail": rollback_detail}
+                                    )
+            elif apply:
+                audit.append({"event": "apply_skipped", "reason": "candidate rejected"})
+            if not report.valid:
+                self._add_risk(result, "validation", "; ".join(report.issues))
+            result["audit"] = audit
             return result
 
         return self._failure("failed", "max_turns", f"max_turns={self.max_turns} exceeded", audit)
+
+    def _run_post_apply_checks(
+        self,
+        task: TaskEnvelope,
+        tools: BoundedRepositoryTools,
+        active_cancel: Event | None,
+        audit: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        checks: list[dict[str, Any]] = []
+        for command in task.checks:
+            if active_cancel is not None and active_cancel.is_set():
+                raise ToolCancelled("task was cancelled")
+            check = tools.execute("run_tests", {"command": command})
+            observed = {
+                "command": command,
+                "passed": check["passed"],
+                "evidence": check["evidence"],
+            }
+            checks.append(observed)
+            audit.append(
+                {
+                    "event": "post_apply_check",
+                    "command": command,
+                    "passed": check["passed"],
+                }
+            )
+        return checks, all(check["passed"] for check in checks)
+
+    @staticmethod
+    def _add_risk(result: dict[str, Any], kind: str, message: str) -> None:
+        risks = result.get("risks")
+        if not isinstance(risks, list):
+            risks = []
+            result["risks"] = risks
+        risks.append({"kind": kind, "message": message})
 
     def _messages_size(self, messages) -> int:
         return len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))

@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 import unittest
 import json
@@ -218,6 +219,49 @@ class RepositoryToolsTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["stdout"].strip(), "missing")
         self.assertTrue(result["isolated"])
+
+    def test_run_tests_drains_verbose_child_output_without_deadlock(self):
+        command = f'"{sys.executable}" -B -c "print(\'x\' * 200000)"'
+        task = TaskEnvelope(
+            id="verbose-check",
+            goal="запустить многословную проверку",
+            files=("src/allowed.py",),
+            checks=(command,),
+        )
+        tools = BoundedRepositoryTools(
+            self.workspace, task, max_tool_result_bytes=512, test_timeout_seconds=3
+        )
+
+        result = tools.execute("run_tests", {"command": command})
+
+        self.assertTrue(result["passed"])
+        self.assertTrue(result["truncated"])
+        self.assertLessEqual(len(json.dumps(result, ensure_ascii=False).encode("utf-8")), 512)
+
+    def test_termination_failure_is_bounded_and_reported(self):
+        class StuckProcess:
+            pid = 123
+            returncode = None
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                raise subprocess.TimeoutExpired("wait", timeout)
+
+            def kill(self):
+                return None
+
+        process = StuckProcess()
+        tools = BoundedRepositoryTools(self.workspace, self.task)
+
+        with patch.object(
+            BoundedRepositoryTools,
+            "_kill_tree",
+            return_value=(False, "taskkill failed: access denied"),
+        ):
+            with self.assertRaisesRegex(ToolPolicyError, "did not terminate"):
+                tools._terminate(process)
 
     def test_run_tests_cancels_running_command(self):
         command = f'"{sys.executable}" -B -c "import time; time.sleep(30)"'
