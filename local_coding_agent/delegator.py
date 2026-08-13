@@ -9,6 +9,7 @@ the CLI, and never talks to the model directly.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -102,17 +103,21 @@ class DelegatingAgent:
         budget: TaskBudget | None = None,
         templates: Sequence[DecompositionTemplate] = DEFAULT_TEMPLATES,
         max_depth: int = 3,
+        max_parallel_children: int = 1,
     ) -> None:
         if max_depth <= 0:
             raise ValueError("max_depth must be positive")
         if not templates:
             raise ValueError("templates must not be empty")
+        if max_parallel_children <= 0:
+            raise ValueError("max_parallel_children must be positive")
         self.delegate = delegate
         self.workspace_ref = workspace_ref
         self.model_profile = model_profile
         self.budget = budget or TaskBudget()
         self.templates = tuple(templates)
         self.max_depth = max_depth
+        self.max_parallel_children = max_parallel_children
 
     def run(self, caller_id: str, task: TaskEnvelope) -> dict[str, Any]:
         if not isinstance(caller_id, str) or not caller_id.strip():
@@ -143,7 +148,8 @@ class DelegatingAgent:
         template = self.templates[min(depth, len(self.templates) - 1)]
         children = template.split(task, self.budget)
         leaves: list[dict[str, Any]] = []
-        for index, child in enumerate(children):
+
+        def run_child(child: TaskEnvelope, index: int) -> tuple[dict[str, Any], bool]:
             request = DelegationRequest(
                 request_id=f"{task.id}@{depth}.{index}",
                 workspace_ref=self.workspace_ref,
@@ -151,11 +157,20 @@ class DelegatingAgent:
                 task=child,
             )
             result = self.delegate(caller_id, request)
-            if is_decomposable_failure(result) and self._can_split_further(child, depth):
+            return dict(result), is_decomposable_failure(result) and self._can_split_further(child, depth)
+
+        if self.max_parallel_children > 1 and len(children) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_parallel_children) as pool:
+                outcomes = list(pool.map(lambda item: run_child(item[1], item[0]), enumerate(children)))
+        else:
+            outcomes = [run_child(child, index) for index, child in enumerate(children)]
+
+        for child, (result, decomposable) in zip(children, outcomes):
+            if decomposable:
                 splits[0] += 1
                 leaves.extend(self._dispatch(caller_id, child, depth + 1, splits))
             else:
-                leaves.append({"task_id": child.id, "depth": depth, "result": dict(result)})
+                leaves.append({"task_id": child.id, "depth": depth, "result": result})
         return leaves
 
     def _can_split_further(self, task: TaskEnvelope, depth: int) -> bool:

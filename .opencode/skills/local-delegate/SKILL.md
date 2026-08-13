@@ -54,11 +54,15 @@ result = service.delegate("trusted-host", request)  # always proposal-only
 ## MCP server
 
 ```powershell
+pip install "mcp>=2.0.0"
 py -m local_coding_agent.mcp_server --workspace-ref repo --workspace .
 ```
 
-Exposes one tool, `delegate_code`, over stdio JSON-RPC. It is always
-proposal-only; it never applies changes.
+Exposes one tool, `delegate_code`, over stdio using the official SDK. It
+speaks the 2026-07-28 stateless protocol (`server/discover`, per-request
+`_meta`, `resultType`) and auto-falls back to the legacy `initialize`
+handshake for older clients. It is always proposal-only; it never applies
+changes.
 
 ## Decomposing wide tasks
 

@@ -1,0 +1,62 @@
+import unittest
+
+from local_coding_agent.calibration import (
+    calibrate_for_model,
+    calibrate_workers,
+    model_vram_bytes,
+)
+
+
+class FakeRuntime:
+    def __init__(self, loaded=None, tags=None):
+        self._loaded = loaded or []
+        self._tags = tags or []
+
+    def loaded_models(self):
+        return {"models": self._loaded}
+
+    def available_models(self):
+        return {"models": self._tags}
+
+
+class CalibrationTests(unittest.TestCase):
+    def test_calibrate_workers_fits_copies_into_budget(self):
+        self.assertEqual(calibrate_workers(100, vram_budget_bytes=500, hard_max=4), 4)
+        self.assertEqual(calibrate_workers(100, vram_budget_bytes=250, hard_max=4), 2)
+        self.assertEqual(calibrate_workers(100, vram_budget_bytes=50, hard_max=4), 1)
+
+    def test_calibrate_workers_honors_hard_max(self):
+        self.assertEqual(calibrate_workers(100, vram_budget_bytes=10_000, hard_max=8), 8)
+
+    def test_calibrate_workers_unknown_footprint_yields_one(self):
+        self.assertEqual(calibrate_workers(0, vram_budget_bytes=1000), 1)
+        self.assertEqual(calibrate_workers(-5, vram_budget_bytes=1000), 1)
+
+    def test_calibrate_workers_rejects_non_positive_budget(self):
+        with self.assertRaises(ValueError):
+            calibrate_workers(100, vram_budget_bytes=0)
+
+    def test_model_vram_prefers_loaded_size_vram(self):
+        client = FakeRuntime(
+            loaded=[{"name": "m", "size_vram": 100}],
+            tags=[{"name": "m", "size": 5000}],
+        )
+        self.assertEqual(model_vram_bytes(client, "m"), (100, "ps.size_vram"))
+
+    def test_model_vram_falls_back_to_tags_size(self):
+        client = FakeRuntime(tags=[{"name": "m", "size": 5000}])
+        self.assertEqual(model_vram_bytes(client, "m"), (5000, "tags.size"))
+
+    def test_model_vram_unknown_model(self):
+        client = FakeRuntime(tags=[{"name": "other", "size": 5000}])
+        self.assertEqual(model_vram_bytes(client, "m"), (0, "unknown"))
+
+    def test_calibrate_for_model_returns_diagnostic(self):
+        client = FakeRuntime(loaded=[{"name": "m", "size_vram": 100}])
+        report = calibrate_for_model(client, "m", vram_budget_bytes=300, hard_max=4)
+        self.assertEqual(report["model_vram_bytes"], 100)
+        self.assertEqual(report["max_workers"], 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

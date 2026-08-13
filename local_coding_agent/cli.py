@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .benchmark import run_benchmark, write_artifact
+from .calibration import calibrate_for_model
 from .controller import Controller
 from .memory import ModelMemoryManager
 from .ollama_adapter import OllamaClient, OllamaError
@@ -62,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
     memory_group.add_argument("--unload-all", action="store_true", help="Unload every model currently held by Ollama")
     parser.add_argument("--vram-limit-bytes", type=int, help="Evict unprotected models until this VRAM budget fits")
     parser.add_argument("--keep-model", action="append", default=[], help="Model name to protect during VRAM eviction")
+    parser.add_argument(
+        "--calibrate-workers",
+        type=int,
+        metavar="VRAM_BYTES",
+        help="Derive a bounded worker count for the selected profile model within this VRAM budget",
+    )
     return parser
 
 
@@ -78,7 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.benchmark:
             if args.task is not None:
                 raise ValueError("--benchmark cannot be combined with --task")
-            if args.unload_all or args.unload_model or args.vram_limit_bytes is not None:
+            if args.unload_all or args.unload_model or args.vram_limit_bytes is not None or args.calibrate_workers is not None:
                 raise ValueError("--benchmark cannot be combined with memory controls")
             if args.benchmark_repeats <= 0:
                 raise ValueError("--benchmark-repeats must be positive")
@@ -164,6 +171,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if artifact["models"] and all(item["status"] == "completed" for item in artifact["models"]) else 1
         if args.keep_model and args.vram_limit_bytes is None:
             raise ValueError("--keep-model requires --vram-limit-bytes")
+        if args.calibrate_workers is not None:
+            report = calibrate_for_model(
+                client,
+                profile.model,
+                vram_budget_bytes=args.calibrate_workers,
+            )
+            print(json.dumps({"status": "calibrated", "report": report}, ensure_ascii=False, indent=2))
+            return 0
         if args.unload_all or args.unload_model or args.vram_limit_bytes is not None:
             manager = ModelMemoryManager(client)
             if args.unload_all:

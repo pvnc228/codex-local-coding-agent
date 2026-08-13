@@ -1,0 +1,11 @@
+[project]
+name = "codex-local-coding-agent"
+version = "0.2.0"
+description = "Bounded controller delegating small coding tasks to local Ollama models."
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.0.0"]
+
+[tool.setuptools]
+packages = ["local_coding_agent"]

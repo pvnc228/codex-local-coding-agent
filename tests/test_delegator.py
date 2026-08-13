@@ -86,6 +86,35 @@ class DelegatingAgentTests(unittest.TestCase):
         self.assertLessEqual(result["splits"], 1)
         self.assertEqual(result["status"], "failed")
 
+    def test_parallel_children_keep_results_ordered(self):
+        calls = []
+
+        def delegate(caller_id, request):
+            calls.append(request.task.id)
+            return {"status": "accepted", "summary": request.task.id}
+
+        agent = self._agent(delegate, max_parallel_children=3)
+        result = agent.run("caller", _envelope("wide", ("a.py", "b.py", "c.py", "d.py")))
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(sorted(calls), ["wide#1", "wide#2"])
+        self.assertEqual(
+            [leaf["result"]["summary"] for leaf in result["children"]],
+            ["wide#1", "wide#2"],
+        )
+
+    def test_parallel_children_redecompose_failures(self):
+        def delegate(caller_id, request):
+            if request.task.id == "wide#1":
+                return {"status": "failed", "error": {"kind": "context_limit"}}
+            return {"status": "accepted", "summary": request.task.id}
+
+        agent = self._agent(delegate, max_parallel_children=2, max_depth=3)
+        result = agent.run("caller", _envelope("wide", ("a.py", "b.py", "c.py")))
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertGreaterEqual(result["splits"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

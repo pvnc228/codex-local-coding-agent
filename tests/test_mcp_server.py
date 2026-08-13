@@ -1,11 +1,11 @@
+import asyncio
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from local_coding_agent.mcp_server import McpStdioServer
+from local_coding_agent.mcp_server import build_server
 from local_coding_agent.service import DelegationService
 
 
@@ -28,110 +28,78 @@ class FakeModel:
         }
 
 
-class McpStdioServerTests(unittest.TestCase):
+class McpSdkServerTests(unittest.TestCase):
     def _service(self, workspace: Path) -> DelegationService:
         return DelegationService({"fixture": workspace}, model_factory=lambda profile: FakeModel())
 
-    def _delegate_params(self):
+    def _arguments(self):
         return {
-            "name": "delegate_code",
-            "arguments": {
-                "request_id": "mcp-request-1",
-                "workspace_ref": "fixture",
-                "model_profile": "qwen2.5-1.5b",
-                "task": {
-                    "id": "mcp-task-1",
-                    "goal": "прочитать файл",
-                    "files": ["allowed.py"],
-                },
-            },
+            "request_id": "mcp-request-1",
+            "workspace_ref": "fixture",
+            "model_profile": "qwen2.5-1.5b",
+            "task": {"id": "mcp-task-1", "goal": "прочитать файл", "files": ["allowed.py"]},
         }
 
-    def test_initialize_negotiates_protocol_version(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            server = McpStdioServer(self._service(Path(temp_dir)))
-            response = server.handle_message(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {"protocolVersion": "2024-11-05"},
-                    }
-                )
-            )
-
-        payload = json.loads(response)
-        self.assertEqual(payload["result"]["protocolVersion"], "2024-11-05")
-        self.assertEqual(payload["result"]["serverInfo"]["name"], "codex-local-coding-agent")
-
-    def test_tools_list_exposes_only_delegate_code(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            server = McpStdioServer(self._service(Path(temp_dir)))
-            response = server.handle_message(
-                json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-            )
-
-        tools = json.loads(response)["result"]["tools"]
-        self.assertEqual([tool["name"] for tool in tools], ["delegate_code"])
-
-    def test_tools_call_delegates_and_returns_proposal(self):
+    def test_delegate_code_via_in_process_client(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
-            server = McpStdioServer(self._service(workspace))
-            response = server.handle_message(
-                json.dumps(
-                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": self._delegate_params()}
-                )
-            )
+            server = build_server(self._service(workspace))
 
-        payload = json.loads(response)
-        content = payload["result"]["content"][0]
-        self.assertEqual(content["type"], "text")
-        result = json.loads(content["text"])
-        self.assertEqual(result["status"], "accepted")
-        self.assertFalse(result["applied"])
-        self.assertIs(payload["result"]["isError"], False)
+            async def run():
+                from mcp.client import Client
 
-    def test_tools_call_rejects_unknown_workspace(self):
+                async with Client(server) as client:
+                    tools = await client.list_tools()
+                    names = [tool.name for tool in tools.tools]
+                    result = await client.call_tool("delegate_code", self._arguments())
+                    return names, result
+
+            names, result = asyncio.run(run())
+
+        self.assertEqual(names, ["delegate_code"])
+        self.assertEqual(result.result_type, "complete")
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["status"], "accepted")
+        self.assertFalse(result.structured_content.get("applied", False))
+
+    def test_delegate_code_unknown_workspace_is_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            server = McpStdioServer(self._service(Path(temp_dir)))
-            params = self._delegate_params()
-            params["arguments"]["workspace_ref"] = "missing"
-            response = server.handle_message(
-                json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": params})
-            )
+            server = build_server(self._service(Path(temp_dir)))
+            args = self._arguments()
+            args["workspace_ref"] = "missing"
 
-        payload = json.loads(response)
-        self.assertIs(payload["result"]["isError"], True)
-        result = json.loads(payload["result"]["content"][0]["text"])
-        self.assertEqual(result["error"]["kind"], "unknown_workspace")
+            async def run():
+                from mcp.client import Client
 
-    def test_unknown_method_returns_rpc_error(self):
+                async with Client(server) as client:
+                    return await client.call_tool("delegate_code", args)
+
+            result = asyncio.run(run())
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["error"]["kind"], "unknown_workspace")
+
+    def test_discover_advertises_supported_versions(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            server = McpStdioServer(self._service(Path(temp_dir)))
-            response = server.handle_message(
-                json.dumps({"jsonrpc": "2.0", "id": 5, "method": "nope"})
-            )
+            server = build_server(self._service(Path(temp_dir)))
 
-        payload = json.loads(response)
-        self.assertEqual(payload["error"]["code"], -32601)
+            async def run():
+                from mcp.client import Client
 
-    def test_notification_returns_no_response(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            server = McpStdioServer(self._service(Path(temp_dir)))
-            response = server.handle_message(
-                json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            )
+                async with Client(server) as client:
+                    return client.protocol_version, client.server_info
 
-        self.assertIsNone(response)
+            protocol_version, server_info = asyncio.run(run())
 
-    def test_process_bound_mcp_handshake_and_call(self):
+        self.assertEqual(protocol_version, "2026-07-28")
+        self.assertEqual(server_info.name, "codex-local-coding-agent")
+
+    def test_process_bound_stdio_matches_in_process_result(self):
         helper = r'''
 import json
 import sys
-from local_coding_agent.mcp_server import McpStdioServer
+from local_coding_agent.mcp_server import build_server
 from local_coding_agent.service import DelegationService
 
 class FakeModel:
@@ -142,31 +110,33 @@ class FakeModel:
         }, ensure_ascii=False)}}
 
 service = DelegationService({"fixture": sys.argv[1]}, model_factory=lambda p: FakeModel())
-McpStdioServer(service).serve()
+build_server(service).run(transport="stdio")
 '''
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
-            lines = "\n".join(
-                [
-                    json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
-                    json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": self._delegate_params()}),
-                ]
-            )
-            completed = subprocess.run(
-                [sys.executable, "-c", helper, str(workspace)],
-                cwd=Path(__file__).parents[1],
-                input=(lines + "\n").encode("utf-8"),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
 
-        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
-        responses = [json.loads(line) for line in completed.stdout.decode("utf-8").splitlines()]
-        self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "codex-local-coding-agent")
-        result = json.loads(responses[1]["result"]["content"][0]["text"])
-        self.assertEqual(result["status"], "accepted")
+            async def run_child():
+                from mcp.client.stdio import StdioServerParameters, stdio_client
+                from mcp.client.session import ClientSession
+
+                params = StdioServerParameters(
+                    command=sys.executable,
+                    args=["-c", helper, str(workspace)],
+                    cwd=str(Path(__file__).parents[1]),
+                )
+                async with stdio_client(params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.discover()
+                        tools = await session.list_tools()
+                        result = await session.call_tool("delegate_code", self._arguments())
+                        return tools.tools, result
+
+            tools, result = asyncio.run(run_child())
+
+        self.assertEqual([tool.name for tool in tools], ["delegate_code"])
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["status"], "accepted")
 
 
 if __name__ == "__main__":

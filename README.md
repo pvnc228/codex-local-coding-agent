@@ -28,6 +28,9 @@
 - ставить proposal-only delegations в bounded in-memory worker pool с caller-scoped job state и cancellation.
 - отклонять слишком широкую задачу до запуска модели через preflight budget (`TaskBudget`/`preflight`) и детерминированно раскладывать её по files через `decompose` без расширения allowlist.
 - ограничивать retry budget (hard cap 10) и после исчерпания возвращать escalation bundle с просмотренными файлами, попытками и внешним evidence вместо бесконечного tool-loop.
+- разбивать широкую задачу шаблонно и делегировать детей через `DelegatingAgent` (`decompose -> delegate -> decompose further`), в том числе параллельно (`max_parallel_children`).
+- калибровать число worker-слотов по VRAM модели (`calibrate_workers`/`calibrate_for_model`).
+- накапливать минимальную статистику прогонов (`DelegationStats`/`TimedDelegationStats`/`JsonlStatsSink`).
 
 ## Безопасные границы
 
@@ -161,6 +164,17 @@ py -m local_coding_agent.stdio --workspace-ref repo --workspace .
 
 Adapter читает UTF-8 JSONL из stdin и пишет UTF-8 JSONL в stdout. Поддерживается одна операция `delegate_code`; request передаётся в `params` в том же формате, что и `DelegationRequest`, а `caller_id` задаётся верхним полем сообщения. Размер строки ограничен 64 KiB, apply и произвольные shell/path/endpoint параметры отсутствуют. Это process-bound core slice, не полная modern/legacy MCP conformance.
 
+### MCP server (official SDK)
+
+Official-SDK MCP server поверх того же `DelegationService`, один proposal-only tool `delegate_code`:
+
+```powershell
+pip install "mcp>=2.0.0"
+py -m local_coding_agent.mcp_server --workspace-ref repo --workspace .
+```
+
+`mcp` — опциональная зависимость (`pyproject.toml`, extra `mcp`); core остаётся stdlib-only. Сервер говорит на stateless `2026-07-28` (`server/discover`, per-request `_meta`, `resultType`) и авто-fallback на legacy `initialize` для старых клиентов.
+
 ## Benchmark моделей
 
 Запуск из корня workspace:
@@ -213,6 +227,10 @@ py -m local_coding_agent `
 | `local_coding_agent/stdio.py` | bounded UTF-8 JSONL process-bound `delegate_code` adapter |
 | `local_coding_agent/worker_pool.py` | bounded in-memory delegation queue, job state и cooperative cancellation |
 | `local_coding_agent/atomizer.py` | формальный task budget, preflight и детерминированная decomposition по files |
+| `local_coding_agent/delegator.py` | шаблонная декомпозиция и делегирование детей, в т.ч. параллельно |
+| `local_coding_agent/calibration.py` | VRAM-калибровка числа worker-слотов по модели |
+| `local_coding_agent/stats.py` | минимальная статистика прогонов и JSONL-sink |
+| `local_coding_agent/mcp_server.py` | official-SDK MCP stdio server (`2026-07-28` stateless + legacy fallback) |
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |

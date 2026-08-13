@@ -1,10 +1,11 @@
 """Bounded controller components for delegating small coding tasks."""
 
 from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
+from .calibration import calibrate_for_model, calibrate_workers, model_vram_bytes
 from .controller import Controller
 from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_failure
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
-from .mcp_server import McpStdioServer
+from .mcp_server import build_server
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
 from .service import DelegationRequest, DelegationService
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
@@ -30,6 +31,9 @@ __all__ = [
     "TaskBudget",
     "decompose",
     "preflight",
+    "calibrate_for_model",
+    "calibrate_workers",
+    "model_vram_bytes",
     "LoadedModel",
     "MemoryBudgetError",
     "MemorySnapshot",
@@ -37,7 +41,7 @@ __all__ = [
     "ModelProfile",
     "OllamaClient",
     "OllamaError",
-    "McpStdioServer",
+    "build_server",
     "TaskEnvelope",
     "ValidationReport",
     "validate_candidate",

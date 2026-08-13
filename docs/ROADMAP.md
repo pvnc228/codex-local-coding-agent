@@ -101,7 +101,7 @@
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
-Статус: R5.1 direct Python seam, первый R5.2 process-bound JSONL stdio slice и R6 bounded in-memory worker-pool slice реализованы и покрыты contract tests; official MCP conformance, Tasks, durable state, fairness и model-specific scheduling ещё не реализованы.
+Статус: R5.1 direct Python seam, первый R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server (`mcp>=2.0.0`, `2026-07-28` stateless + dual-era) и R6 bounded in-memory worker-pool slice реализованы и покрыты contract tests; Tasks, durable state, fairness и model-specific scheduling ещё не реализованы.
 
 Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
 
@@ -121,7 +121,9 @@
 - modern и legacy MCP clients получают совместимые, явно согласованные result shapes;
 - отключение адаптера не меняет core controller.
 
-R5.2 first slice доставлен: `StdioDelegationAdapter` принимает ограниченный UTF-8 JSONL request только для `delegate_code`, строит тот же `DelegationRequest` и возвращает тот же controller-owned result. Contract test сравнивает direct вызов и настоящий дочерний process. Это ещё не MCP conformance: pinned SDK, modern/legacy negotiation, Tasks и настоящий MCP client остаются отдельными gates.
+R5.2 first slice доставлен: `StdioDelegationAdapter` принимает ограниченный UTF-8 JSONL request только для `delegate_code`, строит тот же `DelegationRequest` и возвращает тот же controller-owned result. Contract test сравнивает direct вызов и настоящий дочерний process.
+
+R5.2 (official SDK) доставлен: `mcp_server.build_server` строит `delegate_code` поверх official `mcp>=2.0.0`, который говорит на stateless `2026-07-28` (per-request `_meta`, `server/discover`, `resultType`) и авто-fallback на legacy `initialize` через `serve_dual_era_loop`. `mcp` — опциональная зависимость (`pyproject.toml`, extra `mcp`), core остаётся stdlib-only. Contract test прогоняет in-process `Client` и настоящий process-bound stdio. Tasks extension, durable state и apply-proposal остаются отдельными gates.
 
 R6 first slice доставлен: `BoundedWorkerPool` ограничивает worker slots и queued jobs, возвращает bounded `queue_overload`, сохраняет caller-scoped idempotency, изолирует concurrent request state и поддерживает queued/running cooperative cancellation; при отмене физический model-call slot удерживается до завершения executor. Это in-memory execution primitive; durable task store, timeout policy, fairness и Ollama-specific scheduling остаются отдельными gates.
 
