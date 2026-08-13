@@ -243,6 +243,43 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(result.correct)
         self.assertEqual(result.patch_source, "tool_proposal")
 
+    def test_run_case_scores_search_replace_edits_proposal(self):
+        case = BenchmarkCase(
+            id="replace-value-edits",
+            task=TaskEnvelope(
+                id="replace-value-edits",
+                goal="заменить значение",
+                files=("src/value.py",),
+            ),
+            fixture={"src/value.py": "VALUE = 1\n"},
+            expected_files={"src/value.py": "VALUE = 2\n"},
+        )
+        model = FakeBenchmarkModel(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "значение заменено",
+                            "edits": [
+                                {"file": "src/value.py", "search": "VALUE = 1", "replace": "VALUE = 2"}
+                            ],
+                            "checks": [],
+                            "risks": [],
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            }
+        )
+
+        result = run_case(model, case)
+
+        self.assertTrue(result.correct, result.patch_error)
+        self.assertTrue(result.loop_reliable)
+        self.assertEqual(result.model_calls, 1)
+
     def test_summarize_results_reports_correctness_and_reliability_rates(self):
         cases = default_cases()
         model = FakeBenchmarkModel(

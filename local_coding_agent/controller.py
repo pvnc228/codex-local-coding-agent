@@ -20,7 +20,7 @@ SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной �
 Для файлов используй только относительные пути из task allowlist; абсолютные пути и '..' запрещены.
 Если данных не хватает, задай один точный вопрос.
 Патч должен быть минимальным и затрагивать только разрешённые файлы.
-Для propose_patch верни полный unified diff с реальными переводами строк и корректными hunk headers. Применимость и структура diff проверяются controller-owned validator и git; не используй placeholders, абсолютные пути или literal \\n в качестве перевода строки.
+Для propose_patch предпочтителен формат SEARCH/REPLACE: список edits, каждый с полями file, search (точная копия текущего кода) и replace (новый код); номера строк не нужны. Либо верните полный unified diff с реальными переводами строк и корректными hunk headers. Применимость и структура diff проверяются controller-owned validator и git; не используй placeholders, абсолютные пути или literal \\n в качестве перевода строки.
 После завершения верни только структурированный JSON-результат."""
 
 
@@ -68,15 +68,31 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "propose_patch",
             "description": (
-                "Return only a complete unified diff proposal without writing files. "
-                "Use real newlines and relative allowlisted paths. Include diff --git, ---, +++, "
-                "and valid hunk headers; applicability is checked by the controller-owned validator and git. "
-                "Do not use placeholders, prose, absolute paths, or literal \\n."
+                "Return a complete change proposal without writing files. "
+                "Prefer SEARCH/REPLACE: provide a list of edits, each copying the "
+                "current code exactly (search) and the new code (replace); no line "
+                "numbers needed. Alternatively provide one complete unified diff "
+                "with diff --git, ---, +++ and valid hunk headers. Use real newlines "
+                "and relative allowlisted paths. Applicability is checked by the "
+                "controller-owned validator and git."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"patch": {"type": "string"}},
-                "required": ["patch"],
+                "properties": {
+                    "patch": {"type": "string"},
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type": "string"},
+                                "search": {"type": "string"},
+                                "replace": {"type": "string"},
+                            },
+                            "required": ["file", "search", "replace"],
+                        },
+                    },
+                },
             },
         },
     },
@@ -375,10 +391,13 @@ class Controller:
                 "changed_files": list(report.changed_files),
                 "issues": list(report.issues),
             }
+            if report.resolved_patch:
+                result["patch"] = report.resolved_patch
+                result.pop("edits", None)
             result["status"] = "accepted" if report.valid else "rejected"
             audit.append({"event": "candidate_validated", "valid": report.valid})
             if report.valid and apply:
-                patch = result.get("patch")
+                patch = report.resolved_patch or result.get("patch")
                 if not isinstance(patch, str) or not patch.strip():
                     audit.append({"event": "apply_skipped", "reason": "candidate has no patch"})
                 else:

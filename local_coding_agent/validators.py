@@ -24,6 +24,147 @@ class ValidationReport:
     valid: bool
     changed_files: tuple[str, ...]
     issues: tuple[str, ...]
+    resolved_patch: str = ""
+
+
+def _split_edit_lines(text: str) -> list[str]:
+    if text == "":
+        return []
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines.pop()
+    return lines
+
+
+def _build_edit_diff(
+    path: str,
+    search: str,
+    replace: str,
+    start_line: int,
+    old_no_newline: bool,
+) -> str:
+    """Build a minimal single-file unified diff replacing ``search`` with ``replace``.
+
+    ``search`` is a line-aligned block already located by the caller; the diff
+    is controller-owned, so the model never computes line numbers or hunk
+    headers. ``old_no_newline`` marks the removed block's last line as lacking
+    a trailing newline in the file (i.e. it reaches EOF without one).
+    """
+
+    old_lines = _split_edit_lines(search)
+    new_lines = _split_edit_lines(replace)
+    header = f"@@ -{start_line},{len(old_lines)} +{start_line},{len(new_lines)} @@"
+    body: list[str] = []
+    for position, line in enumerate(old_lines):
+        body.append("-" + line)
+        if position == len(old_lines) - 1 and old_no_newline:
+            body.append("\\ No newline at end of file")
+    for position, line in enumerate(new_lines):
+        body.append("+" + line)
+        # The replacement inherits the removed block's trailing-newline
+        # status: a line-aligned search block already ends on a newline
+        # boundary, so only emit the marker when the old block had none.
+        if position == len(new_lines) - 1 and old_no_newline:
+            body.append("\\ No newline at end of file")
+    hunk = "\n".join([header, *body]) if body else header
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        f"--- a/{path}\n"
+        f"+++ b/{path}\n"
+        f"{hunk}\n"
+    )
+
+
+def resolve_edits(
+    workspace_root: str | Path,
+    edits: Any,
+    *,
+    allowed_files: set[str],
+    max_files: int,
+    max_patch_bytes: int,
+) -> tuple[str, tuple[str, ...], list[str]]:
+    """Validate SEARCH/REPLACE edit blocks and synthesize one unified diff.
+
+    Returns ``(patch, changed_files, issues)``. An edit block is
+    ``{"file": ..., "search": ..., "replace": ...}``. ``search`` must match the
+    current file content exactly once and be line-aligned, so a model only has
+    to copy existing code instead of computing line numbers.
+    """
+
+    issues: list[str] = []
+    changed: list[str] = []
+    diff_parts: list[str] = []
+    root = Path(workspace_root)
+    seen: set[str] = set()
+    for edit in edits:
+        if not isinstance(edit, Mapping):
+            issues.append("each edit must be an object")
+            continue
+        raw_path = edit.get("file")
+        search = edit.get("search")
+        replace = edit.get("replace")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            issues.append("edit file must be a non-empty string")
+            continue
+        normalized, path_issue = _normalize_diff_path(raw_path)
+        if path_issue:
+            issues.append(path_issue)
+            continue
+        if normalized is None:
+            issues.append(f"edit file path is empty: {raw_path}")
+            continue
+        if _fold_path(normalized) not in allowed_files:
+            issues.append(f"edit file is outside task allowlist: {raw_path}")
+            continue
+        if _fold_path(normalized) in seen:
+            issues.append(f"duplicate edit file: {raw_path}")
+            continue
+        if not isinstance(search, str) or not search:
+            issues.append("edit search must be a non-empty string")
+            continue
+        if not isinstance(replace, str):
+            issues.append("edit replace must be a string")
+            continue
+        seen.add(_fold_path(normalized))
+        target = root / Path(normalized)
+        if not target.is_file():
+            issues.append(f"edit file does not exist: {raw_path}")
+            continue
+        try:
+            content = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            issues.append(f"edit file is not UTF-8 text: {raw_path}")
+            continue
+        count = content.count(search)
+        if count == 0:
+            issues.append(f"edit search block not found: {raw_path}")
+            continue
+        if count > 1:
+            issues.append(f"edit search block is ambiguous ({count} matches): {raw_path}")
+            continue
+        index = content.find(search)
+        end = index + len(search)
+        if (index > 0 and content[index - 1] != "\n") or (end < len(content) and content[end] != "\n"):
+            issues.append(f"edit search block is not line-aligned: {raw_path}")
+            continue
+        start_line = content[:index].count("\n") + 1
+        old_no_newline = end == len(content) and not content.endswith("\n")
+        try:
+            diff_parts.append(_build_edit_diff(normalized, search, replace, start_line, old_no_newline))
+        except ValueError as error:
+            issues.append(str(error))
+            continue
+        changed.append(normalized)
+
+    if len(seen) > max_files:
+        issues.append(f"edits exceed max_patch_files={max_files}")
+    if issues:
+        return "", tuple(sorted(set(changed))), issues
+    patch = "\n".join(diff_parts)
+    if len(patch.encode("utf-8")) > max_patch_bytes:
+        issues.append(f"edits exceed max_patch_bytes={max_patch_bytes}")
+        return "", tuple(sorted(set(changed))), issues
+    return patch, tuple(sorted(set(changed))), []
 
 
 def _evidence_facts(evidence: str | None) -> dict[str, str | None]:
@@ -73,15 +214,42 @@ def validate_candidate(
     if not isinstance(candidate.get("summary"), str) or not candidate["summary"].strip():
         issues.append("summary must be a non-empty string")
     patch = candidate.get("patch")
+    edits = candidate.get("edits")
+    if patch is None:
+        patch = ""
     if not isinstance(patch, str):
         issues.append("patch must be a string")
         patch = ""
+    if edits is not None and not isinstance(edits, list):
+        issues.append("edits must be a list")
+        edits = None
     checks = candidate.get("checks")
     if not isinstance(checks, list):
         issues.append("checks must be a list")
         checks = []
     if not isinstance(candidate.get("risks"), list):
         issues.append("risks must be a list")
+
+    resolved_patch = ""
+    has_patch = bool(patch.strip()) if isinstance(patch, str) else False
+    has_edits = bool(edits) if isinstance(edits, list) else False
+    if has_patch and has_edits:
+        issues.append("candidate must provide either patch or edits, not both")
+    elif has_edits:
+        if workspace_root is None:
+            issues.append("edits require a workspace to resolve search blocks")
+        else:
+            allowed = {_normalize_task_path(path) for path in task.files}
+            resolved_patch, changed_files, edit_issues = resolve_edits(
+                workspace_root,
+                edits,
+                allowed_files=allowed,
+                max_files=max_patch_files,
+                max_patch_bytes=max_patch_bytes,
+            )
+            issues.extend(edit_issues)
+            if not edit_issues:
+                patch = resolved_patch
 
     if patch:
         if max_patch_bytes <= 0 or len(patch.encode("utf-8")) > max_patch_bytes:
@@ -146,7 +314,7 @@ def validate_candidate(
         if observed_checks is None or command not in observed_checks:
             issues.append(f"check has no external runner evidence: {command}")
 
-    return ValidationReport(not issues, changed_files, tuple(issues))
+    return ValidationReport(not issues, changed_files, tuple(issues), resolved_patch)
 
 
 def check_patch_applies(

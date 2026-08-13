@@ -129,11 +129,14 @@ class ControllerTests(unittest.TestCase):
             if definition["function"]["name"] == "propose_patch"
         )
         description = definition["function"]["description"]
+        properties = definition["function"]["parameters"]["properties"]
 
+        self.assertIn("edits", properties)
         self.assertIn("hunk", description)
         self.assertIn("git", description)
         self.assertIn("real newlines", description)
-        self.assertIn("literal \\n", description)
+        self.assertIn("search", description)
+        self.assertNotIn("required", definition["function"]["parameters"])
 
     def test_controller_converts_json_tool_call_in_content_to_bounded_tool_call(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -612,6 +615,52 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(
             any(event["event"] == "post_apply_check" for event in result["audit"])
         )
+
+    def test_controller_applies_edit_proposal_when_requested(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="controller-apply-edits",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменено значение",
+                                    "edits": [
+                                        {
+                                            "file": "src/value.py",
+                                            "search": "VALUE = 1",
+                                            "replace": "VALUE = 2",
+                                        }
+                                    ],
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    }
+                ]
+            )
+
+            result = Controller(model, workspace).run(task, apply=True)
+
+            self.assertEqual(result["status"], "accepted")
+            self.assertIs(result["applied"], True)
+            self.assertEqual(
+                (workspace / "src" / "value.py").read_text(encoding="utf-8"),
+                "VALUE = 2\n",
+            )
+            self.assertIn("patch", result)
+            self.assertNotIn("edits", result)
 
     def test_apply_patch_is_not_a_model_tool(self):
         function_names = {

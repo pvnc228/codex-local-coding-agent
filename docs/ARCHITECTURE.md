@@ -29,7 +29,7 @@
 - 'list_files' — только внутри рабочей области;
 - 'read_file' — только allowlist;
 - 'search_text' — ограниченный поиск;
-- 'propose_patch' — вернуть diff без записи;
+- 'propose_patch' — вернуть изменение без записи, либо как unified diff, либо как SEARCH/REPLACE-блоки (`edits`);
 - 'apply_patch' — controller-only seam, не является tool-ом модели: применяется только после валидации и только при `--apply`;
 - 'run_tests' — только allowlisted-команда.
 

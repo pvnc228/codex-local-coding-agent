@@ -183,6 +183,24 @@ Live evidence 2026-08-13 (scripted model, `python .codex-run/live_check_r7_r8.py
 - fallback не применяет patch и не заявляет checks без нового внешнего evidence;
 - audit однозначно связывает каждую попытку с причиной и итоговой escalation.
 
+## R9 — SEARCH/REPLACE как альтернативный формат изменения
+
+Статус: реализовано и покрыто regression-тестами; live benchmark на новых моделях ещё не повторён.
+
+Цель: убрать барьер unified diff, из-за которого слабые/сильно квантованные модели дают 0% correctness. Генерация валидного unified diff (номера строк, hunk-заголовки, `+`/`-`) — одна из самых сложных задач для локальных моделей; SEARCH/REPLACE требует только скопировать старый код и написать новый.
+
+- `propose_patch` и финальный кандидат принимают либо `patch` (unified diff), либо `edits` (список `{"file", "search", "replace"}`), но не оба;
+- `search` обязан совпадать с текущим содержимым файла ровно один раз и на границе строк; иначе кандидат отклоняется machine-readable (`not found` / `ambiguous` / `not line-aligned` / `allowlist`);
+- controller сам конвертирует `edits` в unified diff через `resolve_edits`/`_build_edit_diff`, поэтому модель не считает номера строк;
+- тот же `git apply --check` остаётся источником истины применимости; allowlist, размер и external evidence не ослаблены;
+- benchmark-judge принимает edit-proposal как fallback (аналог content tool-call).
+
+Критерии приёмки:
+
+- `search` не найден / неоднозначен / вне allowlist → отклонение, а не ложное принятие;
+- edit-proposal проходит те же проверки применимости и не пишет в workspace до `--apply`;
+- benchmark-задача, решённая через `edits`, получает `correct=true` на внешнем oracle.
+
 ## Вне MVP
 
 - автоматические commit, push, публикация;

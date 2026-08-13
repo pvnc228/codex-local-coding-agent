@@ -68,6 +68,9 @@
   "status": "candidate",
   "summary": "что изменено",
   "patch": "unified diff",
+  "edits": [
+    {"file": "src/unique.py", "search": "старый блок", "replace": "новый блок"}
+  ],
   "checks": [
     {
       "command": "allowlisted command",
@@ -79,13 +82,27 @@
 }
 ~~~
 
-Значение 'patch' обязательно проверяется отдельно. Наличие текста в поле 'patch' не означает, что это настоящий unified diff.
+Кандидат содержит либо `patch`, либо `edits`, но не оба. `patch` — синтаксически корректный unified diff; `edits` — список SEARCH/REPLACE-блоков. Наличие текста в поле `patch` не означает, что это настоящий unified diff: он проверяется отдельно.
+
+### SEARCH/REPLACE (edits)
+
+Для слабых и сильно квантованных моделей unified diff — одна из самых сложных задач (модель должна сама вычислять номера строк, hunk-заголовки и не путать `+`/`-`). Формат `edits` снимает эту сложность: модель копирует текущий код точно как есть в `search` и пишет новую версию в `replace`; номера строк не нужны.
+
+Правила:
+
+- каждый block — объект `{"file", "search", "replace"}`; `file` — относительный путь из allowlist;
+- `search` обязан совпадать с текущим содержимым файла символ в символ, ровно один раз и на границе строк;
+- если `search` не найден, встречается несколько раз или не выровнен по строкам — кандидат отклоняется с machine-readable причиной;
+- controller сам преобразует каждый block в unified diff (`diff --git`/`---`/`+++`/`@@`), поэтому модель не генерирует hunk-заголовки;
+- применимость проверяется `git apply --check` по полученному diff, как для обычного `patch`.
+
+Формат `edits` не ослабляет allowlist, лимиты размера или external evidence: те же проверки применяются к разрешённому diff.
 
 ## Mediated apply
 
 Модель только предлагает изменение через `propose_patch`; сама применить его не может. При запуске с `--apply` controller сначала валидирует и применяет patch во workspace, затем повторно запускает все allowlisted checks. Только после успешных post-apply checks результат получает `"applied": true`; при провале patch откатывается, а статус становится `rejected` с риском kind `post_apply_check_failed`. При ошибке самого применения используется риск kind `apply_failed`. По умолчанию (без `--apply`) режим — proposal-only: на диск ничего не пишется.
 
-Инструмент `propose_patch` принимает только полный unified diff с синтаксически корректными hunk headers; `\n` внутри patch должен быть реальным переводом строки, а не двумя символами backslash и `n`. Validator проверяет структуру, allowlist и размер, а controller-owned `git apply --check` является источником истины для фактических hunk counts и применимости. До записи diff не модифицирует workspace.
+Инструмент `propose_patch` принимает либо полный unified diff с синтаксически корректными hunk headers, либо список SEARCH/REPLACE `edits`; `\n` внутри patch должен быть реальным переводом строки, а не двумя символами backslash и `n`. Validator проверяет структуру, allowlist и размер, а controller-owned `git apply --check` является источником истины для фактических hunk counts и применимости. До записи diff не модифицирует workspace.
 
 Если Ollama не возвращает native `tool_calls`, контроллер допускает совместимый JSON-объект в `message.content` только в форме `{"name":"...","arguments":{...}}`, после чего всё равно прогоняет вызов через ту же policy layer. `run_tests` передаётся модели только когда task envelope содержит allowlisted `checks`.
 

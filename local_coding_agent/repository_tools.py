@@ -15,7 +15,7 @@ from threading import Event
 from typing import Any
 
 from .task import TaskEnvelope
-from .validators import check_patch_applies, parse_unified_diff
+from .validators import check_patch_applies, parse_unified_diff, resolve_edits
 
 
 def _fold_path(path: str) -> str:
@@ -434,8 +434,29 @@ class BoundedRepositoryTools:
 
     def _propose_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
         patch = arguments.get("patch")
-        if not isinstance(patch, str) or not patch.strip():
-            raise ToolPolicyError("patch must be a non-empty string")
+        edits = arguments.get("edits")
+        has_patch = isinstance(patch, str) and patch.strip()
+        has_edits = isinstance(edits, list) and bool(edits)
+        if has_patch and has_edits:
+            raise ToolPolicyError("provide either patch or edits, not both")
+        if not has_patch and not has_edits:
+            raise ToolPolicyError("patch or edits must be provided")
+        if has_edits:
+            allowed = {self._normalize_declared_path(path) for path in self.task.files}
+            resolved, changed, edit_issues = resolve_edits(
+                self.workspace_root,
+                edits,
+                allowed_files=allowed,
+                max_files=self.max_patch_files,
+                max_patch_bytes=self.max_patch_bytes,
+            )
+            if edit_issues:
+                raise ToolPolicyError("; ".join(edit_issues))
+            applies, detail = check_patch_applies(self.workspace_root, resolved)
+            if not applies:
+                raise ToolPolicyError(f"patch does not apply cleanly: {detail}")
+            return {"patch": resolved, "edits": edits, "files": sorted(changed)}
+
         if len(patch.encode("utf-8")) > self.max_patch_bytes:
             raise ToolPolicyError(f"patch exceeds max_patch_bytes={self.max_patch_bytes}")
         _, diff_issues = parse_unified_diff(patch)

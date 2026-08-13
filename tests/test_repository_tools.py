@@ -291,6 +291,53 @@ class RepositoryToolsTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertIsInstance(holder.get("error"), ToolCancelled)
 
+    def test_propose_patch_accepts_search_replace_edits(self):
+        tools = BoundedRepositoryTools(self.workspace, self.task)
+        result = tools.execute(
+            "propose_patch",
+            {
+                "edits": [
+                    {
+                        "file": "src/allowed.py",
+                        "search": "VALUE = 42",
+                        "replace": "VALUE = 43",
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(result["files"], ["src/allowed.py"])
+        self.assertIn("+VALUE = 43", result["patch"])
+        self.assertEqual(
+            (self.workspace / "src" / "allowed.py").read_text(encoding="utf-8"),
+            "VALUE = 42\n",
+        )
+
+    def test_propose_patch_rejects_edits_with_bad_search(self):
+        tools = BoundedRepositoryTools(self.workspace, self.task)
+        with self.assertRaisesRegex(ToolPolicyError, "not found"):
+            tools.execute(
+                "propose_patch",
+                {
+                    "edits": [
+                        {"file": "src/allowed.py", "search": "NOPE", "replace": "VALUE = 43"}
+                    ]
+                },
+            )
+
+    def test_propose_patch_rejects_both_patch_and_edits(self):
+        tools = BoundedRepositoryTools(self.workspace, self.task)
+        with self.assertRaisesRegex(ToolPolicyError, "not both"):
+            tools.execute(
+                "propose_patch",
+                {
+                    "patch": "diff --git a/src/allowed.py b/src/allowed.py\n",
+                    "edits": [
+                        {"file": "src/allowed.py", "search": "VALUE = 42", "replace": "VALUE = 43"}
+                    ],
+                },
+            )
+
     def test_tool_calls_are_recorded_as_audit_events(self):
         tools = BoundedRepositoryTools(self.workspace, self.task)
         tools.execute("read_file", {"path": "src/allowed.py"})

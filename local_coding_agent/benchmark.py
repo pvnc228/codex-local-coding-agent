@@ -58,6 +58,7 @@ class InstrumentedModel:
         self.eval_count = 0
         self.eval_duration_ns = 0
         self.proposed_patches: list[str] = []
+        self.proposed_edits: list[list[dict[str, Any]]] = []
 
     def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]]) -> dict[str, Any]:
         response = self.model.chat(messages, tools=tools)
@@ -92,8 +93,11 @@ class InstrumentedModel:
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError:
                     continue
-            if isinstance(arguments, Mapping) and isinstance(arguments.get("patch"), str):
-                self.proposed_patches.append(arguments["patch"])
+            if isinstance(arguments, Mapping):
+                if isinstance(arguments.get("patch"), str):
+                    self.proposed_patches.append(arguments["patch"])
+                if isinstance(arguments.get("edits"), list):
+                    self.proposed_edits.append(arguments["edits"])
 
 
 @dataclass(frozen=True)
@@ -344,11 +348,13 @@ def run_case(
         result = Controller(instrumented, workspace, max_turns=max_turns).run(case.task)
         wall_time_ms = (perf_counter_ns() - started) / 1_000_000
         fallback_patch = instrumented.proposed_patches[-1] if instrumented.proposed_patches else ""
+        fallback_edits = instrumented.proposed_edits[-1] if instrumented.proposed_edits else None
         patch_applied, correct, patch_error, patch_source = _judge_patch(
             result,
             case,
             workspace,
             fallback_patch=fallback_patch,
+            fallback_edits=fallback_edits,
         )
         tool_calls = sum(
             1
@@ -447,23 +453,31 @@ def _judge_patch(
     workspace: Path,
     *,
     fallback_patch: str,
+    fallback_edits: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, bool, str, str]:
     patch_source = "accepted_result" if result.get("status") == "accepted" else "tool_proposal"
     patch = result.get("patch") if patch_source == "accepted_result" else fallback_patch
     if (not isinstance(patch, str) or not patch.strip()) and fallback_patch:
         patch_source = "tool_proposal"
         patch = fallback_patch
+    edits = None
     if not isinstance(patch, str) or not patch.strip():
+        if fallback_edits:
+            patch_source = "tool_proposal"
+            edits = fallback_edits
+    has_patch = isinstance(patch, str) and bool(patch.strip())
+    if not has_patch and not edits:
         return False, False, "candidate did not contain a patch", "none"
-    validation = _validate_patch_for_case(patch, case)
+    validation = _validate_patch_for_case(patch, case, edits=edits, workspace=workspace)
     if not validation.valid:
         return False, False, "; ".join(validation.issues), patch_source
+    resolved = validation.resolved_patch or patch
     if shutil.which("git") is None:
         return False, False, "git executable is unavailable for isolated patch application", patch_source
-    apply_check = _git_apply(workspace, patch, check=True)
+    apply_check = _git_apply(workspace, resolved, check=True)
     if apply_check.returncode != 0:
         return False, False, _process_error(apply_check), patch_source
-    applied = _git_apply(workspace, patch, check=False)
+    applied = _git_apply(workspace, resolved, check=False)
     if applied.returncode != 0:
         return False, False, _process_error(applied), patch_source
     try:
@@ -480,17 +494,17 @@ def _judge_patch(
     return True, True, "", patch_source
 
 
-def _validate_patch_for_case(patch: str, case: BenchmarkCase):
-    return validate_candidate(
-        {
-            "status": "candidate",
-            "summary": "benchmark proposal",
-            "patch": patch,
-            "checks": [],
-            "risks": [],
-        },
-        case.task,
-    )
+def _validate_patch_for_case(patch: str, case: BenchmarkCase, *, edits=None, workspace=None):
+    candidate = {
+        "status": "candidate",
+        "summary": "benchmark proposal",
+        "patch": patch,
+        "checks": [],
+        "risks": [],
+    }
+    if edits is not None:
+        candidate["edits"] = edits
+    return validate_candidate(candidate, case.task, workspace_root=workspace)
 
 
 def _exact_file_oracle(case: BenchmarkCase, workspace: Path) -> tuple[bool, str]:
