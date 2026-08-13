@@ -27,6 +27,7 @@
 - принимать тот же proposal-only `delegate_code` через bounded UTF-8 JSONL process-bound adapter.
 - ставить proposal-only delegations в bounded in-memory worker pool с caller-scoped job state и cancellation.
 - отклонять слишком широкую задачу до запуска модели через preflight budget (`TaskBudget`/`preflight`) и детерминированно раскладывать её по files через `decompose` без расширения allowlist.
+- ограничивать retry budget (hard cap 10) и после исчерпания возвращать escalation bundle с просмотренными файлами, попытками и внешним evidence вместо бесконечного tool-loop.
 
 ## Безопасные границы
 

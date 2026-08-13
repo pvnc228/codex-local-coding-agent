@@ -631,6 +631,200 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaises(ToolPolicyError):
                 tools.execute("apply_patch", {"patch": "x"})
 
+    def test_retry_budget_rejects_above_hard_cap(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            with self.assertRaises(ValueError):
+                Controller(FakeModel([]), workspace, max_retries=11)
+
+    def test_controller_escalates_when_retry_budget_exhausted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="escalate-json",
+                goal="вернуть результат",
+                files=("allowed.py",),
+            )
+            model = FakeModel(
+                [
+                    {"message": {"role": "assistant", "content": "not json"}},
+                    {"message": {"role": "assistant", "content": "not json"}},
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "retry_budget_exhausted")
+        self.assertEqual(result["escalation"]["reason"], "invalid_json")
+        self.assertEqual(result["escalation"]["task"]["id"], "escalate-json")
+        self.assertEqual(result["escalation"]["task"]["files"], ["allowed.py"])
+        self.assertEqual(
+            result["escalation"]["attempts"],
+            [
+                {"attempt": 1, "reason": "invalid_json"},
+                {"attempt": 2, "reason": "invalid_json"},
+            ],
+        )
+        self.assertEqual(len(model.requests), 2)
+        self.assertTrue(
+            any(e.get("event") == "escalation" for e in result["audit"])
+        )
+
+    def test_escalation_bundle_captures_viewed_files_and_last_patch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="escalate-context",
+                goal="изменить значение",
+                files=("allowed.py",),
+            )
+            patch = (
+                "diff --git a/allowed.py b/allowed.py\n"
+                "--- a/allowed.py\n"
+                "+++ b/allowed.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 42\n"
+                "+VALUE = 43\n"
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": {"path": "allowed.py"},
+                                    },
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "propose_patch",
+                                        "arguments": {"patch": patch},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {"message": {"role": "assistant", "content": "bad"}},
+                    {"message": {"role": "assistant", "content": "bad"}},
+                ]
+            )
+
+            result = Controller(model, workspace, max_retries=1).run(task)
+
+        self.assertEqual(result["escalation"]["viewed_files"], ["allowed.py"])
+        self.assertEqual(result["escalation"]["last_patch"], patch)
+        self.assertEqual(result["escalation"]["external_evidence"], {})
+        self.assertEqual(len(result["escalation"]["attempts"]), 2)
+
+    def test_controller_escalates_on_invalid_response_without_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="escalate-invalid-response",
+                goal="вернуть результат",
+                files=("allowed.py",),
+            )
+            model = FakeModel([{}, {}])
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "retry_budget_exhausted")
+        self.assertEqual(result["escalation"]["reason"], "invalid_response")
+        self.assertEqual(
+            result["escalation"]["attempts"],
+            [
+                {"attempt": 1, "reason": "invalid_response"},
+                {"attempt": 2, "reason": "invalid_response"},
+            ],
+        )
+        self.assertEqual(len(model.requests), 2)
+
+    def test_controller_escalates_on_max_turns_when_attempts_exist(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="escalate-max-turns",
+                goal="вернуть результат",
+                files=("allowed.py",),
+            )
+            model = FakeModel(
+                [
+                    {"message": {"role": "assistant", "content": "bad"}},
+                    {"message": {"role": "assistant", "content": "bad"}},
+                ]
+            )
+
+            result = Controller(model, workspace, max_turns=2, max_retries=5).run(task)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "retry_budget_exhausted")
+        self.assertEqual(result["escalation"]["reason"], "max_turns")
+        self.assertEqual(len(result["escalation"]["attempts"]), 2)
+
+    def test_repeated_tool_call_has_priority_over_retry_budget(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="duplicate-priority",
+                goal="прочитать файл",
+                files=("allowed.py",),
+            )
+            call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"function": {"name": "read_file", "arguments": {"path": "allowed.py"}}}
+                    ],
+                }
+            }
+            model = FakeModel([call, call])
+
+            result = Controller(model, workspace, max_retries=5).run(task)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "duplicate_tool_call")
+        self.assertNotIn("escalation", result)
+
+    def test_cancellation_has_priority_over_retry_budget(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="cancel-priority",
+                goal="не запускать",
+                files=("allowed.py",),
+            )
+            model = FakeModel([])
+            cancelled = Event()
+            cancelled.set()
+
+            result = Controller(model, workspace, max_retries=5).run(
+                task, cancel_event=cancelled
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "cancelled")
+        self.assertNotIn("escalation", result)
+        self.assertEqual(model.requests, [])
+
 
 if __name__ == "__main__":
     unittest.main()

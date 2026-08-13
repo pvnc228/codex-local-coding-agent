@@ -117,6 +117,8 @@ class Controller:
     ) -> None:
         if max_turns <= 0 or max_same_call <= 0 or max_retries < 0:
             raise ValueError("controller limits are invalid")
+        if max_retries > 10:
+            raise ValueError("max_retries exceeds hard cap of 10")
         self.model = model
         self.workspace_root = workspace_root
         self.max_turns = max_turns
@@ -159,6 +161,9 @@ class Controller:
             )
             seen_calls: dict[str, int] = {}
             observed_checks: dict[str, dict[str, Any]] = {}
+            attempts: list[dict[str, Any]] = []
+            viewed_files: set[str] = set()
+            last_patch: list[str] = []
             retries = 0
             executor = ThreadPoolExecutor(max_workers=1)
             return self._run_turns(
@@ -168,6 +173,9 @@ class Controller:
                 active_cancel,
                 seen_calls,
                 observed_checks,
+                attempts,
+                viewed_files,
+                last_patch,
                 retries,
                 executor,
                 audit,
@@ -201,6 +209,9 @@ class Controller:
         active_cancel: Event | None,
         seen_calls: dict[str, int],
         observed_checks: dict[str, dict[str, Any]],
+        attempts: list[dict[str, Any]],
+        viewed_files: set[str],
+        last_patch: list[str],
         retries: int,
         executor: ThreadPoolExecutor,
         audit: list[dict[str, Any]],
@@ -238,10 +249,20 @@ class Controller:
             if not isinstance(message, dict):
                 if retries < self.max_retries:
                     retries += 1
+                    attempts.append({"attempt": retries, "reason": "invalid_response"})
                     messages.append({"role": "user", "content": "Верни только объект JSON результата задачи."})
                     audit.append({"event": "retry", "reason": "invalid_response"})
                     continue
-                return self._failure("failed", "invalid_response", "model response has no message object", audit)
+                attempts.append({"attempt": retries + 1, "reason": "invalid_response"})
+                return self._escalation(
+                    task,
+                    reason="invalid_response",
+                    attempts=attempts,
+                    viewed_files=viewed_files,
+                    last_patch=last_patch,
+                    observed_checks=observed_checks,
+                    audit=audit,
+                )
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
@@ -275,6 +296,22 @@ class Controller:
                             )
                         audit.append({"event": "tool_call", "name": name, "arguments": arguments, "turn": turn})
                         result = tools.execute(name, arguments)
+                        if name == "read_file":
+                            path = arguments.get("path")
+                            if isinstance(path, str):
+                                viewed_files.add(path)
+                        elif name == "search_text":
+                            for path in (arguments.get("paths") or list(task.files)):
+                                if isinstance(path, str):
+                                    viewed_files.add(path)
+                        elif name == "list_files":
+                            for path in result.get("files", []):
+                                if isinstance(path, str):
+                                    viewed_files.add(path)
+                        elif name == "propose_patch":
+                            patch = result.get("patch")
+                            if isinstance(patch, str):
+                                last_patch[:] = [patch]
                         if name == "run_tests":
                             observed_checks[arguments["command"]] = {
                                 "passed": result["passed"],
@@ -301,11 +338,21 @@ class Controller:
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 if retries < self.max_retries:
                     retries += 1
+                    attempts.append({"attempt": retries, "reason": "invalid_json"})
                     messages.append(message)
                     messages.append({"role": "user", "content": "Предыдущий ответ невалиден. Верни только JSON-объект без markdown."})
                     audit.append({"event": "retry", "reason": "invalid_json"})
                     continue
-                return self._failure("failed", "invalid_json", str(error), audit)
+                attempts.append({"attempt": retries + 1, "reason": "invalid_json"})
+                return self._escalation(
+                    task,
+                    reason="invalid_json",
+                    attempts=attempts,
+                    viewed_files=viewed_files,
+                    last_patch=last_patch,
+                    observed_checks=observed_checks,
+                    audit=audit,
+                )
             result = dict(result)
             for controller_field in (
                 "audit",
@@ -424,6 +471,16 @@ class Controller:
             result["audit"] = audit
             return result
 
+        if attempts:
+            return self._escalation(
+                task,
+                reason="max_turns",
+                attempts=attempts,
+                viewed_files=viewed_files,
+                last_patch=last_patch,
+                observed_checks=observed_checks,
+                audit=audit,
+            )
         return self._failure("failed", "max_turns", f"max_turns={self.max_turns} exceeded", audit)
 
     def _run_post_apply_checks(
@@ -553,5 +610,45 @@ class Controller:
             "checks": [],
             "risks": [{"kind": kind, "message": message}],
             "error": {"kind": kind, "message": message},
+            "audit": audit,
+        }
+
+    def _escalation(
+        self,
+        task: TaskEnvelope,
+        *,
+        reason: str,
+        attempts: list[dict[str, Any]],
+        viewed_files: set[str],
+        last_patch: list[str],
+        observed_checks: dict[str, dict[str, Any]],
+        audit: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        audit.append({"event": "escalation", "reason": reason, "attempts": len(attempts)})
+        return {
+            "status": "failed",
+            "summary": f"retry budget exhausted: {reason}",
+            "patch": "",
+            "checks": [],
+            "risks": [],
+            "error": {"kind": "retry_budget_exhausted", "message": reason},
+            "escalation": {
+                "reason": reason,
+                "task": {
+                    "id": task.id,
+                    "goal": task.goal,
+                    "files": list(task.files),
+                    "context": task.context,
+                    "constraints": list(task.constraints),
+                    "checks": list(task.checks),
+                    "acceptance": list(task.acceptance),
+                },
+                "attempts": list(attempts),
+                "viewed_files": sorted(viewed_files),
+                "last_patch": last_patch[0] if last_patch else "",
+                "validation_issues": [],
+                "external_evidence": dict(observed_checks),
+                "risks": [],
+            },
             "audit": audit,
         }

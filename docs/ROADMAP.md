@@ -162,6 +162,8 @@ R6 first slice доставлен: `BoundedWorkerPool` ограничивает 
 
 ## R8 — Ограниченные retries и escalation
 
+Статус: реализовано. `Controller.max_retries` получил hard cap 10 (сверх — `ValueError`). Оба retry-пути (`invalid_response`/`invalid_json`) ведут учёт попыток (`attempts`), фиксируют просмотренные файлы (`viewed_files`) и последний предложенный patch (`last_patch`) и после исчерпания бюджета возвращают escalation bundle: task envelope, попытки с machine-readable причинами, просмотренные файлы, последний patch и внешнее evidence проверок; итоговое исчерпание `max_turns` при наличии попыток также возвращает escalation (`reason="max_turns"`). Повторный одинаковый tool call и cancellation сохраняют приоритет над retry budget. Live oracle-доказательство «ровно заданного числа попыток» ещё не запускалось.
+
 Цель: после нескольких содержательно разных попыток вернуть управление дорогому агенту без бесконечного tool-loop.
 
 - configurable retry budget с безопасным default и hard cap не выше 10;
