@@ -89,6 +89,29 @@
 
 Если Ollama не возвращает native `tool_calls`, контроллер допускает совместимый JSON-объект в `message.content` только в форме `{"name":"...","arguments":{...}}`, после чего всё равно прогоняет вызов через ту же policy layer. `run_tests` передаётся модели только когда task envelope содержит allowlisted `checks`.
 
+## Process-bound stdio adapter
+
+`StdioDelegationAdapter` принимает по одной UTF-8 JSONL-команде на строку:
+
+```json
+{
+  "method": "delegate_code",
+  "caller_id": "trusted-host",
+  "params": {
+    "request_id": "opaque-idempotency-key",
+    "workspace_ref": "registered-workspace-handle",
+    "model_profile": "qwen2.5-1.5b",
+    "task": {
+      "id": "read-one",
+      "goal": "прочитать разрешённый файл",
+      "files": ["src/example.py"]
+    }
+  }
+}
+```
+
+Адаптер возвращает одну UTF-8 JSONL-строку с тем же core result shape, что и `DelegationService`. Поддерживается только `delegate_code`; пустые строки пропускаются, request ограничен 64 KiB по умолчанию, а malformed JSON, invalid UTF-8, unknown method и oversized request получают machine-readable `failed` error. `caller_id` используется только как scope idempotency, а `workspace_ref` и `model_profile` всё равно проверяются service policy. Adapter не принимает `apply`, произвольный path, endpoint, command или credentials. Этот срез не утверждает modern/legacy MCP negotiation, Tasks, durable state или reconnect.
+
 Allowlisted `run_tests` запускается в отдельном process group/session с урезанным environment: в дочерний процесс не передаются произвольные переменные окружения родителя. stdout/stderr сразу направляются в bounded temporary sinks, а завершение process tree имеет bounded wait и явную ошибку при failure. Ответ содержит `isolated: true` как runtime evidence, если лимит результата позволяет сохранить эту метаинформацию; при предельно малом `max_tool_result_bytes` приоритет остаётся за `stdout`, `stderr` и `evidence`.
 
 Поля `audit`, `validation`, `applied`, `post_apply_checks` и `error` являются controller-owned. Модель может предложить только candidate fields; её значения этих полей отбрасываются перед финальным результатом.

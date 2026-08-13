@@ -8,7 +8,7 @@
 
 ## Gate перед следующим функциональным этапом
 
-Статус review: исправления P0/P1/P2 смержены в `main` (`3e951bb`, merge `b879b03`). Post-review benchmark повторён 2026-08-13: все пять доступных профилей завершились, Ternary остался `unavailable`; локальный artifact не публикуется. После R5.1 полный локальный gate прошёл `71/71`, `compileall` и `git diff --check`.
+Статус review: исправления P0/P1/P2 смержены в `main` (`3e951bb`, merge `b879b03`). Post-review benchmark повторён 2026-08-13: все пять доступных профилей завершились, Ternary остался `unavailable`; локальный artifact не публикуется. После R5.2 process-bound stdio slice полный локальный gate прошёл `80/80`, `compileall` и `git diff --check`.
 
 Реализационные требования review ниже закрыты кодом и regression tests. R4 получил свежий внешний artifact, однако loop reliability остался нулевым у всех профилей:
 
@@ -101,7 +101,7 @@
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
-Статус: R5.1 direct Python seam реализован и покрыт unit contract tests; MCP/stdio, очередь и durable Tasks ещё не реализованы.
+Статус: R5.1 direct Python seam и первый R5.2 process-bound JSONL stdio slice реализованы и покрыты contract tests; official MCP conformance, Tasks, очередь и durable state ещё не реализованы.
 
 Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
 
@@ -120,6 +120,8 @@
 - результаты имеют одинаковые статусы, audit semantics и policy errors;
 - modern и legacy MCP clients получают совместимые, явно согласованные result shapes;
 - отключение адаптера не меняет core controller.
+
+R5.2 first slice доставлен: `StdioDelegationAdapter` принимает ограниченный UTF-8 JSONL request только для `delegate_code`, строит тот же `DelegationRequest` и возвращает тот же controller-owned result. Contract test сравнивает direct вызов и настоящий дочерний process. Это ещё не MCP conformance: pinned SDK, modern/legacy negotiation, Tasks и настоящий MCP client остаются отдельными gates.
 
 ## R6 — Bounded worker pool поверх одного model runtime
 

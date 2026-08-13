@@ -6,7 +6,7 @@
 
 - Ветка: `main`.
 - Review fixes P0/P1/P2 смержены и опубликованы: `3e951bb`, merge `b879b03`.
-- Свежий локальный gate после R5.1 и review repairs: **76/76 OK**, `compileall` и `git diff --check` прошли. (Системный `py` launcher сломан; использован bundled Codex Python.)
+- Свежий локальный gate после R5.2 process-bound stdio slice и review repairs: **80/80 OK**, `compileall` и `git diff --check` прошли. (Системный `py` launcher сломан; использован bundled Codex Python.)
 - Ollama: post-review benchmark завершён 2026-08-13; локальный artifact `.codex-run/benchmarks/post-review-20260813.json` gitignored. Devstral остаётся единственным профилем с 25% correctness, у всех profiles loop reliability 0%; Ternary `unavailable`.
 - Исследование следующей волны моделей и MCP `2026-07-28` оформлено в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md) и [MCP_DESIGN.md](MCP_DESIGN.md). Это планы, не runtime evidence и не реализованный MCP.
 
@@ -18,6 +18,7 @@
 - **Документация**: flow, hunk-count contract, benchmark artifact status и branch handoff синхронизированы.
 - **R4**: post-review benchmark выполнен через external isolated oracle; ranking не менялся без нового model/quant experiment.
 - **R5.1**: добавлен `DelegationService`/`DelegationRequest`: registered workspace, allowlisted profile, caller-scoped in-memory idempotency и proposal-only direct API.
+- **R5.2 first slice**: добавлен bounded UTF-8 JSONL `StdioDelegationAdapter` с одной proposal-only операцией `delegate_code`; contract test сравнивает direct service и настоящий дочерний process. Полная MCP conformance ещё не заявлена.
 
 ## Benchmark baseline до REQUEST_CHANGES
 
@@ -46,7 +47,7 @@
 - **Loop-reliability gap**: содержательные proposal пока ненадёжно доставляются через protocol loop (0% у всех профилей).
 - **Следующий причинный эксперимент**: Qwen3-Coder IQ2/Q4 из одного pinned GGUF source/revision. Существующий IQ2 из другого репозитория — только observational baseline.
 - **Следующий product race**: Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse Glimmer Q4 и Nemotron MXFP4_MOE после quant A/B.
-- **MCP R5**: сначала transport-neutral core seam, затем local `stdio` proposal-only `delegate_code`, после этого Tasks/queue. Apply и remote HTTP не входят в первый slice.
+- **MCP R5**: transport-neutral core seam и первый process-bound stdio slice готовы; дальше нужны официальный MCP SDK/conformance, затем Tasks/queue. Apply и remote HTTP не входят в первый slice.
 - **Live mediated apply** после review не запускался; benchmark был proposal-only и применял кандидаты только к isolated fixture для oracle.
 - Приём bare hunk остаётся отдельной protocol hypothesis и не должен внедряться без red tests и проверки, что validation boundary не ослабляется.
 
@@ -57,6 +58,7 @@
 - `local_coding_agent/benchmark.py` + `benchmark_oracle_worker.py` — fallback patch capture и restricted external oracle process.
 - `local_coding_agent/cli.py` — флаг `--apply`.
 - `local_coding_agent/service.py` — R5.1 direct transport-neutral proposal-only seam.
+- `local_coding_agent/stdio.py` — bounded UTF-8 JSONL process-bound `delegate_code` adapter.
 - `local_coding_agent/repository_tools.py` — allowlist в `list_files`, pre-read лимит `search_text`, `_kill_tree`, `_trim_stdout_stderr`, `ToolCancelled`.
 - `tests/` — новые/переписанные: `test_validators.py`, `test_controller.py`, `test_repository_tools.py`, `test_memory_manager.py`.
 - Документы: `ROADMAP.md` (план вперёд), `ROADMAP_HISTORICAL.md` (M0–M6), `AUDIT.md`, `BENCHMARK.md`, `MODEL_RESEARCH.md`, `MODEL_EVALUATION_PLAN.md`, `MCP_DESIGN.md`.

@@ -24,6 +24,7 @@
 - смотреть состояние загруженных моделей и управлять их VRAM;
 - работать в proposal-only режиме: файлы не изменяются локальной моделью.
 - вызывать тот же controller через transport-neutral Python API с зарегистрированным `workspace_ref`, allowlisted profile и caller-scoped idempotency.
+- принимать тот же proposal-only `delegate_code` через bounded UTF-8 JSONL process-bound adapter.
 
 ## Безопасные границы
 
@@ -147,6 +148,16 @@ result = service.delegate("trusted-host-process", request)
 
 `request_id` идемпотентен внутри пары caller/workspace: точно такой же запрос, включая одновременный, ждёт и возвращает один terminal result; тот же ключ с другой нагрузкой — machine-readable `idempotency_conflict`. In-memory LRU-кэш bounded (по умолчанию 256 terminal results); reconnect, очередь и durable Tasks не входят в R5.1. Вызов всегда proposal-only: mediated apply остаётся отдельной CLI/controller operation и не открывается этому API.
 
+### Process-bound stdio API
+
+Запуск доверенным host-процессом из корня workspace:
+
+```powershell
+py -m local_coding_agent.stdio --workspace-ref repo --workspace .
+```
+
+Adapter читает UTF-8 JSONL из stdin и пишет UTF-8 JSONL в stdout. Поддерживается одна операция `delegate_code`; request передаётся в `params` в том же формате, что и `DelegationRequest`, а `caller_id` задаётся верхним полем сообщения. Размер строки ограничен 64 KiB, apply и произвольные shell/path/endpoint параметры отсутствуют. Это process-bound core slice, не полная modern/legacy MCP conformance.
+
 ## Benchmark моделей
 
 Запуск из корня workspace:
@@ -195,11 +206,11 @@ py -m local_coding_agent `
 | `local_coding_agent/task.py` | валидация task envelope и относительных путей |
 | `local_coding_agent/repository_tools.py` | bounded repository tools и audit events |
 | `local_coding_agent/controller.py` | tool-loop, retry, cancellation и duplicate-call guard |
-| `local_coding_agent/service.py` | R5.1 direct proposal-only service, workspace registry и idempotency |
+| `local_coding_agent/service.py` | R5.1 direct proposal-only service, request parsing, workspace registry и idempotency |
+| `local_coding_agent/stdio.py` | bounded UTF-8 JSONL process-bound `delegate_code` adapter |
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |
-| `local_coding_agent/service.py` | transport-neutral request/result dataclasses, workspace registry и direct adapter |
 | `local_coding_agent/cli.py` | proposal-only CLI и opt-in mediated apply |
 
 Подробные контракты находятся в документации:
@@ -226,10 +237,10 @@ py -m compileall -q local_coding_agent tests
 git diff --check
 ```
 
-Текущий набор содержит 67 тестов. Live smoke с Ollama и benchmark выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+Текущий набор содержит 80 тестов. Live smoke с Ollama и benchmark выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. R5.1 direct Python seam реализован; MCP пока является следующим адаптером, а не реализованной возможностью. Следующие runtime-шаги — post-review baseline, чистый Qwen3-Coder IQ2/Q4 A/B и затем расширенный shortlist.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. R5.1 direct seam и первый process-bound stdio slice R5.2 реализованы; полноценный MCP adapter, Tasks и очередь остаются следующими этапами.

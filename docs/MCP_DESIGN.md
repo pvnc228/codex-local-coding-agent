@@ -2,7 +2,7 @@
 
 Дата фиксации: 2026-08-13.
 
-Статус: R5.1 transport-neutral core seam реализован в `local_coding_agent.service`; MCP transport R5.2 ещё не реализован. Документ проектирует границу, но не утверждает совместимость с конкретным host до отдельного conformance/runtime evidence.
+Статус: R5.1 transport-neutral core seam и первый process-bound JSONL stdio slice R5.2 реализованы в `local_coding_agent.service` и `local_coding_agent.stdio`. Это ещё не утверждение MCP conformance: pinned SDK, modern/legacy negotiation, Tasks и настоящий MCP client требуют отдельных gates.
 
 ## Решение
 
@@ -273,15 +273,22 @@ MCP Task создаётся только после успешной durable res
 - direct adapter всегда proposal-only и не имеет параметра `apply`;
 - contract tests покрывают registry/profile policy, idempotency и controller-owned result fields.
 
-Ограничение среза: `attempt_budget` пока не входит в `DelegationRequest`, потому что семантические retries/escalation принадлежат R8. Durable idempotency, reconnect и process-bound adapter также остаются последующими этапами.
+Ограничение среза: `attempt_budget` пока не входит в `DelegationRequest`, потому что семантические retries/escalation принадлежат R8. Durable idempotency, reconnect и MCP-specific lifecycle остаются последующими этапами.
 
 ### R5.2 — Local stdio MCP, proposal-only
 
-- официальный Tier 1 Python SDK, pinned version;
+Статус: первый process-bound JSONL slice реализован; MCP conformance не заявлена.
+
+- `StdioDelegationAdapter` принимает только UTF-8 JSONL `delegate_code` с bounded request size;
+- request преобразуется в тот же `DelegationRequest`, а result возвращается из того же `DelegationService`;
+- contract test сравнивает direct adapter с настоящим дочерним process и проверяет UTF-8, unknown method и oversized request;
+- apply, произвольные paths/commands/endpoints и credentials не добавлены.
+
+- официальный Tier 1 Python SDK, pinned version — deferred;
 - один `delegate_code` tool;
-- modern `2026-07-28` и проверенный legacy negotiation/fallback;
+- modern `2026-07-28` и проверенный legacy negotiation/fallback — deferred;
 - никаких apply, remote auth или paid-model callbacks;
-- integration test через настоящий MCP client process.
+- integration test через настоящий MCP client process — deferred; текущий gate использует process-bound adapter.
 
 ### R5.3 — Tasks + worker queue
 

@@ -4,6 +4,7 @@ from .controller import Controller
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
 from .service import DelegationRequest, DelegationService
+from .stdio import StdioDelegationAdapter
 from .task import TaskEnvelope
 from .validators import ValidationReport, validate_candidate
 
@@ -11,6 +12,7 @@ __all__ = [
     "Controller",
     "DelegationRequest",
     "DelegationService",
+    "StdioDelegationAdapter",
     "LoadedModel",
     "MemoryBudgetError",
     "MemorySnapshot",

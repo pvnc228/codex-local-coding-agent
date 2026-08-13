@@ -37,6 +37,20 @@ class DelegationRequest:
         if not isinstance(self.task, TaskEnvelope):
             raise ValueError("delegation field 'task' must be a TaskEnvelope")
 
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "DelegationRequest":
+        if not isinstance(value, Mapping):
+            raise ValueError("delegation request must be an object")
+        task = value.get("task")
+        if not isinstance(task, Mapping):
+            raise ValueError("delegation field 'task' must be an object")
+        return cls(
+            request_id=value.get("request_id"),
+            workspace_ref=value.get("workspace_ref"),
+            model_profile=value.get("model_profile"),
+            task=TaskEnvelope.from_mapping(task),
+        )
+
 
 @dataclass
 class _CachedResult:

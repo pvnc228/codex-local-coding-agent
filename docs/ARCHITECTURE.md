@@ -10,6 +10,10 @@
 
 `DelegationService` — transport-neutral вход для доверенного host-процесса. Он разрешает только заранее зарегистрированный `workspace_ref` и имя из существующего списка model profiles, затем запускает обычный `Controller` строго без `apply`. `request_id` атомарно резервируется внутри пары caller/workspace: параллельный повтор ждёт тот же terminal result, а другая нагрузка с тем же ключом отклоняется. In-memory LRU-кэш ограничен числом terminal results; durable state, очередь, MCP и reconnect относятся к последующим срезам.
 
+### Process-bound stdio adapter (R5.2 first slice)
+
+`StdioDelegationAdapter` — тонкий UTF-8 JSONL process boundary с одной операцией `delegate_code`. Он декодирует ограниченную строку, строит тот же `DelegationRequest` и передаёт её в `DelegationService`; он не владеет workspace registry, model allowlist, validation, audit или apply. Это process-bound seam для будущего MCP adapter, но не заявка на полную MCP conformance, Tasks или reconnect.
+
 ### Local model executor
 
 Локальная модель Ollama. Она читает разрешённые данные, делает рассуждение и предлагает изменение через инструменты.
