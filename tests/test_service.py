@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from threading import Event, Thread
 
+from local_coding_agent.atomizer import TaskBudget
 from local_coding_agent.service import DelegationRequest, DelegationService
 from local_coding_agent.task import TaskEnvelope
 
@@ -216,6 +217,34 @@ class DelegationServiceTests(unittest.TestCase):
             service.delegate("caller-a", self._request(request_id="one"))
 
         self.assertEqual(model.calls, 3)
+
+    def test_preflight_budget_rejects_overwide_task_without_model_call(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            calls = []
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: calls.append(profile),
+                preflight_budget=TaskBudget(max_files=2),
+            )
+            request = DelegationRequest(
+                request_id="over-wide",
+                workspace_ref="fixture",
+                model_profile="qwen2.5-1.5b",
+                task=TaskEnvelope(
+                    id="wide-task",
+                    goal="read",
+                    files=("a.py", "b.py", "c.py"),
+                ),
+            )
+            result = service.delegate("caller-a", request)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "preflight_rejected")
+        self.assertEqual(result["error"]["message"], "too_many_files")
+        self.assertFalse(result["applied"])
+        self.assertEqual(calls, [])
 
     def test_request_rejects_blank_transport_identifiers(self):
         task = TaskEnvelope(id="task-1", goal="read", files=("allowed.py",))

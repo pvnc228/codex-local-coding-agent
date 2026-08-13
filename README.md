@@ -26,6 +26,7 @@
 - вызывать тот же controller через transport-neutral Python API с зарегистрированным `workspace_ref`, allowlisted profile и caller-scoped idempotency.
 - принимать тот же proposal-only `delegate_code` через bounded UTF-8 JSONL process-bound adapter.
 - ставить proposal-only delegations в bounded in-memory worker pool с caller-scoped job state и cancellation.
+- отклонять слишком широкую задачу до запуска модели через preflight budget (`TaskBudget`/`preflight`) и детерминированно раскладывать её по files через `decompose` без расширения allowlist.
 
 ## Безопасные границы
 
@@ -210,6 +211,7 @@ py -m local_coding_agent `
 | `local_coding_agent/service.py` | R5.1 direct proposal-only service, request parsing, workspace registry и idempotency |
 | `local_coding_agent/stdio.py` | bounded UTF-8 JSONL process-bound `delegate_code` adapter |
 | `local_coding_agent/worker_pool.py` | bounded in-memory delegation queue, job state и cooperative cancellation |
+| `local_coding_agent/atomizer.py` | формальный task budget, preflight и детерминированная decomposition по files |
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |

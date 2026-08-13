@@ -145,6 +145,8 @@ R6 first slice доставлен: `BoundedWorkerPool` ограничивает 
 
 ## R7 — Атомаризация задач
 
+Статус: реализовано. `local_coding_agent/atomizer.py` добавляет формальный `TaskBudget` (files/context-bytes/checks), детерминированный `preflight` с machine-readable причинами (`too_many_files`, `context_too_large`, `too_many_checks`) и `decompose`, который делит широкую задачу только по files на `ceil(N/max_files)` непрерывных children — каждый child не получает больше files/checks, чем явно разрешил родитель, а context/checks сверх бюджета детерминированно отклоняются (`ValueError`). `DelegationService` принимает опциональный `preflight_budget` и отклоняет широкую задачу policy failure `preflight_rejected` до запуска модели. Публичный seam экспортирован в `__init__`. Benchmark-сравнение исходной и атомаризованной постановки на внешнем oracle ещё не запускалось.
+
 Цель: повышать шанс слабой модели за счёт меньшего и проверяемого task envelope.
 
 - формальный бюджет задачи: файлы, строки/байты контекста, один ожидаемый эффект и targeted check;

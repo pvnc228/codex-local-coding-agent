@@ -1,5 +1,6 @@
 """Bounded controller components for delegating small coding tasks."""
 
+from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
 from .controller import Controller
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
@@ -15,6 +16,11 @@ __all__ = [
     "DelegationService",
     "BoundedWorkerPool",
     "StdioDelegationAdapter",
+    "Decomposition",
+    "PreflightReport",
+    "TaskBudget",
+    "decompose",
+    "preflight",
     "LoadedModel",
     "MemoryBudgetError",
     "MemorySnapshot",

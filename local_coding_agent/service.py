@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Event, RLock
 from typing import Any, Callable, Mapping
 
+from .atomizer import TaskBudget, preflight
 from .controller import Controller, ModelClient
 from .ollama_adapter import ModelProfile, OllamaClient
 from .profiles import get_profile
@@ -74,11 +75,14 @@ class DelegationService:
         model_factory: Callable[[ModelProfile], ModelClient] = OllamaClient,
         max_turns: int = 4,
         max_cached_results: int = 256,
+        preflight_budget: TaskBudget | None = None,
     ) -> None:
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
         if max_cached_results <= 0:
             raise ValueError("max_cached_results must be positive")
+        if preflight_budget is not None and not isinstance(preflight_budget, TaskBudget):
+            raise ValueError("preflight_budget must be a TaskBudget or None")
         registered: dict[str, Path] = {}
         for reference, raw_path in workspaces.items():
             if not isinstance(reference, str) or not reference.strip():
@@ -91,6 +95,7 @@ class DelegationService:
         self._model_factory = model_factory
         self._max_turns = max_turns
         self._max_cached_results = max_cached_results
+        self._preflight_budget = preflight_budget
         self._cache: OrderedDict[tuple[str, str, str], _CachedResult] = OrderedDict()
         self._cache_lock = RLock()
 
@@ -181,6 +186,10 @@ class DelegationService:
                 "unknown_workspace",
                 f"workspace_ref is not registered: {request.workspace_ref!r}",
             )
+        if self._preflight_budget is not None:
+            report = preflight(request.task, self._preflight_budget)
+            if not report.accepted:
+                return self._policy_failure("preflight_rejected", report.reason or "preflight_rejected")
         try:
             profile = get_profile(request.model_profile)
         except ValueError:
