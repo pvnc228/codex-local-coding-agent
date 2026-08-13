@@ -4,6 +4,8 @@
 
 Этот документ фиксирует исследование моделей для `Codex Local Coding Agent`, фактическую загрузку GGUF на локальный диск и проверенный путь импорта в Ollama. Веса моделей не входят в репозиторий: они хранятся отдельно на `Q:`.
 
+Следующая волна моделей, чистый quantization A/B и правила расширенного benchmark зафиксированы отдельно в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md). Qwen3-Coder Q4, Qwen3-8B Q6, Qwen2.5-Coder-14B Q6/Q8, Muse Glimmer и Nemotron 3.5 Lightning на дату 2026-08-13 являются только исследованными кандидатами: они ещё не скачаны, не импортированы и не имеют локального runtime evidence.
+
 ## Контекст
 
 Исходная модель проекта — сильно квантованный Bonsai/Qwen 3.5 27B из семейства [prism-ml/Bonsai-27B-gguf](https://huggingface.co/prism-ml/Bonsai-27B-gguf). В локальном Ollama уже были доступны `MichelRosselli/bonsai-27b:latest` и `bonsai-64k:latest`.

@@ -8,9 +8,9 @@
 
 ## Gate перед следующим функциональным этапом
 
-Статус review: `REQUEST_CHANGES`; исправления внесены в текущую рабочую копию, локальный verification gate пройден, live runtime gate ещё не повторён.
+Статус review: исправления P0/P1/P2 смержены в `main` (`3e951bb`, merge `b879b03`). Свежий статический gate documentation-сессии прошёл `67/67`, `compileall` и `git diff --check`; live chat и benchmark после исправлений ещё не повторены.
 
-R1–R4 нельзя считать полностью закрытыми, пока не выполнены следующие условия:
+Реализационные требования review ниже закрыты кодом и regression tests, но R4 остаётся runtime-gate, пока нет свежего внешнего artifact:
 
 - benchmark-oracle исполняет модельный код только в отдельном ограниченном процессе, а не через `exec` в процессе контроллера;
 - `status`, `validation`, `audit` и `applied` принадлежат контроллеру и не могут быть подменены финальным JSON модели;
@@ -21,7 +21,7 @@ R1–R4 нельзя считать полностью закрытыми, по�
 
 ## R1 — Закрыть реализационные дыры безопасности и бюджета
 
-Статус: реализация доставлена, closure переоткрыт gate-ом review 2026-08-13.
+Статус: реализация доставлена в `main`; свежий model runtime не запускался.
 
 Цель: вернуть инварианты «контекст ограничен allowlist» и «контекст ограничен лимитом токенов» к фактическому поведению.
 
@@ -32,7 +32,7 @@ R1–R4 нельзя считать полностью закрытыми, по�
 
 ## R2 — Устойчивость и качество протокола
 
-Статус: реализация доставлена, closure переоткрыт gate-ом review 2026-08-13.
+Статус: реализация доставлена в `main`; свежий model runtime не запускался.
 
 Цель: убрать хрупкость, которая сейчас даёт `0%` loop reliability.
 
@@ -44,7 +44,7 @@ R1–R4 нельзя считать полностью закрытыми, по�
 
 ## R3 — Mediated apply
 
-Статус: реализация присутствует, closure переоткрыт gate-ом review 2026-08-13.
+Статус: реализация и review fixes доставлены в `main`; свежий live apply не запускался.
 
 Цель была: следующее крупное направление после закрытия R1/R2.
 
@@ -56,7 +56,7 @@ R1–R4 нельзя считать полностью закрытыми, по�
 
 ## R4 — Повторный benchmark и evidence
 
-Статус: runtime-прогон выполнен, closure переоткрыт gate-ом review 2026-08-13.
+Статус: сохранён только pre-review runtime baseline; post-review прогон ожидается.
 
 Цель была: получить ненулевые correctness/loop-reliability после R1/R2.
 
@@ -66,6 +66,25 @@ R1–R4 нельзя считать полностью закрытыми, по�
 - вынести исполнение предложенного моделью Python из процесса benchmark — реализовано через restricted child process;
 - учитывать совместимый JSON tool call из `message.content` при сохранении fallback proposal — реализовано;
 - публиковать воспроизводимое evidence или явно маркировать локальные gitignored ссылки как недоступные читателю репозитория — локальные артефакты теперь явно помечены как недоступные, benchmark после review ещё не повторён.
+
+## R4.1 — Quantization A/B и расширенный shortlist
+
+Цель: проверить гипотезу, что агрессивный IQ2 повреждает coding/tool качество сильнее, чем уменьшение числа параметров при Q6/Q8.
+
+Полный план, приоритеты, источники и gates находятся в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md).
+
+- сначала сравнить Qwen3-Coder `UD-IQ2_M` и `UD-Q4_K_XL` из одного pinned revision;
+- отдельно провести product race с Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse Glimmer Q4 и Nemotron MXFP4_MOE;
+- расширить benchmark минимум до 20 задач и 3 повторов;
+- сохранить source revision, SHA-256, model digest, generation profile, RAM/VRAM и внешний oracle в artifact;
+- не смешивать quant A/B с model-native reasoning/sampling lane.
+
+Критерии приёмки:
+
+- ноль unsafe/unauthorized tool calls;
+- correctness подтверждена только внешним oracle;
+- IQ2/Q4 отличаются только квантом и проверяются на одном controller commit;
+- новый рейтинг публикуется только после полного artifact, а не по model cards или smoke.
 
 ## Требования, извлечённые из продуктового обсуждения
 
@@ -82,16 +101,22 @@ R1–R4 нельзя считать полностью закрытыми, по�
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
+Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
+
 - определить стабильный transport-neutral request/result contract поверх `TaskEnvelope` и controller-owned result;
 - оставить bounded controller единственным владельцем policy, validation и audit;
 - добавить минимальный Python SDK/tool seam для прямого in-process вызова;
 - проектировать MCP и framework-specific skill/tool wrappers как тонкие адаптеры к одному core, без копирования policy logic;
+- начать с local `stdio` и одного proposal-only tool `delegate_code`;
+- использовать официальное Tasks extension только после явного capability opt-in клиента;
+- не строить новую реализацию на deprecated Roots, Sampling, Logging или legacy HTTP+SSE;
 - не передавать локальной модели credentials или неограниченный callback внешнего агента.
 
 Критерии приёмки:
 
 - один contract test запускает одинаковую задачу через direct adapter и как минимум один process-bound adapter;
 - результаты имеют одинаковые статусы, audit semantics и policy errors;
+- modern и legacy MCP clients получают совместимые, явно согласованные result shapes;
 - отключение адаптера не меняет core controller.
 
 ## R6 — Bounded worker pool поверх одного model runtime

@@ -1,6 +1,6 @@
 # Codex Local Coding Agent
 
-Исследование shortlist локальных моделей, SHA-256 и проверенный импорт GGUF в Ollama: [docs/MODEL_RESEARCH.md](docs/MODEL_RESEARCH.md).
+Исследование shortlist, SHA-256 и проверенный импорт GGUF: [docs/MODEL_RESEARCH.md](docs/MODEL_RESEARCH.md). Следующий quantization A/B и новые модели: [docs/MODEL_EVALUATION_PLAN.md](docs/MODEL_EVALUATION_PLAN.md). Архитектурное решение для MCP `2026-07-28`: [docs/MCP_DESIGN.md](docs/MCP_DESIGN.md).
 
 Небольшой контроллер для делегирования атомарных coding-задач локальным моделям Ollama.
 
@@ -186,6 +186,9 @@ py -m local_coding_agent `
 - [PROJECT.md](PROJECT.md) — цель и границы проекта;
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения;
 - [PROTOCOL.md](docs/PROTOCOL.md) — протокол общения с Ollama;
+- [MODEL_RESEARCH.md](docs/MODEL_RESEARCH.md) — проверенные локальные GGUF, импорт и исторический shortlist;
+- [MODEL_EVALUATION_PLAN.md](docs/MODEL_EVALUATION_PLAN.md) — quant A/B, новые кандидаты и будущий benchmark gate;
+- [MCP_DESIGN.md](docs/MCP_DESIGN.md) — harness-agnostic MCP adapter, Tasks, compatibility и security boundaries;
 - [ROADMAP.md](docs/ROADMAP.md) — этапы развития;
 - [ROADMAP_HISTORICAL.md](docs/ROADMAP_HISTORICAL.md) — историческая летопись M0–M6;
 - [AUDIT.md](docs/AUDIT.md) — аудит реализации;
@@ -207,4 +210,4 @@ git diff --check
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Следующий runtime шаг — повторить live chat и benchmark после закрытия review.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. Следующие runtime-шаги — post-review baseline, чистый Qwen3-Coder IQ2/Q4 A/B и затем расширенный shortlist. MCP пока является задокументированным направлением R5, а не реализованной возможностью.
