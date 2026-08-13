@@ -21,9 +21,9 @@
 - проверять unified diff и список изменённых файлов до принятия результата;
 - подтверждать тесты только по evidence внешнего runner-а;
 - останавливать tool-loop по лимиту ходов, повторному вызову или cancellation;
-- принимать bounded requests через прямой transport-neutral Python seam с opaque workspace registry, allowlisted model profiles и idempotency;
 - смотреть состояние загруженных моделей и управлять их VRAM;
 - работать в proposal-only режиме: файлы не изменяются локальной моделью.
+- вызывать тот же controller через transport-neutral Python API с зарегистрированным `workspace_ref`, allowlisted profile и caller-scoped idempotency.
 
 ## Безопасные границы
 
@@ -128,6 +128,25 @@ py -m local_coding_agent `
 
 Исследовательские профили: `ornith-9b`, `qwen3-coder-30b`, `devstral-small-2-24b`, `ternary-bonsai-27b`. Последний профиль оставлен для availability check, но GGUF пока не импортируется в текущем Ollama.
 
+## Direct Python API
+
+R5.1 добавляет transport-neutral seam для host-ов до появления MCP. Хост сам регистрирует рабочие области, а запрос не принимает произвольный путь, endpoint или `apply`:
+
+```python
+from local_coding_agent import DelegationRequest, DelegationService, TaskEnvelope
+
+service = DelegationService({"repo": "."})
+request = DelegationRequest(
+    request_id="opaque-idempotency-key",
+    workspace_ref="repo",
+    model_profile="qwen2.5-1.5b",
+    task=TaskEnvelope(id="read-one", goal="прочитать файл", files=("src/example.py",)),
+)
+result = service.delegate("trusted-host-process", request)
+```
+
+`request_id` идемпотентен внутри пары caller/workspace: точно такой же запрос, включая одновременный, ждёт и возвращает один terminal result; тот же ключ с другой нагрузкой — machine-readable `idempotency_conflict`. In-memory LRU-кэш bounded (по умолчанию 256 terminal results); reconnect, очередь и durable Tasks не входят в R5.1. Вызов всегда proposal-only: mediated apply остаётся отдельной CLI/controller operation и не открывается этому API.
+
 ## Benchmark моделей
 
 Запуск из корня workspace:
@@ -176,6 +195,7 @@ py -m local_coding_agent `
 | `local_coding_agent/task.py` | валидация task envelope и относительных путей |
 | `local_coding_agent/repository_tools.py` | bounded repository tools и audit events |
 | `local_coding_agent/controller.py` | tool-loop, retry, cancellation и duplicate-call guard |
+| `local_coding_agent/service.py` | R5.1 direct proposal-only service, workspace registry и idempotency |
 | `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
 | `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
 | `local_coding_agent/profiles.py` | именованные профили локальных моделей |
@@ -212,4 +232,4 @@ git diff --check
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. Следующие runtime-шаги — post-review baseline, чистый Qwen3-Coder IQ2/Q4 A/B и затем расширенный shortlist. MCP пока является задокументированным направлением R5, а не реализованной возможностью.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. R5.1 direct Python seam реализован; MCP пока является следующим адаптером, а не реализованной возможностью. Следующие runtime-шаги — post-review baseline, чистый Qwen3-Coder IQ2/Q4 A/B и затем расширенный shortlist.

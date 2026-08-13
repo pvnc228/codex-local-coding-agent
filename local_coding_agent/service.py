@@ -1,204 +1,183 @@
-"""Transport-neutral service seam for bounded coding requests."""
+"""Transport-neutral, proposal-only entry point for bounded delegations."""
 
 from __future__ import annotations
 
 import copy
 import json
-import re
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from typing import Any, Callable, Mapping
 
-from .controller import Controller
+from .controller import Controller, ModelClient
 from .ollama_adapter import ModelProfile, OllamaClient
 from .profiles import get_profile
+from .repository_tools import ToolPolicyError
 from .task import TaskEnvelope
 
 
-MAX_ATTEMPT_BUDGET = 10
-_OPAQUE_HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-
-
-class ServiceError(ValueError):
-    """A machine-readable request or policy error at the service seam."""
-
-    def __init__(self, kind: str, message: str) -> None:
-        super().__init__(message)
-        self.kind = kind
-        self.message = message
-
-    def as_dict(self) -> dict[str, str]:
-        return {"kind": self.kind, "message": self.message}
-
-
-def _validate_handle(value: Any, field: str) -> str:
-    if not isinstance(value, str) or not _OPAQUE_HANDLE.fullmatch(value):
-        raise ValueError(f"{field} must be a non-empty opaque handle")
-    return value
-
-
 @dataclass(frozen=True)
-class ServiceRequest:
-    """Validated transport-neutral request accepted by direct adapters."""
+class DelegationRequest:
+    """A host-approved request that is independent of any transport schema."""
 
     request_id: str
     workspace_ref: str
-    task: TaskEnvelope
     model_profile: str
-    attempt_budget: int = 1
+    task: TaskEnvelope
 
     def __post_init__(self) -> None:
-        _validate_handle(self.request_id, "request_id")
-        _validate_handle(self.workspace_ref, "workspace_ref")
-        if not isinstance(self.task, TaskEnvelope):
-            raise TypeError("task must be a TaskEnvelope")
-        if not isinstance(self.model_profile, str) or not self.model_profile.strip():
-            raise ValueError("model_profile must be a non-empty profile name")
-        if (
-            isinstance(self.attempt_budget, bool)
-            or not isinstance(self.attempt_budget, int)
-            or not 1 <= self.attempt_budget <= MAX_ATTEMPT_BUDGET
+        for name, value in (
+            ("request_id", self.request_id),
+            ("workspace_ref", self.workspace_ref),
+            ("model_profile", self.model_profile),
         ):
-            raise ValueError(
-                f"attempt_budget must be an integer between 1 and {MAX_ATTEMPT_BUDGET}"
-            )
-
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "ServiceRequest":
-        if not isinstance(value, Mapping):
-            raise ValueError("service request must be an object")
-        task = value.get("task")
-        if not isinstance(task, Mapping):
-            raise ValueError("service request field 'task' must be an object")
-        return cls(
-            request_id=value.get("request_id"),
-            workspace_ref=value.get("workspace_ref"),
-            task=TaskEnvelope.from_mapping(task),
-            model_profile=value.get("model_profile"),
-            attempt_budget=value.get("attempt_budget", 1),
-        )
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "request_id": self.request_id,
-            "workspace_ref": self.workspace_ref,
-            "task": {
-                "id": self.task.id,
-                "goal": self.task.goal,
-                "files": list(self.task.files),
-                "context": self.task.context,
-                "constraints": list(self.task.constraints),
-                "checks": list(self.task.checks),
-                "acceptance": list(self.task.acceptance),
-            },
-            "model_profile": self.model_profile,
-            "attempt_budget": self.attempt_budget,
-        }
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"delegation field '{name}' must be a non-empty string")
+        if not isinstance(self.task, TaskEnvelope):
+            raise ValueError("delegation field 'task' must be a TaskEnvelope")
 
 
-@dataclass(frozen=True)
-class ServiceResult:
-    """Immutable wrapper preserving the controller-owned result shape."""
-
-    payload: Mapping[str, Any]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.payload, Mapping):
-            raise TypeError("service result payload must be an object")
-        if not isinstance(self.payload.get("status"), str):
-            raise ValueError("service result must contain a string status")
-
-    @property
-    def status(self) -> str:
-        return self.payload["status"]
-
-    def as_dict(self) -> dict[str, Any]:
-        return copy.deepcopy(dict(self.payload))
+@dataclass
+class _CachedResult:
+    fingerprint: str
+    completed: Event
+    result: dict[str, Any] | None = None
 
 
-class WorkspaceRegistry:
-    """Resolve configured opaque workspace handles without accepting paths."""
+class DelegationService:
+    """Direct adapter that resolves only host-registered workspaces and profiles.
 
-    def __init__(self, workspaces: Mapping[str, str | Path] | None = None) -> None:
-        self._workspaces: dict[str, Path] = {}
-        for workspace_ref, workspace in (workspaces or {}).items():
-            self.register(workspace_ref, workspace)
-
-    def register(self, workspace_ref: str, workspace: str | Path) -> None:
-        _validate_handle(workspace_ref, "workspace_ref")
-        root = Path(workspace).resolve()
-        if not root.is_dir():
-            raise ValueError(f"workspace directory does not exist: {root}")
-        self._workspaces[workspace_ref] = root
-
-    def resolve(self, workspace_ref: str) -> Path:
-        _validate_handle(workspace_ref, "workspace_ref")
-        try:
-            return self._workspaces[workspace_ref]
-        except KeyError as error:
-            raise ServiceError(
-                "workspace_not_registered",
-                f"workspace_ref is not registered: {workspace_ref}",
-            ) from error
-
-
-ModelFactory = Callable[[ModelProfile], Any]
-
-
-class DirectCodingAdapter:
-    """In-process adapter that delegates exactly one bounded request to Controller."""
+    The service deliberately does not expose ``apply`` or arbitrary paths.  It is
+    the R5.1 core seam; transports may adapt their request formats to this API,
+    but policy and result ownership remain in ``Controller``.
+    """
 
     def __init__(
         self,
-        workspaces: WorkspaceRegistry,
+        workspaces: Mapping[str, str | Path],
         *,
-        model_factory: ModelFactory | None = None,
+        model_factory: Callable[[ModelProfile], ModelClient] = OllamaClient,
+        max_turns: int = 4,
+        max_cached_results: int = 256,
     ) -> None:
-        self._workspaces = workspaces
-        self._model_factory = model_factory or OllamaClient
-        self._completed: dict[tuple[str, str], tuple[str, ServiceResult]] = {}
-        self._lock = RLock()
+        if max_turns <= 0:
+            raise ValueError("max_turns must be positive")
+        if max_cached_results <= 0:
+            raise ValueError("max_cached_results must be positive")
+        registered: dict[str, Path] = {}
+        for reference, raw_path in workspaces.items():
+            if not isinstance(reference, str) or not reference.strip():
+                raise ValueError("workspace references must be non-empty strings")
+            path = Path(raw_path).resolve()
+            if not path.is_dir():
+                raise ValueError(f"registered workspace is not a directory: {reference!r}")
+            registered[reference] = path
+        self._workspaces = registered
+        self._model_factory = model_factory
+        self._max_turns = max_turns
+        self._max_cached_results = max_cached_results
+        self._cache: OrderedDict[tuple[str, str, str], _CachedResult] = OrderedDict()
+        self._cache_lock = RLock()
 
-    def submit(self, request: ServiceRequest) -> ServiceResult:
-        if not isinstance(request, ServiceRequest):
-            raise TypeError("request must be a ServiceRequest")
+    def delegate(self, caller_id: str, request: DelegationRequest) -> dict[str, Any]:
+        """Run one proposal-only delegation with caller-scoped idempotency."""
+
+        if not isinstance(caller_id, str) or not caller_id.strip():
+            return self._policy_failure("invalid_caller", "caller_id must be a non-empty string")
+        if not isinstance(request, DelegationRequest):
+            return self._policy_failure("invalid_request", "request must be a DelegationRequest")
+
+        cache_key = (caller_id, request.workspace_ref, request.request_id)
         fingerprint = self._fingerprint(request)
-        key = (request.workspace_ref, request.request_id)
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+            if cached is None:
+                if len(self._cache) >= self._max_cached_results:
+                    for stale_key, stale_record in self._cache.items():
+                        if stale_record.completed.is_set():
+                            self._cache.pop(stale_key)
+                            break
+                    else:
+                        return self._policy_failure(
+                            "idempotency_capacity",
+                            "in-memory idempotency capacity is exhausted by active requests",
+                        )
+                cached = _CachedResult(fingerprint=fingerprint, completed=Event())
+                self._cache[cache_key] = cached
+                owner = True
+            elif cached.fingerprint != fingerprint:
+                return self._policy_failure(
+                    "idempotency_conflict",
+                    "request_id was already used with a different request payload",
+                )
+            else:
+                self._cache.move_to_end(cache_key)
+                owner = False
 
-        with self._lock:
-            previous = self._completed.get(key)
-            if previous is not None:
-                previous_fingerprint, previous_result = previous
-                if previous_fingerprint != fingerprint:
-                    raise ServiceError(
-                        "idempotency_conflict",
-                        "request_id was already used with a different request",
-                    )
-                return previous_result
+        if not owner:
+            cached.completed.wait()
+            assert cached.result is not None
+            return copy.deepcopy(cached.result)
 
-            workspace = self._workspaces.resolve(request.workspace_ref)
-            try:
-                profile = get_profile(request.model_profile)
-            except ValueError as error:
-                raise ServiceError("unknown_model_profile", str(error)) from error
+        try:
+            result = self._execute(request)
+        except (OSError, ToolPolicyError, ValueError) as error:
+            result = self._policy_failure("controller_policy", str(error))
+        except Exception:
+            # This is the transport boundary: unexpected infrastructure errors
+            # must still complete the reservation so duplicate callers cannot
+            # wait forever on an in-flight idempotency key.
+            result = self._policy_failure("controller_error", "controller execution failed")
+        normalized = self._normalize_result(result)
+        with self._cache_lock:
+            cached.result = copy.deepcopy(normalized)
+            cached.completed.set()
+            self._evict_completed_results()
+        return copy.deepcopy(normalized)
 
-            model = self._model_factory(profile)
-            result = Controller(
-                model,
-                workspace,
-                max_retries=request.attempt_budget - 1,
-            ).run(request.task)
-            service_result = ServiceResult(result)
-            self._completed[key] = (fingerprint, service_result)
-            return service_result
+    def _execute(self, request: DelegationRequest) -> dict[str, Any]:
+        workspace = self._workspaces.get(request.workspace_ref)
+        if workspace is None:
+            return self._policy_failure(
+                "unknown_workspace",
+                f"workspace_ref is not registered: {request.workspace_ref!r}",
+            )
+        try:
+            profile = get_profile(request.model_profile)
+        except ValueError:
+            return self._policy_failure(
+                "unknown_model_profile",
+                f"model_profile is not allowlisted: {request.model_profile!r}",
+            )
+        model = self._model_factory(profile)
+        # apply is intentionally absent: direct delegation always remains a proposal.
+        return Controller(model, workspace, max_turns=self._max_turns).run(request.task)
+
+    def _evict_completed_results(self) -> None:
+        while len(self._cache) > self._max_cached_results:
+            for key, record in self._cache.items():
+                if record.completed.is_set():
+                    self._cache.pop(key)
+                    break
+            else:
+                # Active reservations must keep their idempotency boundary.
+                return
 
     @staticmethod
-    def _fingerprint(request: ServiceRequest) -> str:
-        encoded = json.dumps(
-            request.as_dict(),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        return encoded.hex()
+    def _normalize_result(result: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(result)
+        normalized["applied"] = False
+        return normalized
+
+    @staticmethod
+    def _fingerprint(request: DelegationRequest) -> str:
+        return json.dumps(asdict(request), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _policy_failure(kind: str, message: str) -> dict[str, Any]:
+        return {
+            "status": "failed",
+            "error": {"kind": kind, "message": message},
+            "audit": [{"event": "policy_rejected", "kind": kind}],
+        }

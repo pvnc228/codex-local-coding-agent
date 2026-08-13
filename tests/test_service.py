@@ -2,197 +2,229 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event, Thread
 
-from local_coding_agent import (
-    DirectCodingAdapter,
-    ServiceError,
-    ServiceRequest,
-    WorkspaceRegistry,
-)
+from local_coding_agent.service import DelegationRequest, DelegationService
 from local_coding_agent.task import TaskEnvelope
 
 
-class CountingModel:
-    def __init__(self, result=None):
+class FakeModel:
+    def __init__(self, response):
+        self.response = response
         self.calls = 0
-        self.result = result or {
-            "status": "candidate",
-            "summary": "готово",
-            "patch": "",
-            "checks": [],
-            "risks": [],
-        }
 
-    def chat(self, messages, *, tools):
+    def chat(self, messages, *, tools=None):
         self.calls += 1
+        return self.response
+
+
+class BlockingFakeModel(FakeModel):
+    def __init__(self, response, entered, release):
+        super().__init__(response)
+        self.entered = entered
+        self.release = release
+
+    def chat(self, messages, *, tools=None):
+        self.calls += 1
+        self.entered.set()
+        self.release.wait(timeout=5)
+        return self.response
+
+
+class DelegationServiceTests(unittest.TestCase):
+    def _request(self, *, request_id="request-1", goal="прочитать файл", profile="qwen2.5-1.5b"):
+        return DelegationRequest(
+            request_id=request_id,
+            workspace_ref="fixture",
+            model_profile=profile,
+            task=TaskEnvelope(id="task-1", goal=goal, files=("allowed.py",)),
+        )
+
+    def _candidate(self, *, patch=""):
         return {
             "message": {
                 "role": "assistant",
                 "content": json.dumps(
-                    self.result,
+                    {
+                        "status": "candidate",
+                        "summary": "готово",
+                        "patch": patch,
+                        "checks": [],
+                        "risks": [],
+                        "audit": [{"event": "forged"}],
+                        "applied": True,
+                    },
                     ensure_ascii=False,
                 ),
             }
         }
 
-
-class DirectCodingAdapterTests(unittest.TestCase):
-    def test_duplicate_request_is_idempotent_and_does_not_call_model_twice(self):
+    def test_delegates_registered_workspace_proposal_only_and_caches_idempotently(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
-            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
-            model = CountingModel()
-            adapter = DirectCodingAdapter(
-                WorkspaceRegistry({"repo": workspace}),
+            target = workspace / "allowed.py"
+            target.write_text("VALUE = 1\n", encoding="utf-8")
+            patch = (
+                "diff --git a/allowed.py b/allowed.py\n"
+                "--- a/allowed.py\n"
+                "+++ b/allowed.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(self._candidate(patch=patch))
+            service = DelegationService(
+                {"fixture": workspace},
                 model_factory=lambda profile: model,
             )
-            request = ServiceRequest(
-                request_id="request-1",
-                workspace_ref="repo",
-                task=TaskEnvelope(
-                    id="service-read",
-                    goal="вернуть результат",
-                    files=("value.py",),
-                ),
-                model_profile="qwen2.5-1.5b",
-            )
 
-            first = adapter.submit(request)
-            second = adapter.submit(request)
+            first = service.delegate("caller-a", self._request())
+            second = service.delegate("caller-a", self._request())
+            unchanged = target.read_text(encoding="utf-8")
 
-        self.assertEqual(first.status, "accepted")
-        self.assertEqual(first.as_dict(), second.as_dict())
+        self.assertEqual(first["status"], "accepted")
+        self.assertFalse(first.get("applied", False))
+        self.assertNotIn({"event": "forged"}, first["audit"])
+        self.assertEqual(unchanged, "VALUE = 1\n")
         self.assertEqual(model.calls, 1)
+        self.assertEqual(first, second)
 
-    def test_workspace_and_profile_policy_errors_are_machine_readable(self):
+    def test_rejects_unregistered_workspace_and_unknown_profile_without_model_call(self):
+        calls = []
         with tempfile.TemporaryDirectory() as temp_dir:
-            workspace = Path(temp_dir)
-            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
-            adapter = DirectCodingAdapter(WorkspaceRegistry({"repo": workspace}))
-            task = TaskEnvelope(
-                id="service-policy",
-                goal="вернуть результат",
-                files=("value.py",),
+            service = DelegationService(
+                {"fixture": temp_dir},
+                model_factory=lambda profile: calls.append(profile),
             )
-
-            with self.assertRaises(ServiceError) as missing:
-                adapter.submit(
-                    ServiceRequest(
-                        request_id="missing-workspace",
-                        workspace_ref="missing",
-                        task=task,
-                        model_profile="qwen2.5-1.5b",
-                    )
-                )
-            with self.assertRaises(ServiceError) as unknown:
-                adapter.submit(
-                    ServiceRequest(
-                        request_id="unknown-profile",
-                        workspace_ref="repo",
-                        task=task,
-                        model_profile="not-allowlisted",
-                    )
-                )
-
-        self.assertEqual(missing.exception.kind, "workspace_not_registered")
-        self.assertEqual(unknown.exception.kind, "unknown_model_profile")
-
-    def test_reused_request_id_with_changed_payload_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            workspace = Path(temp_dir)
-            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
-            model = CountingModel()
-            adapter = DirectCodingAdapter(
-                WorkspaceRegistry({"repo": workspace}),
-                model_factory=lambda profile: model,
-            )
-            base = dict(
-                request_id="request-conflict",
-                workspace_ref="repo",
-                task=TaskEnvelope(
-                    id="service-conflict",
-                    goal="вернуть результат",
-                    files=("value.py",),
-                ),
-                model_profile="qwen2.5-1.5b",
-            )
-            adapter.submit(ServiceRequest(**base))
-
-            with self.assertRaises(ServiceError) as conflict:
-                adapter.submit(
-                    ServiceRequest(
-                        **{**base, "model_profile": "qwen2.5-coder"}
-                    )
-                )
-
-        self.assertEqual(conflict.exception.kind, "idempotency_conflict")
-        self.assertEqual(model.calls, 1)
-
-    def test_mapping_round_trip_preserves_utf8_and_enforces_attempt_budget(self):
-        request = ServiceRequest.from_mapping(
-            {
-                "request_id": "utf8-request",
-                "workspace_ref": "repo",
-                "task": {
-                    "id": "utf8-task",
-                    "goal": "сохранить русский текст",
-                    "files": ["value.py"],
-                    "context": "контекст",
-                    "constraints": ["не менять API"],
-                    "checks": [],
-                    "acceptance": ["UTF-8"],
-                },
-                "model_profile": "qwen2.5-1.5b",
-                "attempt_budget": 3,
-            }
-        )
-
-        self.assertEqual(request.as_dict()["task"]["goal"], "сохранить русский текст")
-        self.assertEqual(ServiceRequest.from_mapping(request.as_dict()), request)
-        with self.assertRaises(ValueError):
-            ServiceRequest(
-                request_id="too-many",
-                workspace_ref="repo",
-                task=request.task,
-                model_profile="qwen2.5-1.5b",
-                attempt_budget=11,
-            )
-
-    def test_service_keeps_controller_owned_fields_out_of_model_control(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            workspace = Path(temp_dir)
-            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
-            model = CountingModel(
-                {
-                    "status": "candidate",
-                    "summary": "подделано",
-                    "patch": "",
-                    "checks": [],
-                    "risks": [],
-                    "audit": [{"event": "forged"}],
-                    "applied": True,
-                }
-            )
-            adapter = DirectCodingAdapter(
-                WorkspaceRegistry({"repo": workspace}),
-                model_factory=lambda profile: model,
-            )
-            result = adapter.submit(
-                ServiceRequest(
-                    request_id="controller-fields",
-                    workspace_ref="repo",
-                    task=TaskEnvelope(
-                        id="controller-fields-task",
-                        goal="вернуть результат",
-                        files=("value.py",),
-                    ),
+            unknown_workspace = service.delegate(
+                "caller-a",
+                DelegationRequest(
+                    request_id="request-1",
+                    workspace_ref="unknown",
                     model_profile="qwen2.5-1.5b",
-                )
+                    task=TaskEnvelope(id="task-1", goal="read", files=("allowed.py",)),
+                ),
+            )
+            unknown_profile = service.delegate(
+                "caller-a",
+                self._request(request_id="request-2", profile="http://untrusted.invalid"),
             )
 
-        self.assertEqual(result.status, "accepted")
-        self.assertNotIn("applied", result.as_dict())
-        self.assertNotIn("forged", json.dumps(result.as_dict(), ensure_ascii=False))
+        self.assertEqual(unknown_workspace["error"]["kind"], "unknown_workspace")
+        self.assertEqual(unknown_profile["error"]["kind"], "unknown_model_profile")
+        self.assertEqual(calls, [])
+
+    def test_rejects_reused_request_id_with_a_different_payload(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            model = FakeModel(self._candidate())
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: model,
+            )
+
+            service.delegate("caller-a", self._request())
+            conflict = service.delegate("caller-a", self._request(goal="другая задача"))
+
+        self.assertEqual(conflict["status"], "failed")
+        self.assertEqual(conflict["error"]["kind"], "idempotency_conflict")
+        self.assertEqual(model.calls, 1)
+
+    def test_normalizes_controller_policy_errors_into_terminal_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            for index in range(6):
+                (workspace / f"allowed-{index}.py").write_text("VALUE = 1\n", encoding="utf-8")
+            model = FakeModel(self._candidate())
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: model,
+            )
+            request = DelegationRequest(
+                request_id="too-many-files",
+                workspace_ref="fixture",
+                model_profile="qwen2.5-1.5b",
+                task=TaskEnvelope(
+                    id="wide-task",
+                    goal="read",
+                    files=tuple(f"allowed-{index}.py" for index in range(6)),
+                ),
+            )
+            result = service.delegate("caller-a", request)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "controller_policy")
+        self.assertFalse(result["applied"])
+        self.assertEqual(model.calls, 0)
+
+    def test_unexpected_model_factory_error_completes_and_caches_terminal_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            factory_calls = []
+
+            def broken_factory(profile):
+                factory_calls.append(profile.name)
+                raise RuntimeError("simulated infrastructure failure")
+
+            service = DelegationService({"fixture": workspace}, model_factory=broken_factory)
+            first = service.delegate("caller-a", self._request())
+            second = service.delegate("caller-a", self._request())
+
+        self.assertEqual(first["status"], "failed")
+        self.assertEqual(first["error"]["kind"], "controller_error")
+        self.assertEqual(first, second)
+        self.assertEqual(factory_calls, ["qwen2.5-1.5b"])
+
+    def test_concurrent_duplicate_requests_share_one_controller_execution(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            entered, release = Event(), Event()
+            model = BlockingFakeModel(self._candidate(), entered, release)
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: model,
+            )
+            results = []
+            first = Thread(target=lambda: results.append(service.delegate("caller-a", self._request())))
+            second = Thread(target=lambda: results.append(service.delegate("caller-a", self._request())))
+            first.start()
+            self.assertTrue(entered.wait(timeout=2))
+            second.start()
+            release.set()
+            first.join(timeout=3)
+            second.join(timeout=3)
+
+        self.assertEqual(model.calls, 1)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], results[1])
+
+    def test_completed_idempotency_results_are_bounded_and_evictable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            model = FakeModel(self._candidate())
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: model,
+                max_cached_results=1,
+            )
+            service.delegate("caller-a", self._request(request_id="one"))
+            service.delegate("caller-a", self._request(request_id="two"))
+            service.delegate("caller-a", self._request(request_id="one"))
+
+        self.assertEqual(model.calls, 3)
+
+    def test_request_rejects_blank_transport_identifiers(self):
+        task = TaskEnvelope(id="task-1", goal="read", files=("allowed.py",))
+        with self.assertRaises(ValueError):
+            DelegationRequest("", "fixture", "qwen2.5-1.5b", task)
+        with self.assertRaises(ValueError):
+            DelegationRequest("request-1", "", "qwen2.5-1.5b", task)
+        with self.assertRaises(ValueError):
+            DelegationRequest("request-1", "fixture", "", task)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,10 @@
 
 Главный управляющий слой. Он выбирает модель, собирает контекст, выдаёт инструменты, применяет политики и проверяет результат.
 
+### Direct service seam (R5.1)
+
+`DelegationService` — transport-neutral вход для доверенного host-процесса. Он разрешает только заранее зарегистрированный `workspace_ref` и имя из существующего списка model profiles, затем запускает обычный `Controller` строго без `apply`. `request_id` атомарно резервируется внутри пары caller/workspace: параллельный повтор ждёт тот же terminal result, а другая нагрузка с тем же ключом отклоняется. In-memory LRU-кэш ограничен числом terminal results; durable state, очередь, MCP и reconnect относятся к последующим срезам.
+
 ### Local model executor
 
 Локальная модель Ollama. Она читает разрешённые данные, делает рассуждение и предлагает изменение через инструменты.
@@ -20,10 +24,6 @@
 - 'propose_patch' — вернуть diff без записи;
 - 'apply_patch' — controller-only seam, не является tool-ом модели: применяется только после валидации и только при `--apply`;
 - 'run_tests' — только allowlisted-команда.
-
-### Transport-neutral service seam
-
-`local_coding_agent.service` предоставляет прямой in-process boundary поверх `Controller`. `ServiceRequest` принимает только opaque `workspace_ref`, зарегистрированный в `WorkspaceRegistry`, и имя профиля из встроенного allowlist. `DirectCodingAdapter` сохраняет proposal-only режим, передаёт controller-owned result без доверия к полям модели и делает повторный `(workspace_ref, request_id)` идемпотентным. Transport-specific lifecycle, MCP Tasks и apply остаются за пределами этого seam.
 
 ## Поток
 

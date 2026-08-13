@@ -8,9 +8,9 @@
 
 ## Gate перед следующим функциональным этапом
 
-Статус review: исправления P0/P1/P2 смержены в `main` (`3e951bb`, merge `b879b03`). Свежий статический gate documentation-сессии прошёл `67/67`, `compileall` и `git diff --check`; live chat и benchmark после исправлений ещё не повторены.
+Статус review: исправления P0/P1/P2 смержены в `main` (`3e951bb`, merge `b879b03`). Post-review benchmark повторён 2026-08-13: все пять доступных профилей завершились, Ternary остался `unavailable`; локальный artifact не публикуется. После R5.1 полный локальный gate прошёл `71/71`, `compileall` и `git diff --check`.
 
-Реализационные требования review ниже закрыты кодом и regression tests, но R4 остаётся runtime-gate, пока нет свежего внешнего artifact:
+Реализационные требования review ниже закрыты кодом и regression tests. R4 получил свежий внешний artifact, однако loop reliability остался нулевым у всех профилей:
 
 - benchmark-oracle исполняет модельный код только в отдельном ограниченном процессе, а не через `exec` в процессе контроллера;
 - `status`, `validation`, `audit` и `applied` принадлежат контроллеру и не могут быть подменены финальным JSON модели;
@@ -56,7 +56,7 @@
 
 ## R4 — Повторный benchmark и evidence
 
-Статус: сохранён только pre-review runtime baseline; post-review прогон ожидается.
+Статус: post-review runtime baseline сохранён локально в `.codex-run/benchmarks/post-review-20260813.json`; runtime artifact gitignored и не является опубликованным evidence.
 
 Цель была: получить ненулевые correctness/loop-reliability после R1/R2.
 
@@ -65,7 +65,7 @@
 - пересмотреть shortlist только на основании внешнего oracle — предварительно выполнено;
 - вынести исполнение предложенного моделью Python из процесса benchmark — реализовано через restricted child process;
 - учитывать совместимый JSON tool call из `message.content` при сохранении fallback proposal — реализовано;
-- публиковать воспроизводимое evidence или явно маркировать локальные gitignored ссылки как недоступные читателю репозитория — локальные артефакты теперь явно помечены как недоступные, benchmark после review ещё не повторён.
+- публиковать воспроизводимое evidence или явно маркировать локальные gitignored ссылки как недоступные читателю репозитория — локальные артефакты явно помечены как недоступные читателю репозитория.
 
 ## R4.1 — Quantization A/B и расширенный shortlist
 
@@ -101,7 +101,7 @@
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
-Статус: R5.1 реализован в `main`; R5.2 local stdio MCP ещё не начат. Contract tests покрывают UTF-8 mapping, workspace/profile policy errors, controller-owned fields и idempotency.
+Статус: R5.1 direct Python seam реализован и покрыт unit contract tests; MCP/stdio, очередь и durable Tasks ещё не реализованы.
 
 Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
 
