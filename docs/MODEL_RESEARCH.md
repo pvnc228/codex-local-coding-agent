@@ -69,6 +69,21 @@ Q:\AI\Models\codex-local-coding-agent\ternary-bonsai-27b-q2_0\Ternary-Bonsai-27B
 
 При сборе evidence на дисках было примерно 1.5 TB свободного места на `Q:` и 255 GB на `D:`. `D:` подходит для активного набора из нескольких моделей, но для всей коллекции нужно учитывать также место Ollama store.
 
+## Вторая волна: quantization A/B и product race (2026-08-13)
+
+По плану [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md) скачаны новые GGUF на `Q:\AI\Models\codex-local-coding-agent`. Все файлы проверены: размер и SHA-256 сверены с upstream LFS-манифестом Hugging Face по зафиксированным ревизиям.
+
+| Модель | Файл | Размер | SHA-256 | Upstream revision |
+| --- | --- | ---: | --- | --- |
+| Qwen3-Coder 30B UD-IQ2_M | `qwen3-coder-30b-a3b-ud-iq2_m\Qwen3-Coder-30B-A3B-Instruct-UD-IQ2_M.gguf` | 10837007520 | `7055A02D4D974FD68B26B095A9C676F099507AED1171F89A47275025DF3F521D` | `b17cb02d…` |
+| Qwen3-Coder 30B UD-Q4_K_XL | `qwen3-coder-30b-a3b-ud-q4_k_xl\Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf` | 17665334432 | `2841AA314D916434860CFB8990347528DCDFE5C350DBCB9D1461DBEE88FF2533` | `b17cb02d…` |
+| Qwen3-8B Q6_K | `qwen3-8b-q6_k\Qwen3-8B-Q6_K.gguf` | 6725900096 | `0EAEC718FDEAB0F429DFA0EC481C090388811F5E63785DDB582292F4EF3C3827` | `a6adef13…` |
+| Qwen2.5-Coder 14B Q6_K | `qwen2.5-coder-14b-q6_k\Qwen2.5-Coder-14B-Instruct-Q6_K.gguf` | 12124683680 | `9650B0290E60AEE15F79112ACD3C5DB00DF14FC4A4D2A934D9B00ED59EDA7C3C` | `388f3f20…` |
+| Muse Glimmer 30B UD-Q4_K_XL | `muse-glimmer-30b-ud-q4_k_xl\Muse-Glimmer-30B-UD-Q4_K_XL.gguf` | 15878222368 | `82BECE304887A313ECE08400BC030F6066C7BFF5B906B0CD40308EC8A409FD38` | `faa5b025…` |
+| Nemotron 3.5 Lightning 30B MXFP4_MOE | `nemotron-3.5-lightning-30b-a3b-mxfp4_moe\Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf` | 17980129152 | `E313920E80C2C473AFDC9439B4400715DDF1E51D973DB483D8848FA3792EC799` | `2ea8eb66…` |
+
+Это первая пара чистого quant A/B (Qwen3-Coder IQ2/Q4 из одного репозитория и одного ревизии `b17cb02d…`) и четыре модели product race. Файлы скачаны, hash проверен, но в Ollama ещё не импортированы: импорт `ollama create` копирует веса в активный Ollama store (сейчас на `C:`), поэтому перед массовым импортом нужно отдельно решить расположение store (см. ниже).
+
 ## Gemma 4: незавершённая загрузка
 
 Файл Gemma отдавался через Hugging Face Xet/CDN нестабильно: после частичной загрузки скорость падала до сотен KB/s. На `Q:` оставлены частичные `part-*` файлы для возможного возобновления; итогового GGUF и SHA-256 для него нет.
