@@ -6,8 +6,8 @@
 
 - Ветка: `main`.
 - Review fixes P0/P1/P2 смержены и опубликованы: `3e951bb`, merge `b879b03`.
-- Свежий локальный gate этой documentation-сессии: **67/67 OK**, `compileall`, UTF-8 Markdown и `git diff --check` прошли. Live chat и benchmark после review не запускались.
-- Ollama: `http://127.0.0.1:11434`, read-only `/api/ps` отвечает; сейчас загруженных моделей нет. Live chat и benchmark после review не запускались.
+- Свежий локальный gate после R5.1 и review repairs: **76/76 OK**, `compileall` и `git diff --check` прошли. (Системный `py` launcher сломан; использован bundled Codex Python.)
+- Ollama: post-review benchmark завершён 2026-08-13; локальный artifact `.codex-run/benchmarks/post-review-20260813.json` gitignored. Devstral остаётся единственным профилем с 25% correctness, у всех profiles loop reliability 0%; Ternary `unavailable`.
 - Исследование следующей волны моделей и MCP `2026-07-28` оформлено в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md) и [MCP_DESIGN.md](MCP_DESIGN.md). Это планы, не runtime evidence и не реализованный MCP.
 
 ## Что закрыто в этой сессии
@@ -16,6 +16,8 @@
 - **R3 — Mediated apply**: новый флаг `--apply` (`cli.py`), controller-only seam `apply_patch` (`validators.py`) — применяется patch к workspace только после подтверждения контроллера; локальная модель не имеет прямого доступа к `apply_patch` (`controller.py` параметр `apply=`); proposal-only как режим по умолчанию.
 - **Review fixes**: benchmark oracle вынесен в restricted child process; audit/applied стали controller-owned; `--apply` получил post-apply checks и rollback; subprocess output/termination bounded; fallback patch и trimming исправлены.
 - **Документация**: flow, hunk-count contract, benchmark artifact status и branch handoff синхронизированы.
+- **R4**: post-review benchmark выполнен через external isolated oracle; ranking не менялся без нового model/quant experiment.
+- **R5.1**: добавлен `DelegationService`/`DelegationRequest`: registered workspace, allowlisted profile, caller-scoped in-memory idempotency и proposal-only direct API.
 
 ## Benchmark baseline до REQUEST_CHANGES
 
@@ -45,13 +47,8 @@
 - **Следующий причинный эксперимент**: Qwen3-Coder IQ2/Q4 из одного pinned GGUF source/revision. Существующий IQ2 из другого репозитория — только observational baseline.
 - **Следующий product race**: Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse Glimmer Q4 и Nemotron MXFP4_MOE после quant A/B.
 - **MCP R5**: сначала transport-neutral core seam, затем local `stdio` proposal-only `delegate_code`, после этого Tasks/queue. Apply и remote HTTP не входят в первый slice.
-- **Незапущено после review**: live chat и benchmark. Не считать model ranking обновлённым без нового внешнего artifact.
+- **Live mediated apply** после review не запускался; benchmark был proposal-only и применял кандидаты только к isolated fixture для oracle.
 - Приём bare hunk остаётся отдельной protocol hypothesis и не должен внедряться без red tests и проверки, что validation boundary не ослабляется.
-- **Операционные детали** из прежней сессии всё ещё актуальны:
-  - Субагенты-кодеры: `flash-coder` — надёжный основной; `nemotron-coder` один раз вернул пустой результат (переделегировали на `flash-coder`).
-  - Релевантные скиллы: `tdd`, `securing-agentic-ai-tool-invocation`, `ponytail`.
-  - CLI: `py -m local_coding_agent --benchmark --benchmark-model <profile> [--benchmark-repeats N] [--benchmark-timeout-seconds N]`.
-  - Освободить VRAM: `py -m local_coding_agent --unload-all` (или `--unload-model <name>`).
 
 ## Ключевые файлы
 
@@ -59,6 +56,7 @@
 - `local_coding_agent/controller.py` — параметр `apply=` (mediated apply), `_messages_size` (кумулятивный бюджет), cancellation, canonical signature `list_files`, `ThreadPoolExecutor` для `model.chat`.
 - `local_coding_agent/benchmark.py` + `benchmark_oracle_worker.py` — fallback patch capture и restricted external oracle process.
 - `local_coding_agent/cli.py` — флаг `--apply`.
+- `local_coding_agent/service.py` — R5.1 direct transport-neutral proposal-only seam.
 - `local_coding_agent/repository_tools.py` — allowlist в `list_files`, pre-read лимит `search_text`, `_kill_tree`, `_trim_stdout_stderr`, `ToolCancelled`.
 - `tests/` — новые/переписанные: `test_validators.py`, `test_controller.py`, `test_repository_tools.py`, `test_memory_manager.py`.
 - Документы: `ROADMAP.md` (план вперёд), `ROADMAP_HISTORICAL.md` (M0–M6), `AUDIT.md`, `BENCHMARK.md`, `MODEL_RESEARCH.md`, `MODEL_EVALUATION_PLAN.md`, `MCP_DESIGN.md`.

@@ -68,8 +68,7 @@ flowchart TD
     "checks": ["py -m unittest tests.test_unique -v"],
     "acceptance": ["targeted check passed"]
   },
-  "model_profile": "qwen3-coder-q4",
-  "attempt_budget": 3
+  "model_profile": "qwen3-coder-q4"
 }
 ```
 
@@ -78,16 +77,14 @@ flowchart TD
 - `workspace_ref` создаётся host/configuration и разрешается server-side; произвольный абсолютный путь не принимается;
 - `model_profile` берётся из allowlist, а не содержит произвольный endpoint или Modelfile;
 - checks проходят существующую allowlist policy; это не shell callback;
-- `attempt_budget` имеет безопасный default и hard cap не выше 10;
 - один `request_id` идемпотентен в пределах caller/workspace;
 - adapter не принимает model-generated `audit`, `validation`, `applied` или status как доверенные поля.
 
-Core result сохраняет существующую семантику:
+Core result сохраняет controller-owned семантику:
 
 ```json
 {
   "status": "accepted",
-  "proposal_id": "opaque-proposal-handle",
   "summary": "...",
   "patch": "...",
   "checks": [],
@@ -97,6 +94,8 @@ Core result сохраняет существующую семантику:
   "applied": false
 }
 ```
+
+В R5.1 `DelegationService` возвращает тот же result shape, что и `Controller`, нормализуя `applied: false`; durable `proposal_id` появится только вместе с proposal store/R5.3-R5.4. `attempt_budget` исключён из R5.1 до реализации R8: нельзя принимать параметр с обещанной retry semantics без соответствующего controller contract.
 
 Transport lifecycle и controller result не смешиваются. MCP Task может иметь status `working`, а завершённый core result — `rejected`; это два разных уровня состояния.
 
@@ -263,11 +262,16 @@ MCP Task создаётся только после успешной durable res
 
 ### R5.1 — Core service seam
 
-- transport-neutral request/result dataclasses;
-- `workspace_ref` registry;
-- idempotency contract;
-- direct Python adapter;
-- contract tests на controller-owned fields и одинаковые policy errors.
+Статус: реализовано локально, без MCP transport.
+
+- `DelegationRequest` и `DelegationService` дают transport-neutral Python API;
+- `workspace_ref` разрешается только из host-registered registry, произвольный путь не является полем запроса;
+- `model_profile` берётся только из `profiles.py`; endpoint/Modelfile не передаются;
+- caller-scoped `(caller_id, workspace_ref, request_id)` атомарно резервируется, поэтому параллельный одинаковый вызов ждёт тот же result, а другая нагрузка с тем же ключом получает `idempotency_conflict`; in-memory cache bounded;
+- direct adapter всегда proposal-only и не имеет параметра `apply`;
+- contract tests покрывают registry/profile policy, idempotency и controller-owned result fields.
+
+Ограничение среза: `attempt_budget` пока не входит в `DelegationRequest`, потому что семантические retries/escalation принадлежат R8. Durable idempotency, reconnect и process-bound adapter также остаются последующими этапами.
 
 ### R5.2 — Local stdio MCP, proposal-only
 
