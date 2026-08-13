@@ -6,6 +6,7 @@ from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_f
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
 from .service import DelegationRequest, DelegationService
+from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
 from .stdio import StdioDelegationAdapter
 from .task import TaskEnvelope
 from .validators import ValidationReport, validate_candidate
@@ -15,6 +16,9 @@ __all__ = [
     "Controller",
     "DelegationRequest",
     "DelegationService",
+    "DelegationStats",
+    "JsonlStatsSink",
+    "TimedDelegationStats",
     "BoundedWorkerPool",
     "StdioDelegationAdapter",
     "DelegatingAgent",
