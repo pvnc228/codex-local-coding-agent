@@ -82,7 +82,20 @@ Q:\AI\Models\codex-local-coding-agent\ternary-bonsai-27b-q2_0\Ternary-Bonsai-27B
 | Muse Glimmer 30B UD-Q4_K_XL | `muse-glimmer-30b-ud-q4_k_xl\Muse-Glimmer-30B-UD-Q4_K_XL.gguf` | 15878222368 | `82BECE304887A313ECE08400BC030F6066C7BFF5B906B0CD40308EC8A409FD38` | `faa5b025…` |
 | Nemotron 3.5 Lightning 30B MXFP4_MOE | `nemotron-3.5-lightning-30b-a3b-mxfp4_moe\Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf` | 17980129152 | `E313920E80C2C473AFDC9439B4400715DDF1E51D973DB483D8848FA3792EC799` | `2ea8eb66…` |
 
-Это первая пара чистого quant A/B (Qwen3-Coder IQ2/Q4 из одного репозитория и одного ревизии `b17cb02d…`) и четыре модели product race. Файлы скачаны, hash проверен, но в Ollama ещё не импортированы: импорт `ollama create` копирует веса в активный Ollama store (сейчас на `C:`), поэтому перед массовым импортом нужно отдельно решить расположение store (см. ниже).
+Это первая пара чистого quant A/B (Qwen3-Coder IQ2/Q4 из одного репозитория и одного ревизии `b17cb02d…`) и четыре модели product race. Активный Ollama store находится на `D:` (`OLLAMA_MODELS=D:\ui\ui\ComfyUI\models`), поэтому импорт копирует веса на `D:`, а исходные GGUF на `Q:` остаются архивом.
+
+Импорт в Ollama (`ollama create`, имя `codex-*`, `FROM` на исходный GGUF с `Q:`):
+
+| Модель | Ollama name | Status |
+| --- | --- | --- |
+| Qwen3-8B Q6_K | `codex-qwen3-8b-q6k:latest` | импортирован |
+| Qwen3-Coder 30B UD-IQ2_M | `codex-qwen3-coder-30b-ud-iq2:latest` | импортирован |
+| Qwen3-Coder 30B UD-Q4_K_XL | `codex-qwen3-coder-30b-ud-q4:latest` | импортирован |
+| Qwen2.5-Coder 14B Q6_K | `codex-qwen2.5-coder-14b-q6k:latest` | импортирован |
+| Muse Glimmer 30B UD-Q4_K_XL | — | импорт не прошёл: Ollama 0.32.5 отклонил quant (`failed to validate GGUF with llama-quantize`) |
+| Nemotron 3.5 Lightning MXFP4_MOE | `codex-nemotron-30b-mxfp4:latest` | импортирован |
+
+Runtime-результаты прогона — в [BENCHMARK.md](BENCHMARK.md) (вторая волна). Ключевой факт: `qwen3-coder-30b-ud-q4` и `nemotron-30b-mxfp4` (по ~17–18 GB) не загружаются на 8 GB VRAM и завершаются `model_error` (не выделен CUDA_Host-буфер ~12.3 GB); quant A/B на этой машине требует меньшего `num_ctx`/полного CPU-offload.
 
 ## Gemma 4: незавершённая загрузка
 

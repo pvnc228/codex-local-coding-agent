@@ -12,10 +12,15 @@ class ModelProfileTests(unittest.TestCase):
             (
                 "bonsai-64k",
                 "devstral-small-2-24b",
+                "nemotron-30b-mxfp4",
                 "ornith-9b",
                 "qwen2.5-1.5b",
                 "qwen2.5-coder",
+                "qwen2.5-coder-14b-q6k",
+                "qwen3-8b-q6k",
                 "qwen3-coder-30b",
+                "qwen3-coder-30b-iq2",
+                "qwen3-coder-30b-q4",
                 "ternary-bonsai-27b",
             ),
         )

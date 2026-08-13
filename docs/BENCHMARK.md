@@ -111,3 +111,24 @@ Applicability run добавил `git apply --check` без записи в work
 | `ternary-bonsai-27b` | unavailable | — | — | — | — |
 
 Итог идентичен post-review baseline: Devstral единственный с ненулевой correctness (25%), loop reliability 0% у всех. R7/R8 не меняют качество предложений модели — это ожидаемо, оба этапа про protocol/queueing, а не про выбор модели. Новые модели из MODEL_EVALUATION_PLAN (Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse, Nemotron) в `/api/tags` отсутствуют и не участвовали в прогоне.
+
+## Вторая волна (quant A/B + product race): 2026-08-13
+
+Скачаны и импортированы шесть новых GGUF (см. [MODEL_RESEARCH.md](MODEL_RESEARCH.md)); все размеры и SHA-256 сверены с upstream. Muse Glimmer импорт не прошёл: Ollama 0.32.5 отклонил quant `UD-Q4_K_XL` (`failed to validate GGUF with llama-quantize`), модель не считается установленной.
+
+Прогон на тех же четырёх fixtures (`repeats=1`, `num_ctx=8192`, `temperature=0`, `num_predict=512`, `max_turns=4`). Artifact локально в gitignored `.codex-run/benchmarks/second-wave-20260813.json`.
+
+| Profile | Quant | Status | Correctness | Loop reliability | Model calls | Причина провала |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| `qwen3-8b-q6k` | Q6_K | completed | 0% | 0% | 8 | malformed/corrupt patch |
+| `qwen2.5-coder-14b-q6k` | Q6_K | completed | 0% | 0% | 12 | `retry_budget_exhausted` (ни одного patch) |
+| `qwen3-coder-30b-iq2` | UD-IQ2_M | completed | 0% | 0% | 10 | corrupt patch / нет patch |
+| `qwen3-coder-30b-q4` | UD-Q4_K_XL | model_error | — | — | 0 | OOM: CUDA_Host 12.3 GB не выделен |
+| `nemotron-30b-mxfp4` | MXFP4_MOE | model_error | — | — | 0 | OOM: CUDA_Host 12.3 GB не выделен |
+| `muse-glimmer-30b-q4` | UD-Q4_K_XL | not-imported | — | — | — | llama-quantize отклонил quant |
+
+### Выводы
+
+- **Quant A/B не состоялся в заявленном виде.** `qwen3-coder-30b-q4` (17.7 GB) не загружается на 8 GB VRAM: `ollama create` прошёл, но запуск завершился `model_error` — llama-server не смог выделить CUDA_Host-буфер 12.3 GB. Сравнить IQ2 против Q4 на этой машине нельзя, пока нет полного CPU-offload/меньшего контекста. Это прямое подтверждение ограничения из MODEL_EVALUATION_PLAN («модель больше ~7 GB не гарантирует полного GPU-offload»).
+- **Ни один новый профиль не дал ненулевую correctness.** `qwen3-8b-q6k` и `qwen3-coder-30b-iq2` дошли до tool-call, но выдали malformed/corrupt diff; `qwen2.5-coder-14b-q6k` ни разу не предложил patch (уперся в retry budget). Текущий best candidate остаётся `devstral-small-2-24b` (25%).
+- **Nemotron и Muse требуют отдельного решения по памяти** (меньший `num_ctx`, больше CPU-offload или `OLLAMA_NUM_PARALLEL`/quant с меньшим footprint), прежде чем их можно сравнивать по качеству.
