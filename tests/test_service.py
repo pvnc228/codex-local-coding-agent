@@ -32,6 +32,16 @@ class BlockingFakeModel(FakeModel):
         return self.response
 
 
+class SequenceModel:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def chat(self, messages, *, tools=None):
+        self.calls += 1
+        return self.responses.pop(0)
+
+
 class DelegationServiceTests(unittest.TestCase):
     def _request(self, *, request_id="request-1", goal="прочитать файл", profile="qwen2.5-1.5b"):
         return DelegationRequest(
@@ -254,6 +264,150 @@ class DelegationServiceTests(unittest.TestCase):
             DelegationRequest("request-1", "", "qwen2.5-1.5b", task)
         with self.assertRaises(ValueError):
             DelegationRequest("request-1", "fixture", "", task)
+
+
+_PATCH = (
+    "diff --git a/value.py b/value.py\n"
+    "--- a/value.py\n"
+    "+++ b/value.py\n"
+    "@@ -1 +1 @@\n"
+    "-VALUE = 1\n"
+    "+VALUE = 2\n"
+)
+
+
+class DelegationServiceApplyTests(unittest.TestCase):
+    def _request(self, *, checks=()):
+        return DelegationRequest(
+            request_id="request-1",
+            workspace_ref="fixture",
+            model_profile="qwen2.5-1.5b",
+            task=TaskEnvelope(id="task-1", goal="change", files=("value.py",), checks=checks),
+        )
+
+    def _candidate(self, patch=_PATCH, checks=None):
+        return {
+            "message": {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "status": "candidate",
+                        "summary": "изменено значение",
+                        "patch": patch,
+                        "checks": checks if checks is not None else [],
+                        "risks": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        }
+
+    def test_apply_applies_stored_proposal_and_runs_checks(self):
+        import sys
+
+        command = f'"{sys.executable}" -B -c "pass"'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            model = SequenceModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {"function": {"name": "run_tests", "arguments": {"command": command}}}
+                            ],
+                        }
+                    },
+                    self._candidate(
+                        checks=[{"command": command, "passed": True, "evidence": "exit_code=0; passed=True"}]
+                    ),
+                ]
+            )
+            service = DelegationService({"fixture": workspace}, model_factory=lambda profile: model)
+            delegated = service.delegate("caller-a", self._request(checks=(command,)))
+            result = service.apply("caller-a", "fixture", "request-1")
+            content = (workspace / "value.py").read_text(encoding="utf-8")
+
+        self.assertEqual(delegated["status"], "accepted")
+        self.assertEqual(result["status"], "accepted")
+        self.assertTrue(result["applied"])
+        self.assertEqual(content, "VALUE = 2\n")
+        self.assertEqual(model.calls, 2)
+
+    def test_apply_rolls_back_when_post_apply_check_fails(self):
+        import sys
+
+        # The check passes pre-apply (VALUE = 1) and fails post-apply, forcing rollback.
+        command = (
+            f'"{sys.executable}" -B -c "import pathlib; '
+            "raise SystemExit(0 if pathlib.Path('value.py').read_text() == "
+            "'VALUE = 1\\n' else 1)"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            model = SequenceModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {"function": {"name": "run_tests", "arguments": {"command": command}}}
+                            ],
+                        }
+                    },
+                    self._candidate(
+                        checks=[{"command": command, "passed": True, "evidence": "exit_code=0; passed=True"}]
+                    ),
+                ]
+            )
+            service = DelegationService({"fixture": workspace}, model_factory=lambda profile: model)
+            service.delegate("caller-a", self._request(checks=(command,)))
+            result = service.apply("caller-a", "fixture", "request-1")
+            content = (workspace / "value.py").read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertNotIn("applied", result)
+        self.assertEqual(content, "VALUE = 1\n")
+        self.assertEqual(result["error"]["kind"], "post_apply_check_failed")
+        self.assertNotIn("workspace_modified", result)
+        self.assertTrue(any(e["event"] == "patch_rolled_back" for e in result["audit"]))
+
+    def test_apply_unknown_proposal_fails_without_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            service = DelegationService({"fixture": workspace}, model_factory=lambda profile: FakeModel(self._candidate()))
+            result = service.apply("caller-a", "fixture", "does-not-exist")
+            content = (workspace / "value.py").read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "unknown_proposal")
+        self.assertEqual(content, "VALUE = 1\n")
+
+    def test_apply_rejects_non_accepted_proposal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            # A patch touching a file outside the task allowlist is rejected by
+            # validation, so the stored proposal is never accepted.
+            outside = (
+                "diff --git a/other.py b/other.py\n"
+                "--- a/other.py\n"
+                "+++ b/other.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(self._candidate(patch=outside))
+            service = DelegationService({"fixture": workspace}, model_factory=lambda profile: model)
+            delegated = service.delegate("caller-a", self._request())
+            result = service.apply("caller-a", "fixture", "request-1")
+
+        self.assertEqual(delegated["status"], "rejected")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["kind"], "proposal_not_accepted")
 
 
 if __name__ == "__main__":

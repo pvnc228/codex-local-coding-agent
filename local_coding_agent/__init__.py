@@ -14,6 +14,12 @@ from .task import TaskEnvelope
 from .validators import ValidationReport, validate_candidate
 from .worker_pool import BoundedWorkerPool
 
+try:
+    from .tasks import TASKS_IDENTIFIER, TasksExtension
+except ImportError:  # pragma: no cover - mcp is an optional dependency
+    TasksExtension = None  # type: ignore[assignment]
+    TASKS_IDENTIFIER = "io.modelcontextprotocol/tasks"
+
 __all__ = [
     "Controller",
     "DelegationRequest",
@@ -45,4 +51,6 @@ __all__ = [
     "TaskEnvelope",
     "ValidationReport",
     "validate_candidate",
+    "TasksExtension",
+    "TASKS_IDENTIFIER",
 ]

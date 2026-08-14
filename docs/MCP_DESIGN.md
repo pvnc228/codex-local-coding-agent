@@ -2,7 +2,7 @@
 
 Дата фиксации: 2026-08-13.
 
-Статус: R5.1 transport-neutral core seam и первый process-bound JSONL stdio slice R5.2 реализованы в `local_coding_agent.service` и `local_coding_agent.stdio`. Это ещё не утверждение MCP conformance: pinned SDK, modern/legacy negotiation, Tasks и настоящий MCP client требуют отдельных gates.
+Статус: R5.1 transport-neutral core seam, R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server, R5.3 Tasks extension (in-memory) и R5.4 `apply_proposal` реализованы. Durable (disk-backed) task store, crash/reconnect evidence и remote HTTP остаются отдельными gates.
 
 ## Решение
 
@@ -292,18 +292,11 @@ MCP Task создаётся только после успешной durable res
 
 ### R5.3 — Tasks + worker queue
 
-- durable task store;
-- `io.modelcontextprotocol/tasks` capability negotiation;
-- get/update/cancel lifecycle;
-- bounded worker/queue/backpressure;
-- crash/reconnect/cancellation evidence.
+Статус: реализовано (in-memory). `local_coding_agent/tasks.py` — `TasksExtension` поверх `BoundedWorkerPool`; capability opt-in, `tasks/get`/`tasks/update`/`tasks/cancel`, `CreateTaskResult` через `intercept_tool_call`. Task store — in-memory pool, НЕ durable disk; crash/reconnect-устойчивость и durable store остаются отдельным gate.
 
 ### R5.4 — Explicit apply
 
-- отдельный `apply_proposal`;
-- MRTR confirmation там, где host поддерживает;
-- host UI fallback;
-- stale-workspace revalidation, post-apply checks и rollback.
+Статус: реализовано. `apply_proposal(request_id, workspace_ref)` — отдельный tool с MRTR elicitation подтверждением; `DelegationService.apply` перевалидирует, применяет, прогоняет checks и откатывает. host UI fallback и durable proposal store остаются отдельными gates.
 
 ### R5.5 — Remote HTTP
 

@@ -10,12 +10,17 @@ import time
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any, Deque, Mapping
 
 from .service import DelegationRequest
 
 
 _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
@@ -26,6 +31,8 @@ class _Job:
     fingerprint: str
     request: DelegationRequest
     state: str = "queued"
+    created_at: str = ""
+    updated_at: str = ""
     result: dict[str, Any] | None = None
     cancel_event: threading.Event | None = None
     execution_complete: threading.Event | None = None
@@ -113,6 +120,8 @@ class BoundedWorkerPool:
                 request_key=request_key,
                 fingerprint=fingerprint,
                 request=request,
+                created_at=_now_iso(),
+                updated_at=_now_iso(),
                 cancel_event=threading.Event(),
                 execution_complete=threading.Event(),
                 completed=threading.Event(),
@@ -165,6 +174,7 @@ class BoundedWorkerPool:
                         return self._snapshot(job)
                 job.cancel_event.set()
                 job.state = "cancelled"
+                job.updated_at = _now_iso()
                 self._complete_locked(job)
                 self._condition.notify_all()
                 return self._snapshot(job)
@@ -216,6 +226,7 @@ class BoundedWorkerPool:
                 if job is None or job.state == "cancelled":
                     continue
                 job.state = "working"
+                job.updated_at = _now_iso()
                 self._active_workers += 1
 
             try:
@@ -247,6 +258,7 @@ class BoundedWorkerPool:
                 else:
                     job.result = copy.deepcopy(result)
                     job.state = "failed" if result.get("status") == "failed" else "completed"
+                job.updated_at = _now_iso()
                 self._complete_locked(job)
                 self._condition.notify_all()
 
@@ -277,7 +289,12 @@ class BoundedWorkerPool:
 
     @staticmethod
     def _snapshot(job: _Job) -> dict[str, Any]:
-        snapshot: dict[str, Any] = {"job_id": job.job_id, "status": job.state}
+        snapshot: dict[str, Any] = {
+            "job_id": job.job_id,
+            "status": job.state,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+        }
         if job.state in {"completed", "failed"} and job.result is not None:
             snapshot["result"] = copy.deepcopy(job.result)
         if job.state == "working" and job.cancel_event is not None and job.cancel_event.is_set():

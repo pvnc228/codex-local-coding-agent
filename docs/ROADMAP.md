@@ -101,7 +101,7 @@
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
-Статус: R5.1 direct Python seam, первый R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server (`mcp>=2.0.0`, `2026-07-28` stateless + dual-era) и R6 bounded in-memory worker-pool slice реализованы и покрыты contract tests; Tasks, durable state, fairness и model-specific scheduling ещё не реализованы.
+Статус: R5.1 direct Python seam, первый R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server (`mcp>=2.0.0`, `2026-07-28` stateless + dual-era), R6 bounded in-memory worker-pool slice, R5.3 Tasks extension и R5.4 `apply_proposal` реализованы и покрыты contract tests. Durable (disk-backed) task store и model-specific scheduling остаются отдельными gates.
 
 Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
 
@@ -125,6 +125,10 @@ R5.2 first slice доставлен: `StdioDelegationAdapter` принимает
 
 R5.2 (official SDK) доставлен: `mcp_server.build_server` строит `delegate_code` поверх official `mcp>=2.0.0`, который говорит на stateless `2026-07-28` (per-request `_meta`, `server/discover`, `resultType`) и авто-fallback на legacy `initialize` через `serve_dual_era_loop`. `mcp` — опциональная зависимость (`pyproject.toml`, extra `mcp`), core остаётся stdlib-only. Contract test прогоняет in-process `Client` и настоящий process-bound stdio. Tasks extension, durable state и apply-proposal остаются отдельными gates.
 
+R5.3 (Tasks extension) доставлен: `local_coding_agent/tasks.py` реализует `TasksExtension` (`io.modelcontextprotocol/tasks`) поверх `BoundedWorkerPool`. `intercept_tool_call` коротко-замыкает `delegate_code` и возвращает `CreateTaskResult` (`resultType: "task"`) только когда клиент заявил extension в capabilities; без opt-in вызов остаётся синхронным. Extension обслуживает `tasks/get`, `tasks/update` (ack) и `tasks/cancel`; task state — in-memory в pool (не durable disk). Contract tests прогоняют полный lifecycle `working → completed` через in-process `Client` с claim. Durable store остаётся отдельным gate.
+
+R5.4 (explicit apply) доставлен: `apply_proposal(request_id, workspace_ref)` — отдельный tool, НЕ поле в `delegate_code`. Подтверждение — Multi Round-Trip Request elicitation (`Resolve`/`Elicit`, `ElicitationResult` union; decline/cancel не применяют). `DelegationService.apply` находит сохранённый terminal proposal, перевалидирует patch против текущего workspace (`stale_workspace` при расхождении), применяет, прогоняет allowlisted checks и откатывает patch при failure. Contract tests покрывают apply, decline, stale-workspace и rollback.
+
 R6 first slice доставлен: `BoundedWorkerPool` ограничивает worker slots и queued jobs, возвращает bounded `queue_overload`, сохраняет caller-scoped idempotency, изолирует concurrent request state и поддерживает queued/running cooperative cancellation; при отмене физический model-call slot удерживается до завершения executor. Это in-memory execution primitive; durable task store, timeout policy, fairness и Ollama-specific scheduling остаются отдельными gates.
 
 ## R6 — Bounded worker pool поверх одного model runtime
@@ -138,6 +142,8 @@ R6 first slice доставлен: `BoundedWorkerPool` ограничивает 
 - сериализация либо ограниченная конкурентность запросов к одной модели согласно фактической способности Ollama;
 - backpressure вместо неограниченного создания workers;
 - VRAM policy и fairness, чтобы одна задача не удерживала модель или очередь бесконечно.
+
+Примечание (2026-08-14): fairness в смысле round-robin между model profiles НЕ реализуется в MVP. На одной GPU Ollama держит одну модель в VRAM; смена модели строго последовательная. Запрос с незагруженной моделью отклоняется/ждёт, а не конкурирует за слот с загруженной. При необходимости round-robin scheduler — отдельный gate.
 
 Критерии приёмки:
 
