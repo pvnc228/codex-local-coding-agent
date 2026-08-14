@@ -4,9 +4,10 @@
 
 ## Где мы находимся
 
-- Ветка: `main`. `HEAD` = `ccbbfa3`; незакоммиченные изменения текущей сессии (R5.3/R5.4) ещё НЕ смержены.
-- Полный локальный gate: **156/156 тестов OK**, `python -m compileall -q local_coding_agent tests` и `git diff --check` чистые.
-- Python: рабочий `python` = 3.13.3 (bundled Codex Python). Системный `py` launcher ненадёжен, не использовать.
+- Ветка: `main`. Этот handoff описывает repair commit текущей сессии; точный `HEAD` проверяется командой `git rev-parse HEAD` после checkout.
+- Полный локальный gate: **170/170 тестов OK**, `python -m compileall -q local_coding_agent tests` и `git diff --check` чистые.
+- Python: использован bundled Codex Python `3.12.13`; системный `py` launcher ненадёжен, не использовать.
+- MCP contract gate выполнен с pinned optional dependency `mcp==2.0.0`.
 - Команды gate:
   - `python -m unittest discover -s tests`
   - `python -m compileall -q local_coding_agent tests`
@@ -16,6 +17,7 @@
 
 - **R5.3 — Tasks extension** (`local_coding_agent/tasks.py`): `TasksExtension` (`io.modelcontextprotocol/tasks`) поверх `BoundedWorkerPool`. `intercept_tool_call` коротко-замыкает `delegate_code` и возвращает flat `CreateTaskResult` (`resultType:"task"`, `taskId`/`status`/`createdAt`/`lastUpdatedAt`/`ttlMs`/`pollIntervalMs`) ТОЛЬКО когда клиент заявил extension в `_meta.clientCapabilities.extensions`; без opt-in — обычный синхронный путь. Обслуживает `tasks/get`, `tasks/update` (ack), `tasks/cancel`. Task store — in-memory pool, НЕ durable.
 - **R5.4 — apply_proposal**: отдельный tool `apply_proposal(request_id, workspace_ref)` с MRTR elicitation подтверждением (`Resolve`/`Elicit`, `ElicitationResult` union; decline/cancel не применяют). `DelegationService.apply` находит terminal proposal из idempotency-кэша, перевалидирует (`stale_workspace` при расхождении), применяет `apply_patch`, прогоняет allowlisted checks и откатывает при failure.
+- **R5.3/R5.4 repair gate**: terminal Tasks result приведён к `CallToolResult` wire-shape, controller failure остаётся completed task с `isError`, неизвестные IDs получают `-32602`, apply requires targeted check, confirmation показывает proposal preview, async handlers используют `to_thread`, evidence принадлежит внешнему runner-у, rollback failure отмечает `workspace_modified`, а bounded pipes/final newline/conservative calibration исправлены. Подробный журнал: [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md).
 - **Поддержка**: `worker_pool._Job` получил `created_at`/`updated_at`; `service._CachedResult` хранит `request`; `controller.run_post_apply_checks` вынесен в модульную функцию для переиспользования.
 - **R6 fairness** решено НЕ реализовывать round-robin: одна GPU = одна модель, смена последовательная (см. ROADMAP примечание).
 
@@ -34,7 +36,7 @@
 1. **Durable task store**: сейчас task state in-memory в `BoundedWorkerPool`; после перезапуска процесса task handle теряется. Отдельный gate (см. MCP_DESIGN R5.3).
 2. **Loop reliability 0%** (из прошлой сессии, не тронут): модели предлагают edits, но не закрывают цикл чистым финальным JSON.
 3. **Quant A/B** заблокирован памятью машины.
-4. **Live apply с реальной моделью** не перезапускался (все apply-тесты на заглушках).
+4. **Live Ollama benchmark/apply** не перезапускался в этой сессии; contract tests используют scripted/fake models и внешний локальный runner для проверок.
 
 ## Ключевые файлы
 

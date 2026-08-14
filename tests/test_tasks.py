@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,9 @@ from pydantic import BaseModel, Field
 
 from local_coding_agent.mcp_server import build_server
 from local_coding_agent.service import DelegationService
+
+
+CHECK_COMMAND = f'"{sys.executable}" -B -c "pass"'
 
 
 class FakeModel:
@@ -31,7 +35,27 @@ class FakeModel:
 
 
 class PatchModel:
+    def __init__(self):
+        self.calls = 0
+
     def chat(self, messages, *, tools=None):
+        self.calls += 1
+        if self.calls == 1 and any(
+            definition["function"]["name"] == "run_tests" for definition in (tools or [])
+        ):
+            return {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "run_tests",
+                                "arguments": {"command": CHECK_COMMAND},
+                            }
+                        }
+                    ],
+                }
+            }
         return {
             "message": {
                 "role": "assistant",
@@ -74,12 +98,22 @@ class FlatTaskResult(BaseModel):
     error: dict | None = None
 
 
-def _arguments(request_id="r1"):
+class FailingModel:
+    def chat(self, messages, *, tools=None):
+        raise RuntimeError("model unavailable")
+
+
+def _arguments(request_id="r1", checks=(), files=("allowed.py",), goal="прочитать файл"):
     return {
         "request_id": request_id,
         "workspace_ref": "fixture",
         "model_profile": "qwen2.5-1.5b",
-        "task": {"id": "t1", "goal": "прочитать файл", "files": ["allowed.py"]},
+        "task": {
+            "id": "t1",
+            "goal": goal,
+            "files": list(files),
+            "checks": list(checks),
+        },
     }
 
 
@@ -168,8 +202,61 @@ class TasksExtensionTests(unittest.TestCase):
             raw = asyncio.run(run())
 
         self.assertEqual(raw.status, "completed")
-        self.assertEqual(raw.result["status"], "accepted")
-        self.assertFalse(raw.result.get("applied", False))
+        self.assertIn("content", raw.result)
+        self.assertFalse(raw.result["isError"])
+        self.assertEqual(raw.result["structuredContent"]["status"], "accepted")
+        self.assertFalse(raw.result["structuredContent"].get("applied", False))
+
+    def test_controller_failure_is_completed_task_with_call_tool_error_result(self):
+        from mcp.types import GetTaskRequest, GetTaskRequestParams
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            server = build_server(self._service(workspace, model=FailingModel()), enable_tasks=True)
+            Client, TasksClaimExtension = self._build_tasks_client()
+
+            async def run():
+                async with Client(server, extensions=[TasksClaimExtension()]) as client:
+                    created = await client.call_tool("delegate_code", _arguments())
+                    task_id = created.structured_content["taskId"]
+                    for _ in range(50):
+                        raw = await client.session.send_request(
+                            GetTaskRequest(params=GetTaskRequestParams(task_id=task_id)),
+                            FlatTaskResult,
+                        )
+                        if raw.status == "completed":
+                            return raw
+                        await asyncio.sleep(0.02)
+                    return raw
+
+            raw = asyncio.run(run())
+
+        self.assertEqual(raw.status, "completed")
+        self.assertTrue(raw.result["isError"])
+        self.assertIn("content", raw.result)
+        self.assertEqual(raw.result["structuredContent"]["status"], "failed")
+
+    def test_unknown_task_id_is_invalid_params(self):
+        from mcp.client import Client
+        from mcp.shared.exceptions import MCPError
+        from mcp.types import GetTaskRequest, GetTaskRequestParams
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = build_server(self._service(Path(temp_dir)), enable_tasks=True)
+
+            async def run():
+                async with Client(server) as client:
+                    with self.assertRaises(MCPError) as raised:
+                        await client.session.send_request(
+                            GetTaskRequest(params=GetTaskRequestParams(task_id="missing")),
+                            FlatTaskResult,
+                        )
+                    return raised.exception
+
+            error = asyncio.run(run())
+
+        self.assertEqual(error.code, -32602)
 
     def test_delegate_code_without_tasks_capability_stays_synchronous(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -225,7 +312,12 @@ class ApplyProposalTests(unittest.TestCase):
                             "request_id": "r1",
                             "workspace_ref": "fixture",
                             "model_profile": "qwen2.5-1.5b",
-                            "task": {"id": "t1", "goal": "change", "files": ["value.py"]},
+                            "task": {
+                                "id": "t1",
+                                "goal": "change",
+                                "files": ["value.py"],
+                                "checks": [CHECK_COMMAND],
+                            },
                         },
                     )
                     applied = await client.call_tool("apply_proposal", self._apply_arguments())
@@ -239,6 +331,38 @@ class ApplyProposalTests(unittest.TestCase):
         self.assertEqual(applied["status"], "accepted")
         self.assertTrue(applied["applied"])
         self.assertEqual(content, "VALUE = 2\n")
+
+    def test_apply_confirmation_includes_proposal_identity_summary_workspace_files_and_diff(self):
+        from mcp.client import Client
+
+        messages = []
+
+        async def accept(context, params):
+            messages.append(getattr(params, "message", str(params)))
+            from mcp.types import ElicitResult
+
+            return ElicitResult(action="accept", content={"confirm": True})
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            server = build_server(self._service(workspace), enable_tasks=True)
+
+            async def run():
+                async with Client(server, elicitation_callback=accept) as client:
+                    await client.call_tool(
+                        "delegate_code",
+                        _arguments(checks=(CHECK_COMMAND,), files=("value.py",), goal="change"),
+                    )
+                    return await client.call_tool("apply_proposal", self._apply_arguments())
+
+            applied = asyncio.run(run())
+
+        self.assertEqual(applied.structured_content["status"], "accepted")
+        self.assertTrue(messages)
+        message = str(messages[0])
+        for expected in ("r1", "изменено значение", "fixture", "value.py", "VALUE = 2"):
+            self.assertIn(expected, message)
 
     def test_apply_proposal_decline_leaves_workspace_untouched(self):
         from mcp.client import Client
@@ -256,7 +380,12 @@ class ApplyProposalTests(unittest.TestCase):
                             "request_id": "r1",
                             "workspace_ref": "fixture",
                             "model_profile": "qwen2.5-1.5b",
-                            "task": {"id": "t1", "goal": "change", "files": ["value.py"]},
+                            "task": {
+                                "id": "t1",
+                                "goal": "change",
+                                "files": ["value.py"],
+                                "checks": [CHECK_COMMAND],
+                            },
                         },
                     )
                     applied = await client.call_tool("apply_proposal", self._apply_arguments())
@@ -285,7 +414,12 @@ class ApplyProposalTests(unittest.TestCase):
                             "request_id": "r1",
                             "workspace_ref": "fixture",
                             "model_profile": "qwen2.5-1.5b",
-                            "task": {"id": "t1", "goal": "change", "files": ["value.py"]},
+                            "task": {
+                                "id": "t1",
+                                "goal": "change",
+                                "files": ["value.py"],
+                                "checks": [CHECK_COMMAND],
+                            },
                         },
                     )
                     (workspace / "value.py").write_text("VALUE = 999\n", encoding="utf-8")

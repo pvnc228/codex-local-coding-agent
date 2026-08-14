@@ -116,6 +116,22 @@ class CandidateValidatorTests(unittest.TestCase):
             any("evidence disagrees" in issue for issue in report.issues)
         )
 
+    def test_validator_requires_external_evidence_for_every_allowlisted_check(self):
+        report = validate_candidate(
+            {
+                "status": "candidate",
+                "summary": "без runner",
+                "patch": "",
+                "checks": [{"command": "check allowed", "passed": True, "evidence": "claimed"}],
+                "risks": [],
+            },
+            self.task,
+            observed_checks={},
+        )
+
+        self.assertFalse(report.valid)
+        self.assertTrue(any("external runner" in issue for issue in report.issues))
+
     def test_validator_rejects_candidate_when_external_check_failed(self):
         report = validate_candidate(
             {

@@ -42,6 +42,7 @@ def _build_edit_diff(
     replace: str,
     start_line: int,
     old_no_newline: bool,
+    new_no_newline: bool,
 ) -> str:
     """Build a minimal single-file unified diff replacing ``search`` with ``replace``.
 
@@ -61,10 +62,7 @@ def _build_edit_diff(
             body.append("\\ No newline at end of file")
     for position, line in enumerate(new_lines):
         body.append("+" + line)
-        # The replacement inherits the removed block's trailing-newline
-        # status: a line-aligned search block already ends on a newline
-        # boundary, so only emit the marker when the old block had none.
-        if position == len(new_lines) - 1 and old_no_newline:
+        if position == len(new_lines) - 1 and new_no_newline:
             body.append("\\ No newline at end of file")
     hunk = "\n".join([header, *body]) if body else header
     return (
@@ -149,8 +147,18 @@ def resolve_edits(
             continue
         start_line = content[:index].count("\n") + 1
         old_no_newline = end == len(content) and not content.endswith("\n")
+        new_no_newline = end == len(content) and bool(replace) and not replace.endswith("\n")
         try:
-            diff_parts.append(_build_edit_diff(normalized, search, replace, start_line, old_no_newline))
+            diff_parts.append(
+                _build_edit_diff(
+                    normalized,
+                    search,
+                    replace,
+                    start_line,
+                    old_no_newline,
+                    new_no_newline,
+                )
+            )
         except ValueError as error:
             issues.append(str(error))
             continue

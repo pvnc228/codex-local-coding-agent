@@ -67,9 +67,10 @@ class _CachedResult:
 class DelegationService:
     """Direct adapter that resolves only host-registered workspaces and profiles.
 
-    The service deliberately does not expose ``apply`` or arbitrary paths.  It is
-    the R5.1 core seam; transports may adapt their request formats to this API,
-    but policy and result ownership remain in ``Controller``.
+    Direct ``delegate`` remains proposal-only and does not accept an apply flag
+    or arbitrary paths. The separate mediated ``apply`` method is host-facing,
+    confirmation-bound and still keeps policy/result ownership in the controller
+    and service boundary.
     """
 
     def __init__(
@@ -79,14 +80,14 @@ class DelegationService:
         model_factory: Callable[[ModelProfile], ModelClient] = OllamaClient,
         max_turns: int = 4,
         max_cached_results: int = 256,
-        preflight_budget: TaskBudget | None = None,
+        preflight_budget: TaskBudget = TaskBudget(),
     ) -> None:
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
         if max_cached_results <= 0:
             raise ValueError("max_cached_results must be positive")
-        if preflight_budget is not None and not isinstance(preflight_budget, TaskBudget):
-            raise ValueError("preflight_budget must be a TaskBudget or None")
+        if not isinstance(preflight_budget, TaskBudget):
+            raise ValueError("preflight_budget must be a TaskBudget")
         registered: dict[str, Path] = {}
         for reference, raw_path in workspaces.items():
             if not isinstance(reference, str) or not reference.strip():
@@ -190,10 +191,9 @@ class DelegationService:
                 "unknown_workspace",
                 f"workspace_ref is not registered: {request.workspace_ref!r}",
             )
-        if self._preflight_budget is not None:
-            report = preflight(request.task, self._preflight_budget)
-            if not report.accepted:
-                return self._policy_failure("preflight_rejected", report.reason or "preflight_rejected")
+        report = preflight(request.task, self._preflight_budget)
+        if not report.accepted:
+            return self._policy_failure("preflight_rejected", report.reason or "preflight_rejected")
         try:
             profile = get_profile(request.model_profile)
         except ValueError:
@@ -205,7 +205,13 @@ class DelegationService:
         # apply is intentionally absent: direct delegation always remains a proposal.
         if controller_started is not None:
             controller_started.set()
-        return Controller(model, workspace, max_turns=self._max_turns).run(
+        return Controller(
+            model,
+            workspace,
+            max_turns=self._max_turns,
+            max_files=self._preflight_budget.max_files,
+            preflight_budget=self._preflight_budget,
+        ).run(
             request.task,
             cancel_event=cancel_event,
             completion_event=completion_event,
@@ -237,6 +243,7 @@ class DelegationService:
         if record is None:
             return self._apply_failure("unknown_proposal", "proposal is unknown for this caller/workspace", audit)
         assert record.request is not None
+        request = record.request
         record.completed.wait()
         proposal = record.result
         if proposal is None:
@@ -246,8 +253,13 @@ class DelegationService:
         patch = proposal.get("patch")
         if not isinstance(patch, str) or not patch.strip():
             return self._apply_failure("no_patch", "proposal carries no resolved patch", audit)
+        if not request.task.checks:
+            return self._apply_failure(
+                "apply_requires_checks",
+                "applying a non-empty patch requires at least one targeted check",
+                audit,
+            )
 
-        request = record.request
         workspace = self._workspaces.get(request.workspace_ref)
         if workspace is None:
             return self._apply_failure("unknown_workspace", "workspace_ref is not registered", audit)
@@ -317,6 +329,31 @@ class DelegationService:
             self._add_risk(result, "rollback_failed", f"patch rollback failed: {rollback_detail}")
             audit.append({"event": "rollback_failed", "detail": rollback_detail})
         return result
+
+    def proposal_preview(
+        self,
+        caller_id: str,
+        workspace_ref: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Return bounded, read-only details for an informed apply confirmation."""
+
+        cache_key = (caller_id, workspace_ref, request_id)
+        with self._cache_lock:
+            record = self._cache.get(cache_key)
+        if record is None or record.request is None:
+            return {"status": "unknown_proposal", "request_id": request_id}
+        if not record.completed.is_set() or record.result is None:
+            return {"status": "working", "request_id": request_id}
+        proposal = record.result
+        return {
+            "status": proposal.get("status"),
+            "request_id": request_id,
+            "workspace_ref": workspace_ref,
+            "summary": proposal.get("summary", ""),
+            "files": list(record.request.task.files),
+            "patch": proposal.get("patch", ""),
+        }
 
     @staticmethod
     def _add_risk(result: dict[str, Any], kind: str, message: str) -> None:

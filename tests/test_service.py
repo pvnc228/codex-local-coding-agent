@@ -142,7 +142,7 @@ class DelegationServiceTests(unittest.TestCase):
         self.assertEqual(conflict["error"]["kind"], "idempotency_conflict")
         self.assertEqual(model.calls, 1)
 
-    def test_normalizes_controller_policy_errors_into_terminal_result(self):
+    def test_rejects_wide_task_before_model_execution(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             for index in range(6):
@@ -165,7 +165,7 @@ class DelegationServiceTests(unittest.TestCase):
             result = service.delegate("caller-a", request)
 
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"]["kind"], "controller_policy")
+        self.assertEqual(result["error"]["kind"], "preflight_rejected")
         self.assertFalse(result["applied"])
         self.assertEqual(model.calls, 0)
 
@@ -256,6 +256,29 @@ class DelegationServiceTests(unittest.TestCase):
         self.assertFalse(result["applied"])
         self.assertEqual(calls, [])
 
+    def test_default_preflight_budget_rejects_overwide_task_without_model_call(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = DelegationService(
+                {"fixture": temp_dir},
+                model_factory=lambda profile: calls.append(profile),
+            )
+            request = DelegationRequest(
+                request_id="wide-default",
+                workspace_ref="fixture",
+                model_profile="qwen2.5-1.5b",
+                task=TaskEnvelope(
+                    id="wide-default",
+                    goal="широкая задача",
+                    files=tuple(f"file-{index}.py" for index in range(6)),
+                ),
+            )
+            result = service.delegate("caller-a", request)
+
+        self.assertEqual(result["error"]["kind"], "preflight_rejected")
+        self.assertIn("too_many_files", result["error"]["message"])
+        self.assertEqual(calls, [])
+
     def test_request_rejects_blank_transport_identifiers(self):
         task = TaskEnvelope(id="task-1", goal="read", files=("allowed.py",))
         with self.assertRaises(ValueError):
@@ -334,6 +357,23 @@ class DelegationServiceApplyTests(unittest.TestCase):
         self.assertTrue(result["applied"])
         self.assertEqual(content, "VALUE = 2\n")
         self.assertEqual(model.calls, 2)
+
+    def test_apply_rejects_patch_without_targeted_checks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            target = workspace / "value.py"
+            target.write_text("VALUE = 1\n", encoding="utf-8")
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: FakeModel(self._candidate()),
+            )
+            delegated = service.delegate("caller-a", self._request())
+            result = service.apply("caller-a", "fixture", "request-1")
+            content = target.read_text(encoding="utf-8")
+
+        self.assertEqual(delegated["status"], "accepted")
+        self.assertEqual(result["error"]["kind"], "apply_requires_checks")
+        self.assertEqual(content, "VALUE = 1\n")
 
     def test_apply_rolls_back_when_post_apply_check_fails(self):
         import sys

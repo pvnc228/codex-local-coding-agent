@@ -2,6 +2,8 @@ import asyncio
 import json
 import sys
 import tempfile
+import time
+from threading import Event
 import unittest
 from pathlib import Path
 
@@ -25,6 +27,22 @@ class FakeModel:
                     ensure_ascii=False,
                 ),
             }
+        }
+
+
+class BlockingService:
+    def __init__(self):
+        self.started = Event()
+
+    def delegate(self, caller_id, request):
+        self.started.set()
+        time.sleep(0.25)
+        return {
+            "status": "accepted",
+            "summary": "ok",
+            "patch": "",
+            "checks": [],
+            "risks": [],
         }
 
 
@@ -137,6 +155,34 @@ build_server(service).run(transport="stdio")
         self.assertEqual([tool.name for tool in tools], ["delegate_code"])
         self.assertFalse(result.is_error)
         self.assertEqual(result.structured_content["status"], "accepted")
+
+    def test_sync_compatibility_path_does_not_block_async_event_loop(self):
+        service = BlockingService()
+        server = build_server(service)
+
+        async def run():
+            call = asyncio.create_task(
+                server.call_tool(
+                    "delegate_code",
+                    {
+                        "request_id": "blocking",
+                        "workspace_ref": "fixture",
+                        "model_profile": "qwen2.5-1.5b",
+                        "task": {"id": "blocking", "goal": "read", "files": ["allowed.py"]},
+                    },
+                )
+            )
+            await asyncio.to_thread(service.started.wait, 1)
+            started = time.monotonic()
+            await asyncio.sleep(0.02)
+            elapsed = time.monotonic() - started
+            result = await call
+            return elapsed, result
+
+        elapsed, result = asyncio.run(run())
+
+        self.assertLess(elapsed, 0.15)
+        self.assertFalse(result.is_error)
 
 
 if __name__ == "__main__":

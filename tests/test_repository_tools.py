@@ -238,6 +238,22 @@ class RepositoryToolsTests(unittest.TestCase):
         self.assertTrue(result["truncated"])
         self.assertLessEqual(len(json.dumps(result, ensure_ascii=False).encode("utf-8")), 512)
 
+    def test_run_tests_uses_bounded_stream_collectors_not_unbounded_tempfiles(self):
+        command = f'"{sys.executable}" -B -c "print(\'x\' * 200000)"'
+        task = TaskEnvelope(
+            id="bounded-stream",
+            goal="проверить bounded output",
+            files=("src/allowed.py",),
+            checks=(command,),
+        )
+        tools = BoundedRepositoryTools(self.workspace, task, max_tool_result_bytes=512)
+
+        with patch("tempfile.TemporaryFile", side_effect=AssertionError):
+            result = tools.execute("run_tests", {"command": command})
+
+        self.assertTrue(result["passed"])
+        self.assertTrue(result["truncated"])
+
     def test_termination_failure_is_bounded_and_reported(self):
         class StuckProcess:
             pid = 123

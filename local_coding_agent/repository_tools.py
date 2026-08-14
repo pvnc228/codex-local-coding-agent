@@ -8,10 +8,9 @@ from ctypes import wintypes
 import os
 import re
 import subprocess
-import tempfile
 import time
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from typing import Any
 
 from .task import TaskEnvelope
@@ -94,6 +93,35 @@ class ToolCancelled(RuntimeError):
     """A running command was cancelled."""
 
 
+class _BoundedPipeCollector:
+    """Continuously drain one child pipe while retaining bounded output."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._data = bytearray()
+        self.truncated = False
+
+    def collect(self, stream: Any) -> None:
+        try:
+            while True:
+                chunk = stream.read(8192)
+                if not chunk:
+                    return
+                if not isinstance(chunk, bytes):
+                    chunk = bytes(chunk)
+                remaining = self._limit - len(self._data)
+                if remaining > 0:
+                    self._data.extend(chunk[:remaining])
+                if len(chunk) > max(remaining, 0):
+                    self.truncated = True
+        except (OSError, ValueError):
+            # Closing a pipe after bounded process termination is expected.
+            return
+
+    def value(self) -> bytes:
+        return bytes(self._data)
+
+
 class BoundedRepositoryTools:
     def __init__(
         self,
@@ -163,22 +191,25 @@ class BoundedRepositoryTools:
             raise ToolPolicyError("command must be a non-empty string")
         if command not in self.task.checks:
             raise ToolPolicyError("command is not allowlisted")
-        stdout_sink = tempfile.TemporaryFile(mode="w+b")
-        stderr_sink = tempfile.TemporaryFile(mode="w+b")
-        try:
-            process: subprocess.Popen[bytes] = subprocess.Popen(
-                command,
-                cwd=self.workspace_root,
-                shell=True,
-                stdout=stdout_sink,
-                stderr=stderr_sink,
-                env=self._isolated_environment(),
-                **self._process_group_options(),
-            )
-        except BaseException:
-            stdout_sink.close()
-            stderr_sink.close()
-            raise
+        process: subprocess.Popen[bytes] = subprocess.Popen(
+            command,
+            cwd=self.workspace_root,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self._isolated_environment(),
+            **self._process_group_options(),
+        )
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stdout_collector = _BoundedPipeCollector(self.max_tool_result_bytes)
+        stderr_collector = _BoundedPipeCollector(self.max_tool_result_bytes)
+        readers = [
+            Thread(target=stdout_collector.collect, args=(process.stdout,), daemon=True),
+            Thread(target=stderr_collector.collect, args=(process.stderr,), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
         deadline = time.monotonic() + self.test_timeout_seconds
         timed_out = False
         termination_warning: str | None = None
@@ -203,10 +234,16 @@ class BoundedRepositoryTools:
                 if not finished and process.poll() is None:
                     termination_warning = self._terminate(process)
             finally:
-                stdout, stdout_truncated = self._read_process_output(stdout_sink)
-                stderr, stderr_truncated = self._read_process_output(stderr_sink)
-                stdout_sink.close()
-                stderr_sink.close()
+                for reader in readers:
+                    reader.join(timeout=2)
+                process.stdout.close()
+                process.stderr.close()
+                for reader in readers:
+                    reader.join(timeout=0.5)
+        stdout = stdout_collector.value()
+        stderr = stderr_collector.value()
+        stdout_truncated = stdout_collector.truncated
+        stderr_truncated = stderr_collector.truncated
         truncated = stdout_truncated or stderr_truncated
         if timed_out:
             result = {
@@ -251,12 +288,6 @@ class BoundedRepositoryTools:
         if self._result_size(result) > self.max_tool_result_bytes:
             raise ToolPolicyError("max_tool_result_bytes is too small for run_tests evidence")
         return result
-
-    def _read_process_output(self, sink: Any) -> tuple[bytes, bool]:
-        sink.flush()
-        sink.seek(0)
-        output = sink.read(self.max_tool_result_bytes + 1)
-        return output[: self.max_tool_result_bytes], len(output) > self.max_tool_result_bytes
 
     def _terminate(self, process: subprocess.Popen) -> str | None:
         # ponytail: kill the whole tree so grandchild processes (cmd.exe

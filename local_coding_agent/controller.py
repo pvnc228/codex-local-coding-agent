@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Thread
 from typing import Any, Protocol
 
+from .atomizer import TaskBudget, preflight
 from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
 from .task import TaskEnvelope
 from .validators import apply_patch, validate_candidate
@@ -129,12 +130,15 @@ class Controller:
         max_patch_files: int = 2,
         max_context_bytes: int = 32_000,
         max_retries: int = 1,
+        preflight_budget: TaskBudget = TaskBudget(),
         cancel_event: Event | None = None,
     ) -> None:
         if max_turns <= 0 or max_same_call <= 0 or max_retries < 0:
             raise ValueError("controller limits are invalid")
         if max_retries > 10:
             raise ValueError("max_retries exceeds hard cap of 10")
+        if not isinstance(preflight_budget, TaskBudget):
+            raise ValueError("preflight_budget must be a TaskBudget")
         self.model = model
         self.workspace_root = workspace_root
         self.max_turns = max_turns
@@ -145,6 +149,7 @@ class Controller:
         self.max_patch_files = max_patch_files
         self.max_context_bytes = max_context_bytes
         self.max_retries = max_retries
+        self.preflight_budget = preflight_budget
         self.cancel_event = cancel_event
 
     def run(
@@ -157,6 +162,16 @@ class Controller:
     ) -> dict[str, Any]:
         audit: list[dict[str, Any]] = [{"event": "task_received", "task_id": task.id}]
         try:
+            report = preflight(task, self.preflight_budget)
+            if not report.accepted:
+                if completion_event is not None:
+                    completion_event.set()
+                return self._failure(
+                    "failed",
+                    "preflight_rejected",
+                    report.reason or "preflight_rejected",
+                    audit,
+                )
             messages = self._initial_messages(task)
         except ValueError as error:
             if completion_event is not None:
@@ -330,6 +345,7 @@ class Controller:
                                 last_patch[:] = [patch]
                         if name == "run_tests":
                             observed_checks[arguments["command"]] = {
+                                "command": arguments["command"],
                                 "passed": result["passed"],
                                 "evidence": result["evidence"],
                             }
@@ -384,6 +400,11 @@ class Controller:
             if not result.get("patch") and not result.get("edits") and last_patch:
                 result["patch"] = last_patch[-1]
                 audit.append({"event": "patch_reused_from_tool_proposal"})
+            result["checks"] = [
+                dict(observed_checks[command])
+                for command in task.checks
+                if command in observed_checks
+            ]
             report = validate_candidate(
                 result,
                 task,
@@ -406,6 +427,14 @@ class Controller:
                 patch = report.resolved_patch or result.get("patch")
                 if not isinstance(patch, str) or not patch.strip():
                     audit.append({"event": "apply_skipped", "reason": "candidate has no patch"})
+                elif not task.checks:
+                    result["status"] = "rejected"
+                    self._add_risk(
+                        result,
+                        "apply_requires_checks",
+                        "applying a non-empty patch requires at least one targeted check",
+                    )
+                    audit.append({"event": "apply_rejected", "reason": "apply_requires_checks"})
                 else:
                     applied, apply_detail = apply_patch(self.workspace_root, patch)
                     if not applied:
@@ -432,11 +461,7 @@ class Controller:
                             if rollback_ok:
                                 audit.append({"event": "patch_rolled_back"})
                             else:
-                                self._add_risk(
-                                    result,
-                                    "rollback_failed",
-                                    f"patch rollback failed: {rollback_detail}",
-                                )
+                                self._mark_rollback_failure(result, rollback_detail)
                                 audit.append(
                                     {"event": "rollback_failed", "detail": rollback_detail}
                                 )
@@ -454,11 +479,7 @@ class Controller:
                             if rollback_ok:
                                 audit.append({"event": "patch_rolled_back"})
                             else:
-                                self._add_risk(
-                                    result,
-                                    "rollback_failed",
-                                    f"patch rollback failed: {rollback_detail}",
-                                )
+                                self._mark_rollback_failure(result, rollback_detail)
                                 audit.append(
                                     {"event": "rollback_failed", "detail": rollback_detail}
                                 )
@@ -481,11 +502,7 @@ class Controller:
                                 if rollback_ok:
                                     audit.append({"event": "patch_rolled_back"})
                                 else:
-                                    self._add_risk(
-                                        result,
-                                        "rollback_failed",
-                                        f"patch rollback failed: {rollback_detail}",
-                                    )
+                                    self._mark_rollback_failure(result, rollback_detail)
                                     audit.append(
                                         {"event": "rollback_failed", "detail": rollback_detail}
                                     )
@@ -524,6 +541,11 @@ class Controller:
             risks = []
             result["risks"] = risks
         risks.append({"kind": kind, "message": message})
+
+    @classmethod
+    def _mark_rollback_failure(cls, result: dict[str, Any], detail: str) -> None:
+        result["workspace_modified"] = True
+        cls._add_risk(result, "rollback_failed", f"patch rollback failed: {detail}")
 
     def _messages_size(self, messages) -> int:
         return len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
@@ -675,6 +697,8 @@ def run_post_apply_checks(
     ``ToolCancelled`` when cancellation is requested between checks.
     """
     checks: list[dict[str, Any]] = []
+    if not task.checks:
+        raise ToolPolicyError("at least one targeted check is required before apply")
     for command in task.checks:
         if active_cancel is not None and active_cancel.is_set():
             raise ToolCancelled("task was cancelled")

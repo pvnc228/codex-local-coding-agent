@@ -2,13 +2,13 @@
 
 Дата фиксации: 2026-08-13.
 
-Статус: R5.1 transport-neutral core seam, R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server, R5.3 Tasks extension (in-memory) и R5.4 `apply_proposal` реализованы. Durable (disk-backed) task store, crash/reconnect evidence и remote HTTP остаются отдельными gates.
+Статус: R5.1 transport-neutral core seam, R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server на pinned `mcp==2.0.0`, R5.3 Tasks extension (in-memory) и R5.4 `apply_proposal` реализованы. Repair gate R5.3/R5.4 закрывает wire-shape, bounded policy, async offload и evidence gaps. Durable (disk-backed) task store, crash/reconnect evidence и remote HTTP остаются отдельными gates.
 
 ## Решение
 
 MCP добавляется как тонкий transport adapter поверх harness-agnostic controller core. Он не владеет repository policy, validation, audit, retry или применением patch и не даёт локальной модели новых полномочий.
 
-Первый transport — direct local `stdio`. Первая публичная операция — proposal-only делегирование одной bounded coding-задачи. Длительная работа использует официальное MCP Tasks extension, только когда client явно заявил поддержку. Mediated apply не входит в первый MCP slice.
+Первый transport — direct local `stdio`. Первая публичная операция — proposal-only делегирование одной bounded coding-задачи. Длительная работа использует официальное MCP Tasks extension, только когда client явно заявил поддержку. Mediated apply реализован отдельным R5.4 tool и не является implicit частью `delegate_code`.
 
 ## Почему архитектуру нужно обновить
 
@@ -277,26 +277,26 @@ MCP Task создаётся только после успешной durable res
 
 ### R5.2 — Local stdio MCP, proposal-only
 
-Статус: первый process-bound JSONL slice реализован; MCP conformance не заявлена.
+Статус: process-bound JSONL slice и official-SDK server на pinned `mcp==2.0.0` реализованы; core остаётся stdlib-only, а Tasks/apply вынесены в следующие gates.
 
 - `StdioDelegationAdapter` принимает только UTF-8 JSONL `delegate_code` с bounded request size;
 - request преобразуется в тот же `DelegationRequest`, а result возвращается из того же `DelegationService`;
 - contract test сравнивает direct adapter с настоящим дочерним process и проверяет UTF-8, unknown method и oversized request;
 - apply, произвольные paths/commands/endpoints и credentials не добавлены.
 
-- официальный Tier 1 Python SDK, pinned version — deferred;
-- один `delegate_code` tool;
-- modern `2026-07-28` и проверенный legacy negotiation/fallback — deferred;
-- никаких apply, remote auth или paid-model callbacks;
-- integration test через настоящий MCP client process — deferred; текущий gate использует process-bound adapter.
+- официальный Tier 1 Python SDK закреплён как `mcp==2.0.0`;
+- один proposal-only `delegate_code` tool без произвольного shell/path/endpoint;
+- modern `2026-07-28` и legacy fallback покрыты SDK contract tests;
+- apply не является частью `delegate_code`, remote auth и paid-model callbacks отсутствуют;
+- durable state и reconnect после перезапуска остаются отдельными gates.
 
 ### R5.3 — Tasks + worker queue
 
-Статус: реализовано (in-memory). `local_coding_agent/tasks.py` — `TasksExtension` поверх `BoundedWorkerPool`; capability opt-in, `tasks/get`/`tasks/update`/`tasks/cancel`, `CreateTaskResult` через `intercept_tool_call`. Task store — in-memory pool, НЕ durable disk; crash/reconnect-устойчивость и durable store остаются отдельным gate.
+Статус: реализовано и contract-проверено (in-memory). `local_coding_agent/tasks.py` — `TasksExtension` поверх `BoundedWorkerPool`; capability opt-in, `tasks/get`/`tasks/update`/`tasks/cancel`, `CreateTaskResult` через `intercept_tool_call`. Terminal `tasks/get` возвращает `CallToolResult` с `content`, `isError` и `structuredContent`; controller failure остаётся completed task, а неизвестный `taskId` — `-32602`. Task store — in-memory pool, НЕ durable disk; crash/reconnect-устойчивость и durable store остаются отдельным gate.
 
 ### R5.4 — Explicit apply
 
-Статус: реализовано. `apply_proposal(request_id, workspace_ref)` — отдельный tool с MRTR elicitation подтверждением; `DelegationService.apply` перевалидирует, применяет, прогоняет checks и откатывает. host UI fallback и durable proposal store остаются отдельными gates.
+Статус: реализовано и contract-проверено. `apply_proposal(request_id, workspace_ref)` — отдельный tool с MRTR elicitation подтверждением; preview связан с request id, workspace, summary, files и diff; `DelegationService.apply` требует targeted check, перевалидирует, применяет, прогоняет checks и откатывает. host UI fallback и durable proposal store остаются отдельными gates.
 
 ### R5.5 — Remote HTTP
 

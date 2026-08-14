@@ -33,6 +33,27 @@ class SearchReplaceResolutionTests(unittest.TestCase):
         self.assertIn("-    return sorted(set(values))", patch)
         self.assertIn("+    return list(dict.fromkeys(values))", patch)
 
+    def test_search_replace_can_remove_final_newline(self):
+        target = self.workspace / "src" / "allowed.py"
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+
+        patch, _, issues = self._resolve("VALUE = 1\n", "VALUE = 2")
+
+        self.assertEqual(issues, [])
+        self.assertNotIn("-VALUE = 1\n\\ No newline at end of file", patch)
+        self.assertIn("+VALUE = 2\n\\ No newline at end of file", patch)
+
+    def test_search_replace_can_add_final_newline(self):
+        target = self.workspace / "src" / "allowed.py"
+        target.write_text("VALUE = 1", encoding="utf-8")
+
+        patch, _, issues = self._resolve("VALUE = 1", "VALUE = 2\n")
+
+        self.assertEqual(issues, [])
+        self.assertIn("-VALUE = 1\n\\ No newline at end of file", patch)
+        self.assertIn("+VALUE = 2\n", patch)
+        self.assertNotIn("+VALUE = 2\n\\ No newline at end of file", patch)
+
     def _resolve(self, search, replace):
         return resolve_edits(
             self.workspace,

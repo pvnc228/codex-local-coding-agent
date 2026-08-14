@@ -8,7 +8,7 @@
 
 ## Gate перед следующим функциональным этапом
 
-Статус review: исправления P0/P1/P2 смержены в `main` (`3e951bb`, merge `b879b03`). Post-review benchmark повторён 2026-08-13: все пять доступных профилей завершились, Ternary остался `unavailable`; локальный artifact не публикуется. После R6 first worker-pool slice полный локальный gate прошёл `88/88`, `compileall` и `git diff --check`.
+Статус review: предыдущий review закрыл базовые P0/P1/P2, но повторный review выявил отдельные P1/P2 в R5.3/R5.4. Этот repair gate документирован в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). После исправлений полный локальный gate с `mcp==2.0.0` прошёл `170/170`, `compileall` и `git diff --check`.
 
 Реализационные требования review ниже закрыты кодом и regression tests. R4 получил свежий внешний artifact, однако loop reliability остался нулевым у всех профилей:
 
@@ -101,7 +101,7 @@
 
 Цель: отделить controller API от способа подключения к внешнему агенту.
 
-Статус: R5.1 direct Python seam, первый R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server (`mcp>=2.0.0`, `2026-07-28` stateless + dual-era), R6 bounded in-memory worker-pool slice, R5.3 Tasks extension и R5.4 `apply_proposal` реализованы и покрыты contract tests. Durable (disk-backed) task store и model-specific scheduling остаются отдельными gates.
+Статус: R5.1 direct Python seam, первый R5.2 process-bound JSONL stdio slice, R5.2 official-SDK MCP stdio server (`mcp==2.0.0`, `2026-07-28` stateless + dual-era), R6 bounded in-memory worker-pool slice, R5.3 Tasks extension и R5.4 `apply_proposal` реализованы и покрыты contract tests. Repair gate R5.3/R5.4 закрывает найденные wire/policy/async/evidence gaps. Durable (disk-backed) task store и model-specific scheduling остаются отдельными gates.
 
 Принятое направление и границы MCP `2026-07-28` зафиксированы в [MCP_DESIGN.md](MCP_DESIGN.md).
 
@@ -123,11 +123,21 @@
 
 R5.2 first slice доставлен: `StdioDelegationAdapter` принимает ограниченный UTF-8 JSONL request только для `delegate_code`, строит тот же `DelegationRequest` и возвращает тот же controller-owned result. Contract test сравнивает direct вызов и настоящий дочерний process.
 
-R5.2 (official SDK) доставлен: `mcp_server.build_server` строит `delegate_code` поверх official `mcp>=2.0.0`, который говорит на stateless `2026-07-28` (per-request `_meta`, `server/discover`, `resultType`) и авто-fallback на legacy `initialize` через `serve_dual_era_loop`. `mcp` — опциональная зависимость (`pyproject.toml`, extra `mcp`), core остаётся stdlib-only. Contract test прогоняет in-process `Client` и настоящий process-bound stdio. Tasks extension, durable state и apply-proposal остаются отдельными gates.
+R5.2 (official SDK) доставлен: `mcp_server.build_server` строит `delegate_code` поверх pinned official `mcp==2.0.0`, который говорит на stateless `2026-07-28` (per-request `_meta`, `server/discover`, `resultType`) и авто-fallback на legacy `initialize` через `serve_dual_era_loop`. `mcp` — опциональная зависимость (`pyproject.toml`, extra `mcp`), core остаётся stdlib-only. Contract tests прогоняют in-process `Client` и process-bound adapter. Tasks extension, durable state и apply-proposal остаются отдельными gates до своих repair points ниже.
 
 R5.3 (Tasks extension) доставлен: `local_coding_agent/tasks.py` реализует `TasksExtension` (`io.modelcontextprotocol/tasks`) поверх `BoundedWorkerPool`. `intercept_tool_call` коротко-замыкает `delegate_code` и возвращает `CreateTaskResult` (`resultType: "task"`) только когда клиент заявил extension в capabilities; без opt-in вызов остаётся синхронным. Extension обслуживает `tasks/get`, `tasks/update` (ack) и `tasks/cancel`; task state — in-memory в pool (не durable disk). Contract tests прогоняют полный lifecycle `working → completed` через in-process `Client` с claim. Durable store остаётся отдельным gate.
 
 R5.4 (explicit apply) доставлен: `apply_proposal(request_id, workspace_ref)` — отдельный tool, НЕ поле в `delegate_code`. Подтверждение — Multi Round-Trip Request elicitation (`Resolve`/`Elicit`, `ElicitationResult` union; decline/cancel не применяют). `DelegationService.apply` находит сохранённый terminal proposal, перевалидирует patch против текущего workspace (`stale_workspace` при расхождении), применяет, прогоняет allowlisted checks и откатывает patch при failure. Contract tests покрывают apply, decline, stale-workspace и rollback.
+
+### R5.3/R5.4 repair gate — Tasks conformance, explicit apply boundary, bounded evidence
+
+Статус: завершено 2026-08-14; полный gate `170/170` с `mcp==2.0.0`. Этот пункт закрывает замечания повторного review, а не объявляет новый live Ollama/model benchmark.
+
+- terminal `tasks/get` возвращает исходный `CallToolResult` wire-shape; controller failure — completed task с `isError: true`, а неизвестный `taskId` — JSON-RPC `-32602` для get/update/cancel;
+- `TaskBudget` обязателен на public service/controller seams, non-empty apply требует минимум один targeted check, а confirmation показывает request id, workspace, summary, files и diff;
+- sync service/apply calls вынесены из async MCP handlers; external runner является владельцем checks/evidence, rollback failure явно помечает `workspace_modified`;
+- SEARCH/REPLACE final newline, bounded child-process output, conservative VRAM calibration и pinned `mcp==2.0.0` исправлены и покрыты regression/contract tests;
+- детали и границы evidence находятся в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). Durable store, real Ollama benchmark, live apply и reconnect после restart остаются отдельными gates.
 
 R6 first slice доставлен: `BoundedWorkerPool` ограничивает worker slots и queued jobs, возвращает bounded `queue_overload`, сохраняет caller-scoped idempotency, изолирует concurrent request state и поддерживает queued/running cooperative cancellation; при отмене физический model-call slot удерживается до завершения executor. Это in-memory execution primitive; durable task store, timeout policy, fairness и Ollama-specific scheduling остаются отдельными gates.
 
@@ -153,7 +163,7 @@ R6 first slice доставлен: `BoundedWorkerPool` ограничивает 
 
 ## R7 — Атомаризация задач
 
-Статус: реализовано и live-проверено. `local_coding_agent/atomizer.py` добавляет формальный `TaskBudget` (files/context-bytes/checks), детерминированный `preflight` с machine-readable причинами (`too_many_files`, `context_too_large`, `too_many_checks`) и `decompose`, который делит широкую задачу только по files на `ceil(N/max_files)` непрерывных children — каждый child не получает больше files/checks, чем явно разрешил родитель, а context/checks сверх бюджета детерминированно отклоняются (`ValueError`). `DelegationService` принимает опциональный `preflight_budget` и отклоняет широкую задачу policy failure `preflight_rejected` до запуска модели. Публичный seam экспортирован в `__init__`.
+Статус: реализация и regression gate проверены; предыдущий live model oracle не прошёл correctness. `local_coding_agent/atomizer.py` добавляет формальный `TaskBudget` (files/context-bytes/checks), детерминированный `preflight` с machine-readable причинами (`too_many_files`, `context_too_large`, `too_many_checks`) и `decompose`, который делит широкую задачу только по files на `ceil(N/max_files)` непрерывных children — каждый child не получает больше files/checks, чем явно разрешил родитель, а context/checks сверх бюджета детерминированно отклоняются (`ValueError`). `DelegationService` принимает bounded `preflight_budget` и отклоняет широкую задачу policy failure `preflight_rejected` до запуска модели. Публичный seam экспортирован в `__init__`.
 
 Live evidence 2026-08-13 (`python .codex-run/live_check_r7_r8.py`, gitignored): preflight и decompose детерминированно прошли (6 files → `too_many_files`; 7 files → 3 bounded children `wide#1..3`). Live-орacle на атомаризованном ребёнке `src/unique.py` не дал корректного патча: `qwen2.5-1.5b` вернул `patch is not a unified diff` — это дефект качества модели (совпадает с 0% correctness полного benchmark), а не баг механизма атомаризации. Полное benchmark-сравнение исходной и атомаризованной постановки на внешнем oracle остаётся отдельным gate.
 
@@ -172,7 +182,7 @@ Live evidence 2026-08-13 (`python .codex-run/live_check_r7_r8.py`, gitignored): 
 
 ## R8 — Ограниченные retries и escalation
 
-Статус: реализовано и live-проверено. `Controller.max_retries` получил hard cap 10 (сверх — `ValueError`). Оба retry-пути (`invalid_response`/`invalid_json`) ведут учёт попыток (`attempts`), фиксируют просмотренные файлы (`viewed_files`) и последний предложенный patch (`last_patch`) и после исчерпания бюджета возвращают escalation bundle: task envelope, попытки с machine-readable причинами, просмотренные файлы, последний patch и внешнее evidence проверок; итоговое исчерпание `max_turns` при наличии попыток также возвращает escalation (`reason="max_turns"`). Повторный одинаковый tool call и cancellation сохраняют приоритет над retry budget.
+Статус: реализация и scripted runtime evidence проверены; live model benchmark не повторялся. `Controller.max_retries` получил hard cap 10 (сверх — `ValueError`). Оба retry-пути (`invalid_response`/`invalid_json`) ведут учёт попыток (`attempts`), фиксируют просмотренные файлы (`viewed_files`) и последний предложенный patch (`last_patch`) и после исчерпания бюджета возвращают escalation bundle: task envelope, попытки с machine-readable причинами, просмотренные файлы, последний patch и внешнее evidence проверок; итоговое исчерпание `max_turns` при наличии попыток также возвращает escalation (`reason="max_turns"`). Повторный одинаковый tool call и cancellation сохраняют приоритет над retry budget.
 
 Live evidence 2026-08-13 (scripted model, `python .codex-run/live_check_r7_r8.py`, gitignored): `max_retries=3` + 4 невалидных JSON-ответа дали ровно 4 model request и `attempts=[1..4]` (off-by-one отсутствует); escalation bundle корректно несёт task id/files и пустые `viewed_files`/`external_evidence`; duplicate tool call → `duplicate_tool_call`, pre-set cancel → `cancelled`, оба без escalation. Live oracle-доказательство «ровно заданного числа попыток» на реальной модели заменено scripted-model evidence, поскольку реальные локальные модели не доводят цикл до исчерпания retry бюджета на этом наборе.
 

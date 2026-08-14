@@ -9,11 +9,12 @@ and ``tasks/cancel`` methods, and intercepts ``tools/call`` so a
 
 The extension does not own policy, validation or result state. It is a thin
 wire adapter over a :class:`~local_coding_agent.worker_pool.BoundedWorkerPool`,
-which is the durable reservation for a task handle.
+which is the bounded in-memory reservation for a task handle.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -29,8 +30,10 @@ try:
         CallToolResult,
         CancelTaskRequestParams,
         GetTaskRequestParams,
+        INVALID_PARAMS,
         TextContent,
     )
+    from mcp.shared.exceptions import MCPError
 
     _MCP_AVAILABLE = True
 except ImportError:  # pragma: no cover - mcp/pydantic is an optional dependency
@@ -42,7 +45,9 @@ _POOL_STATE_TO_TASK = {
     "queued": "working",
     "working": "working",
     "completed": "completed",
-    "failed": "failed",
+    # Controller/tool failures are CallToolResult(isError=true), not JSON-RPC
+    # failures; SEP-2663 keeps those tasks in the completed state.
+    "failed": "completed",
     "cancelled": "cancelled",
 }
 
@@ -74,6 +79,7 @@ def task_dict(pool: BoundedWorkerPool, caller_id: str, task_id: str) -> dict[str
     """
 
     snapshot = pool.get(caller_id, task_id)
+    _raise_if_unknown(snapshot, task_id)
     status = _POOL_STATE_TO_TASK.get(snapshot.get("status"), "working")
     created_at = snapshot.get("created_at") or _now_iso()
     updated_at = snapshot.get("updated_at") or created_at
@@ -86,7 +92,7 @@ def task_dict(pool: BoundedWorkerPool, caller_id: str, task_id: str) -> dict[str
         "pollIntervalMs": _DEFAULT_POLL_INTERVAL_MS,
     }
     if status == "completed":
-        task["result"] = snapshot.get("result") or {}
+        task["result"] = _call_tool_result(snapshot.get("result") or {})
     elif status == "failed":
         error = {}
         result = snapshot.get("result")
@@ -94,6 +100,31 @@ def task_dict(pool: BoundedWorkerPool, caller_id: str, task_id: str) -> dict[str
             error = result.get("error") or {}
         task["error"] = error
     return task
+
+
+def _raise_if_unknown(snapshot: Mapping[str, Any], task_id: str) -> None:
+    error = snapshot.get("error")
+    if isinstance(error, Mapping) and error.get("kind") == "unknown_job":
+        raise MCPError(
+            code=INVALID_PARAMS,
+            message=f"unknown taskId: {task_id}",
+        )
+
+
+def _call_tool_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert controller-owned result data to the original CallToolResult shape."""
+
+    value = dict(result)
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(value, ensure_ascii=False, sort_keys=True),
+            }
+        ],
+        "isError": value.get("status") == "failed",
+        "structuredContent": value,
+    }
 
 
 if _MCP_AVAILABLE:
@@ -194,7 +225,8 @@ if _MCP_AVAILABLE:
             ctx: ServerRequestContext[Any, Any],
             params: CancelTaskRequestParams,
         ) -> dict[str, Any]:
-            self._pool.cancel(self._caller_id, params.task_id)
+            snapshot = self._pool.cancel(self._caller_id, params.task_id)
+            _raise_if_unknown(snapshot, params.task_id)
             return {"resultType": "complete"}
 
         async def _handle_update(
@@ -202,6 +234,8 @@ if _MCP_AVAILABLE:
             ctx: ServerRequestContext[Any, Any],
             params: UpdateTaskParams,
         ) -> dict[str, Any]:
+            snapshot = self._pool.get(self._caller_id, params.task_id)
+            _raise_if_unknown(snapshot, params.task_id)
             # MVP has no `input_required` flow: delegate_code never surfaces
             # input requests, so tasks/update only acknowledges. Responses to
             # unknown or already-satisfied keys are ignored per the spec.

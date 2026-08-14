@@ -20,17 +20,65 @@ class FakeRuntime:
 
 
 class CalibrationTests(unittest.TestCase):
-    def test_calibrate_workers_fits_copies_into_budget(self):
-        self.assertEqual(calibrate_workers(100, vram_budget_bytes=500, hard_max=4), 4)
-        self.assertEqual(calibrate_workers(100, vram_budget_bytes=250, hard_max=4), 2)
-        self.assertEqual(calibrate_workers(100, vram_budget_bytes=50, hard_max=4), 1)
+    def test_calibrate_workers_charges_model_once_and_context_per_worker(self):
+        self.assertEqual(
+            calibrate_workers(
+                100,
+                vram_budget_bytes=500,
+                per_worker_context_bytes=100,
+                hard_max=4,
+            ),
+            4,
+        )
+        self.assertEqual(
+            calibrate_workers(
+                100,
+                vram_budget_bytes=250,
+                per_worker_context_bytes=100,
+                hard_max=4,
+            ),
+            2,
+        )
+        self.assertEqual(
+            calibrate_workers(
+                100,
+                vram_budget_bytes=50,
+                per_worker_context_bytes=100,
+                hard_max=4,
+            ),
+            1,
+        )
+
+    def test_calibrate_workers_accounts_for_other_loaded_models(self):
+        self.assertEqual(
+            calibrate_workers(
+                100,
+                vram_budget_bytes=500,
+                per_worker_context_bytes=100,
+                other_loaded_vram_bytes=200,
+                hard_max=4,
+            ),
+            3,
+        )
 
     def test_calibrate_workers_honors_hard_max(self):
-        self.assertEqual(calibrate_workers(100, vram_budget_bytes=10_000, hard_max=8), 8)
+        self.assertEqual(
+            calibrate_workers(
+                100,
+                vram_budget_bytes=10_000,
+                per_worker_context_bytes=100,
+                hard_max=8,
+            ),
+            8,
+        )
 
     def test_calibrate_workers_unknown_footprint_yields_one(self):
         self.assertEqual(calibrate_workers(0, vram_budget_bytes=1000), 1)
         self.assertEqual(calibrate_workers(-5, vram_budget_bytes=1000), 1)
+        self.assertEqual(
+            calibrate_workers(100, vram_budget_bytes=1000),
+            1,
+        )
 
     def test_calibrate_workers_rejects_non_positive_budget(self):
         with self.assertRaises(ValueError):
@@ -45,7 +93,7 @@ class CalibrationTests(unittest.TestCase):
 
     def test_model_vram_falls_back_to_tags_size(self):
         client = FakeRuntime(tags=[{"name": "m", "size": 5000}])
-        self.assertEqual(model_vram_bytes(client, "m"), (5000, "tags.size"))
+        self.assertEqual(model_vram_bytes(client, "m"), (5000, "tags.size_estimate"))
 
     def test_model_vram_unknown_model(self):
         client = FakeRuntime(tags=[{"name": "other", "size": 5000}])
@@ -53,9 +101,27 @@ class CalibrationTests(unittest.TestCase):
 
     def test_calibrate_for_model_returns_diagnostic(self):
         client = FakeRuntime(loaded=[{"name": "m", "size_vram": 100}])
-        report = calibrate_for_model(client, "m", vram_budget_bytes=300, hard_max=4)
+        report = calibrate_for_model(
+            client,
+            "m",
+            vram_budget_bytes=300,
+            per_worker_context_bytes=50,
+            hard_max=4,
+        )
         self.assertEqual(report["model_vram_bytes"], 100)
-        self.assertEqual(report["max_workers"], 3)
+        self.assertEqual(report["max_workers"], 4)
+        self.assertEqual(report["calibration_basis"], "runtime_model_plus_parallel_context")
+
+    def test_calibrate_for_model_does_not_treat_tags_size_as_runtime_vram(self):
+        client = FakeRuntime(tags=[{"name": "m", "size": 5000}])
+        report = calibrate_for_model(
+            client,
+            "m",
+            vram_budget_bytes=10_000,
+            per_worker_context_bytes=100,
+        )
+        self.assertEqual(report["max_workers"], 1)
+        self.assertEqual(report["calibration_basis"], "runtime_vram_unconfirmed")
 
 
 if __name__ == "__main__":

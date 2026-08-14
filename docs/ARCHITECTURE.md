@@ -8,7 +8,7 @@
 
 ### Direct service seam (R5.1)
 
-`DelegationService` — transport-neutral вход для доверенного host-процесса. Он разрешает только заранее зарегистрированный `workspace_ref` и имя из существующего списка model profiles, затем запускает обычный `Controller` строго без `apply`. `request_id` атомарно резервируется внутри пары caller/workspace: параллельный повтор ждёт тот же terminal result, а другая нагрузка с тем же ключом отклоняется. In-memory LRU-кэш ограничен числом terminal results; durable state, очередь, MCP и reconnect относятся к последующим срезам.
+`DelegationService` — transport-neutral вход для доверенного host-процесса. Он разрешает только заранее зарегистрированный `workspace_ref` и имя из существующего списка model profiles, выполняет обязательный bounded `TaskBudget` preflight и затем запускает обычный `Controller` строго без `apply`. `request_id` атомарно резервируется внутри пары caller/workspace: параллельный повтор ждёт тот же terminal result, а другая нагрузка с тем же ключом отклоняется. In-memory LRU-кэш ограничен числом terminal results; durable state, очередь и reconnect относятся к последующим срезам.
 
 ### Process-bound stdio adapter (R5.2 first slice)
 
@@ -16,7 +16,7 @@
 
 ### Bounded worker pool (R6 first slice)
 
-`BoundedWorkerPool` — in-memory execution layer поверх `DelegationService`. Он ограничивает число worker slots и ожидающих jobs, сохраняет caller-scoped idempotency и job state, изолирует request/result между workers и передаёт cooperative cancellation в controller. При отмене slot удерживается до фактического завершения model-call executor. Этот срез не является durable store, не реализует MCP Tasks lifecycle и не выбирает Ollama scheduling policy.
+`BoundedWorkerPool` — in-memory execution layer поверх `DelegationService`. Он ограничивает число worker slots и ожидающих jobs, сохраняет caller-scoped idempotency и job state, изолирует request/result между workers и передаёт cooperative cancellation в controller. При отмене slot удерживается до фактического завершения model-call executor. MCP Tasks lifecycle использует этот pool отдельным thin adapter; сам pool не является durable store и не выбирает Ollama scheduling policy.
 
 ### Local model executor
 
@@ -76,12 +76,14 @@ received
 - Абсолютные пути отбрасываются или нормализуются внутри workspace.
 - Размер tool-result ограничивается.
 - Команды тестов берутся из конфигурации задачи, а не из свободного текста модели.
-- `run_tests` пишет stdout/stderr в bounded temporary sinks, чтобы verbose child не мог заблокировать controller на заполненном pipe.
+- `run_tests` непрерывно дренирует stdout/stderr через bounded collectors, чтобы verbose child не мог заблокировать controller на заполненном pipe или неограниченно разрастить временный sink.
 - Завершение процесса и всего его дерева имеет bounded wait; ошибка termination не превращается в безлимитный `wait()`.
 - 'apply_patch' не вызывается напрямую локальной моделью: это controller-only seam.
 - Proposal-only является режимом по умолчанию; mediated apply — opt-in через `--apply`.
 - При `--apply` targeted checks запускаются после изменения; `applied: true` выдаётся только после успешного post-apply результата, иначе patch откатывается.
+- Non-empty apply отклоняется без хотя бы одного заранее allowlisted targeted check.
 - `audit`, `validation` и `applied` принадлежат controller и не принимаются из model result.
+- `checks`/`evidence` в принятом результате принадлежат внешнему runner-у; текст модели не является доказательством запуска.
 - При повторном tool call с теми же именем и аргументами цикл завершается.
 - После достижения 'max_turns' задача считается незавершённой.
 

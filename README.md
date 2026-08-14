@@ -31,6 +31,7 @@
 - разбивать широкую задачу шаблонно и делегировать детей через `DelegatingAgent` (`decompose -> delegate -> decompose further`), в том числе параллельно (`max_parallel_children`).
 - калибровать число worker-слотов по VRAM модели (`calibrate_workers`/`calibrate_for_model`).
 - накапливать минимальную статистику прогонов (`DelegationStats`/`TimedDelegationStats`/`JsonlStatsSink`).
+- обслуживать MCP Tasks lifecycle через bounded in-memory pool и отдельно подтверждать `apply_proposal` с preview конкретного proposal;
 
 ## Безопасные границы
 
@@ -46,7 +47,7 @@
 - установленная модель с поддержкой chat/tool calls;
 - git в `PATH` (для проверки применимости patch через `git apply --check`).
 
-Проект использует только стандартную библиотеку Python и не требует установки Python-зависимостей.
+Core использует только стандартную библиотеку Python; для official-SDK MCP server устанавливается отдельный extra с pinned `mcp==2.0.0`.
 
 ## Быстрый старт
 
@@ -112,7 +113,7 @@ py -m local_coding_agent `
   --apply
 ```
 
-`--apply` включает mediated apply: принятый patch применяется к workspace после валидации. Без него режим остаётся proposal-only, и файлы не изменяются.
+`--apply` включает mediated apply: принятый patch применяется к workspace после валидации и минимум одного заранее allowlisted targeted check. Без него режим остаётся proposal-only, и файлы не изменяются.
 
 Результат содержит статус, summary, предложенный patch, checks, risks, validation report и audit events.
 
@@ -169,11 +170,11 @@ Adapter читает UTF-8 JSONL из stdin и пишет UTF-8 JSONL в stdout.
 Official-SDK MCP server поверх того же `DelegationService`, один proposal-only tool `delegate_code`:
 
 ```powershell
-pip install "mcp>=2.0.0"
+pip install "mcp==2.0.0"
 py -m local_coding_agent.mcp_server --workspace-ref repo --workspace .
 ```
 
-`mcp` — опциональная зависимость (`pyproject.toml`, extra `mcp`); core остаётся stdlib-only. Сервер говорит на stateless `2026-07-28` (`server/discover`, per-request `_meta`, `resultType`) и авто-fallback на legacy `initialize` для старых клиентов.
+`mcp==2.0.0` — опциональная зависимость (`pyproject.toml`, extra `mcp`); core остаётся stdlib-only. Сервер говорит на stateless `2026-07-28` (`server/discover`, per-request `_meta`, `resultType`) и авто-fallback на legacy `initialize` для старых клиентов. Tasks и `apply_proposal` включаются отдельным server configuration; durable task store не заявляется.
 
 ## Benchmark моделей
 
@@ -245,6 +246,7 @@ py -m local_coding_agent `
 - [MODEL_RESEARCH.md](docs/MODEL_RESEARCH.md) — проверенные локальные GGUF, импорт и исторический shortlist;
 - [MODEL_EVALUATION_PLAN.md](docs/MODEL_EVALUATION_PLAN.md) — quant A/B, новые кандидаты и будущий benchmark gate;
 - [MCP_DESIGN.md](docs/MCP_DESIGN.md) — harness-agnostic MCP adapter, Tasks, compatibility и security boundaries;
+- [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](docs/SESSION-2026-08-14-R5.3-R5.4-REPAIR.md) — журнал текущего repair gate и границы evidence;
 - [ROADMAP.md](docs/ROADMAP.md) — этапы развития;
 - [ROADMAP_HISTORICAL.md](docs/ROADMAP_HISTORICAL.md) — историческая летопись M0–M6;
 - [AUDIT.md](docs/AUDIT.md) — аудит реализации;
@@ -260,10 +262,10 @@ py -m compileall -q local_coding_agent tests
 git diff --check
 ```
 
-Текущий набор содержит 88 тестов. Live smoke с Ollama и benchmark выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+Текущий набор содержит 170 тестов. Полный gate включает optional `mcp==2.0.0`; live smoke с Ollama, benchmark и live apply выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. Review fixes смержены в `main`. R5.1 direct seam, первый process-bound stdio slice R5.2 и R6 bounded in-memory worker-pool slice реализованы; полноценный MCP adapter/conformance, durable Tasks store, fairness и Ollama-specific scheduling остаются следующими этапами.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации и targeted checks, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. R5.3/R5.4 repair gate закрыт regression/contract tests на `mcp==2.0.0`; durable Tasks store, live Ollama benchmark, fairness и Ollama-specific scheduling остаются отдельными этапами.

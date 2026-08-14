@@ -58,7 +58,7 @@ Applicability run добавил `git apply --check` без записи в work
 
 ## Isolated test process: 2026-08-12
 
-`run_tests` теперь запускает только allowlisted command с sanitized environment и отдельной process group/session. stdout/stderr спулируются в bounded temporary sinks, process tree завершается bounded способом, а regression проверяет verbose output, cancellation и termination failure. При `max_tool_result_bytes=200` сохранён старый контракт: результат остаётся в лимите и содержит внешнее `evidence`; необязательная isolation metadata может быть опущена ради этого evidence.
+`run_tests` теперь запускает только allowlisted command с sanitized environment и отдельной process group/session. stdout/stderr непрерывно дренируются bounded collectors без временных файлов, process tree завершается bounded способом, а regression проверяет verbose output, cancellation и termination failure. При `max_tool_result_bytes=200` сохранён старый контракт: результат остаётся в лимите и содержит внешнее `evidence`; необязательная isolation metadata может быть опущена ради этого evidence.
 
 ## Baseline до REQUEST_CHANGES: 2026-08-13
 

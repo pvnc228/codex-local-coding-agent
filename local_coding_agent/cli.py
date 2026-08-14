@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="VRAM_BYTES",
         help="Derive a bounded worker count for the selected profile model within this VRAM budget",
     )
+    parser.add_argument(
+        "--parallel-context-bytes",
+        type=int,
+        help="Measured incremental VRAM estimate per concurrent request context/KV cache",
+    )
     return parser
 
 
@@ -176,6 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 client,
                 profile.model,
                 vram_budget_bytes=args.calibrate_workers,
+                per_worker_context_bytes=args.parallel_context_bytes,
             )
             print(json.dumps({"status": "calibrated", "report": report}, ensure_ascii=False, indent=2))
             return 0

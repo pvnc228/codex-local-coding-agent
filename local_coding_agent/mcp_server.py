@@ -1,6 +1,6 @@
 """MCP server exposing proposal-only ``delegate_code`` via the official SDK.
 
-Built on ``mcp>=2.0.0``, which speaks the 2026-07-28 stateless protocol
+Built on ``mcp==2.0.0``, which speaks the 2026-07-28 stateless protocol
 (per-request ``_meta``, ``server/discover``, ``resultType``) and auto-falls
 back to the legacy ``initialize`` handshake for older clients through
 ``serve_dual_era_loop``. Policy, validation, idempotency and result ownership
@@ -18,6 +18,7 @@ namespace). Multi-tenant caller scoping belongs to a remote HTTP gate.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from typing import Annotated, Any
 
 from .service import DelegationService
@@ -63,7 +64,7 @@ except ImportError:  # pragma: no cover - mcp is an optional dependency
 def _require_mcp() -> None:
     if not _MCP_AVAILABLE:
         raise ImportError(
-            "the MCP server requires the 'mcp' package; install it with `pip install mcp>=2.0.0`"
+            "the MCP server requires the 'mcp' package; install it with `pip install mcp==2.0.0`"
         )
 
 
@@ -88,11 +89,42 @@ if BaseModel is not None:
         confirm: bool
 
     def _resolve_apply(ctx: Context) -> Elicit[ApplyConfirmation]:
-        del ctx
-        return Elicit(
-            "Подтвердите применение предложенного патча к рабочей области.",
-            ApplyConfirmation,
+        arguments: dict[str, Any] = {}
+        input_params = getattr(ctx, "_input_params", None)
+        raw_arguments = getattr(input_params, "arguments", None)
+        if isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        if not arguments:
+            request_context = getattr(ctx, "request_context", None)
+            request = getattr(request_context, "request", None)
+            raw_arguments = getattr(request, "arguments", None)
+            if isinstance(raw_arguments, dict):
+                arguments = raw_arguments
+
+        request_id = arguments.get("request_id", "unknown")
+        workspace_ref = arguments.get("workspace_ref", "unknown")
+        preview: dict[str, Any] = {
+            "status": "unknown_proposal",
+            "request_id": request_id,
+            "workspace_ref": workspace_ref,
+        }
+        try:
+            service = ctx.mcp_server._codex_service
+            preview = service.proposal_preview(_CALLER_ID, workspace_ref, request_id)
+        except (AttributeError, TypeError, ValueError):
+            pass
+        files = ", ".join(str(path) for path in preview.get("files", [])) or "(не указаны)"
+        patch = preview.get("patch") or "(пустой diff)"
+        message = (
+            "Подтвердите применение именно этого предложения к рабочей области.\n"
+            f"proposal_id: {preview.get('request_id', request_id)}\n"
+            f"workspace: {preview.get('workspace_ref', workspace_ref)}\n"
+            f"status: {preview.get('status', 'unknown')}\n"
+            f"summary: {preview.get('summary', '')}\n"
+            f"files: {files}\n"
+            f"diff:\n{patch}"
         )
+        return Elicit(message, ApplyConfirmation)
 
 
 def build_server(service: DelegationService, *, enable_tasks: bool = False, max_workers: int = 1, max_queue: int = 16):
@@ -127,6 +159,7 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
         ),
         extensions=extensions or None,
     )
+    setattr(server, "_codex_service", service)
 
     @server.tool(
         name="delegate_code",
@@ -142,7 +175,7 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
         task: dict[str, Any],
     ) -> CallToolResult:
         request = _delegate_request(request_id, workspace_ref, model_profile, task)
-        result = service.delegate(_CALLER_ID, request)
+        result = await asyncio.to_thread(service.delegate, _CALLER_ID, request)
         text = _json(result)
         return CallToolResult(
             content=[TextContent(type="text", text=text)],
@@ -175,7 +208,7 @@ def _register_apply_proposal(server, service: DelegationService) -> None:
         elif isinstance(confirmation, CancelledElicitation):
             result = {"status": "rejected", "error": {"kind": "apply_cancelled", "message": "apply was cancelled"}}
         elif isinstance(confirmation, AcceptedElicitation) and confirmation.data.confirm is True:
-            result = service.apply(_CALLER_ID, workspace_ref, request_id)
+            result = await asyncio.to_thread(service.apply, _CALLER_ID, workspace_ref, request_id)
         else:
             result = {"status": "rejected", "error": {"kind": "apply_declined", "message": "apply was not confirmed"}}
         text = _json(result)

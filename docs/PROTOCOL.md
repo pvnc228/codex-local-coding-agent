@@ -61,6 +61,8 @@
 - 'max_files: 5';
 - 'max_patch_files: 2'.
 
+`TaskBudget` является bounded preflight на public service/controller seams: по умолчанию ограничены files, context bytes и checks. Для non-empty patch `checks` должен содержать хотя бы одну заранее allowlisted targeted command.
+
 ## Финальный формат
 
 ~~~json
@@ -82,7 +84,7 @@
 }
 ~~~
 
-Кандидат содержит либо `patch`, либо `edits`, но не оба. `patch` — синтаксически корректный unified diff; `edits` — список SEARCH/REPLACE-блоков. Наличие текста в поле `patch` не означает, что это настоящий unified diff: он проверяется отдельно.
+Кандидат содержит либо `patch`, либо `edits`, но не оба. `patch` — синтаксически корректный unified diff; `edits` — список SEARCH/REPLACE-блоков. Наличие текста в поле `patch` не означает, что это настоящий unified diff: он проверяется отдельно. Поле `checks` в controller-owned terminal result содержит только наблюдения внешнего runner-а; модель не может засчитать проверку одним текстом финального ответа.
 
 ### SEARCH/REPLACE (edits)
 
@@ -102,7 +104,7 @@
 
 Модель только предлагает изменение через `propose_patch`; сама применить его не может. При запуске с `--apply` controller сначала валидирует и применяет patch во workspace, затем повторно запускает все allowlisted checks. Только после успешных post-apply checks результат получает `"applied": true`; при провале patch откатывается, а статус становится `rejected` с риском kind `post_apply_check_failed`. При ошибке самого применения используется риск kind `apply_failed`. По умолчанию (без `--apply`) режим — proposal-only: на диск ничего не пишется.
 
-Инструмент `propose_patch` принимает либо полный unified diff с синтаксически корректными hunk headers, либо список SEARCH/REPLACE `edits`; `\n` внутри patch должен быть реальным переводом строки, а не двумя символами backslash и `n`. Validator проверяет структуру, allowlist и размер, а controller-owned `git apply --check` является источником истины для фактических hunk counts и применимости. До записи diff не модифицирует workspace.
+Инструмент `propose_patch` принимает либо полный unified diff с синтаксически корректными hunk headers, либо список SEARCH/REPLACE `edits`; `\n` внутри patch должен быть реальным переводом строки, а не двумя символами backslash и `n`. Validator проверяет структуру, allowlist и размер, а controller-owned `git apply --check` является источником истины для фактических hunk counts и применимости. До записи diff не модифицирует workspace. Non-empty mediated apply без хотя бы одного targeted check отклоняется до записи.
 
 Если Ollama не возвращает native `tool_calls`, контроллер допускает совместимый JSON-объект в `message.content` только в форме `{"name":"...","arguments":{...}}`, после чего всё равно прогоняет вызов через ту же policy layer. `run_tests` передаётся модели только когда task envelope содержит allowlisted `checks`.
 
@@ -129,7 +131,7 @@
 
 Адаптер возвращает одну UTF-8 JSONL-строку с тем же core result shape, что и `DelegationService`. Поддерживается только `delegate_code`; пустые строки пропускаются, request ограничен 64 KiB по умолчанию, а malformed JSON, invalid UTF-8, unknown method и oversized request получают machine-readable `failed` error. `caller_id` используется только как scope idempotency, а `workspace_ref` и `model_profile` всё равно проверяются service policy. Adapter не принимает `apply`, произвольный path, endpoint, command или credentials. Этот срез не утверждает modern/legacy MCP negotiation, Tasks, durable state или reconnect.
 
-Allowlisted `run_tests` запускается в отдельном process group/session с урезанным environment: в дочерний процесс не передаются произвольные переменные окружения родителя. stdout/stderr сразу направляются в bounded temporary sinks, а завершение process tree имеет bounded wait и явную ошибку при failure. Ответ содержит `isolated: true` как runtime evidence, если лимит результата позволяет сохранить эту метаинформацию; при предельно малом `max_tool_result_bytes` приоритет остаётся за `stdout`, `stderr` и `evidence`.
+Allowlisted `run_tests` запускается в отдельном process group/session с урезанным environment: в дочерний процесс не передаются произвольные переменные окружения родителя. stdout/stderr сразу дренируются bounded collectors без неограниченного временного файла, а завершение process tree имеет bounded wait и явную ошибку при failure. Ответ содержит `isolated: true` как runtime evidence, если лимит результата позволяет сохранить эту метаинформацию; при предельно малом `max_tool_result_bytes` приоритет остаётся за `stdout`, `stderr` и `evidence`.
 
 Поля `audit`, `validation`, `applied`, `post_apply_checks` и `error` являются controller-owned. Модель может предложить только candidate fields; её значения этих полей отбрасываются перед финальным результатом.
 

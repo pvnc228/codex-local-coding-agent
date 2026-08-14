@@ -4,6 +4,7 @@ import unittest
 from threading import Event, Timer
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from local_coding_agent.controller import Controller, TOOL_DEFINITIONS
 from local_coding_agent.repository_tools import BoundedRepositoryTools, ToolPolicyError
@@ -477,7 +478,9 @@ class ControllerTests(unittest.TestCase):
                 id="controller-apply",
                 goal="изменить значение",
                 files=("src/value.py",),
+                checks=(f'"{sys.executable}" -B -c "pass"',),
             )
+            command = task.checks[0]
             patch = (
                 "diff --git a/src/value.py b/src/value.py\n"
                 "--- a/src/value.py\n"
@@ -488,6 +491,19 @@ class ControllerTests(unittest.TestCase):
             )
             model = FakeModel(
                 [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "run_tests",
+                                        "arguments": {"command": command},
+                                    }
+                                }
+                            ],
+                        }
+                    },
                     {
                         "message": {
                             "role": "assistant",
@@ -513,6 +529,62 @@ class ControllerTests(unittest.TestCase):
                 (workspace / "src" / "value.py").read_text(encoding="utf-8"),
                 "VALUE = 2\n",
             )
+
+    def test_controller_returns_external_runner_evidence_not_model_text(self):
+        command = f'"{sys.executable}" -B -c "pass"'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="external-evidence",
+                goal="проверить evidence",
+                files=("allowed.py",),
+                checks=(command,),
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "run_tests",
+                                        "arguments": {"command": command},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "проверено",
+                                    "patch": "",
+                                    "checks": [
+                                        {
+                                            "command": command,
+                                            "passed": True,
+                                            "evidence": "fabricated by model",
+                                        }
+                                    ],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(result["checks"][0]["command"], command)
+        self.assertNotEqual(result["checks"][0]["evidence"], "fabricated by model")
+        self.assertIn("exit_code=0", result["checks"][0]["evidence"])
 
     def test_controller_does_not_apply_by_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -674,6 +746,77 @@ class ControllerTests(unittest.TestCase):
             any(event["event"] == "post_apply_check" for event in result["audit"])
         )
 
+    def test_controller_marks_workspace_modified_when_rollback_fails(self):
+        command = (
+            f'"{sys.executable}" -B -c "import pathlib; '
+            "raise SystemExit(0 if pathlib.Path('src/value.py').read_text() == "
+            "'VALUE = 1\\n' else 1)"
+        )
+        patch_text = (
+            "diff --git a/src/value.py b/src/value.py\n"
+            "--- a/src/value.py\n"
+            "+++ b/src/value.py\n"
+            "@@ -1 +1 @@\n"
+            "-VALUE = 1\n"
+            "+VALUE = 2\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            target = workspace / "src" / "value.py"
+            target.write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="rollback-failure",
+                goal="проверить rollback",
+                files=("src/value.py",),
+                checks=(command,),
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "run_tests",
+                                        "arguments": {"command": command},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменение",
+                                    "patch": patch_text,
+                                    "checks": [],
+                                    "risks": [],
+                                }
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            from local_coding_agent.validators import apply_patch as real_apply_patch
+
+            def apply_side_effect(root, value, reverse=False):
+                if reverse:
+                    return False, "rollback denied"
+                return real_apply_patch(root, value, reverse=False)
+
+            with patch("local_coding_agent.controller.apply_patch", side_effect=apply_side_effect):
+                result = Controller(model, workspace).run(task, apply=True)
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertTrue(result["workspace_modified"])
+        self.assertTrue(any(risk["kind"] == "rollback_failed" for risk in result["risks"]))
+
     def test_controller_applies_edit_proposal_when_requested(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -683,9 +826,24 @@ class ControllerTests(unittest.TestCase):
                 id="controller-apply-edits",
                 goal="изменить значение",
                 files=("src/value.py",),
+                checks=(f'"{sys.executable}" -B -c "pass"',),
             )
+            command = task.checks[0]
             model = FakeModel(
                 [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "run_tests",
+                                        "arguments": {"command": command},
+                                    }
+                                }
+                            ],
+                        }
+                    },
                     {
                         "message": {
                             "role": "assistant",
