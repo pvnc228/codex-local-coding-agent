@@ -292,7 +292,7 @@ MCP Task создаётся только после успешной durable res
 
 ### R5.3 — Tasks + worker queue
 
-Статус: реализовано и contract-проверено (in-memory). `local_coding_agent/tasks.py` — `TasksExtension` поверх `BoundedWorkerPool`; capability opt-in, `tasks/get`/`tasks/update`/`tasks/cancel`, `CreateTaskResult` через `intercept_tool_call`. Terminal `tasks/get` возвращает `CallToolResult` с `content`, `isError` и `structuredContent`; controller failure остаётся completed task, а неизвестный `taskId` — `-32602`. Task store — in-memory pool, НЕ durable disk; crash/reconnect-устойчивость и durable store остаются отдельным gate.
+Статус: реализовано и contract-проверено (in-memory). `local_coding_agent/tasks.py` — `TasksExtension` поверх `BoundedWorkerPool`; capability opt-in, `tasks/get`/`tasks/update`/`tasks/cancel`, `CreateTaskResult` через `intercept_tool_call`. Terminal `tasks/get` возвращает `CallToolResult` с `content`, `isError` и `structuredContent`; controller failure остаётся completed task, а неизвестный `taskId` — `-32602`. Tasks, legacy sync и mediated apply используют общий `SharedExecutionGate`, поэтому `max_workers` и `max_queue` нельзя обойти смешанными клиентами. Task store — in-memory pool, НЕ durable disk; crash/reconnect-устойчивость и durable store остаются отдельным gate.
 
 ### R5.4 — Explicit apply
 

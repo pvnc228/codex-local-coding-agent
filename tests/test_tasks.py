@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event, Lock
 from typing import Literal
 from unittest.mock import patch
 
@@ -102,6 +103,40 @@ class FlatTaskResult(BaseModel):
 class FailingModel:
     def chat(self, messages, *, tools=None):
         raise RuntimeError("model unavailable")
+
+
+class MixedBlockingService:
+    def __init__(self):
+        self.started = Event()
+        self.overlap = Event()
+        self.triple_overlap = Event()
+        self.release = Event()
+        self.finished = Event()
+        self._lock = Lock()
+        self._active = 0
+        self.max_active = 0
+
+    def delegate(self, caller_id, request, **kwargs):
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+            if self._active >= 2:
+                self.overlap.set()
+            if self._active >= 3:
+                self.triple_overlap.set()
+            self.started.set()
+        try:
+            # The test releases both calls together after observing the mixed path.
+            self.release.wait(timeout=5)
+        finally:
+            with self._lock:
+                self._active -= 1
+                if self._active == 0:
+                    self.finished.set()
+        completion_event = kwargs.get("completion_event")
+        if completion_event is not None:
+            completion_event.set()
+        return {"status": "accepted", "summary": "ok", "patch": "", "checks": [], "risks": []}
 
 
 def _arguments(request_id="r1", checks=(), files=("allowed.py",), goal="прочитать файл"):
@@ -276,6 +311,72 @@ class TasksExtensionTests(unittest.TestCase):
 
         self.assertEqual(result.result_type, "complete")
         self.assertEqual(result.structured_content["status"], "accepted")
+
+    def test_tasks_and_legacy_clients_share_global_worker_admission(self):
+        service = MixedBlockingService()
+        server = build_server(service, enable_tasks=True, max_workers=1, max_queue=0)
+        Client, TasksClaimExtension = self._build_tasks_client()
+
+        async def run():
+            async with Client(server, extensions=[TasksClaimExtension()]) as tasks_client:
+                async with Client(server) as legacy_client:
+                    task_call = asyncio.create_task(
+                        tasks_client.call_tool("delegate_code", _arguments(request_id="tasks"))
+                    )
+                    await asyncio.to_thread(service.started.wait, 1)
+                    legacy_call = asyncio.create_task(
+                        legacy_client.call_tool("delegate_code", _arguments(request_id="legacy"))
+                    )
+                    await asyncio.to_thread(service.overlap.wait, 0.25)
+                    overlap = service.overlap.is_set()
+                    service.release.set()
+                    legacy_result = await legacy_call
+                    task_result = await task_call
+                    await asyncio.to_thread(service.finished.wait, 1)
+                    return overlap, legacy_result, task_result
+
+        overlap, legacy_result, task_result = asyncio.run(run())
+
+        self.assertFalse(overlap)
+        self.assertEqual(service.max_active, 1)
+        self.assertTrue(legacy_result.is_error)
+        self.assertEqual(legacy_result.structured_content["error"]["kind"], "queue_overload")
+        self.assertEqual(task_result.structured_content["status"], "working")
+
+    def test_shared_gate_limits_active_tasks_when_legacy_call_is_waiting(self):
+        service = MixedBlockingService()
+        server = build_server(service, enable_tasks=True, max_workers=2, max_queue=1)
+        Client, TasksClaimExtension = self._build_tasks_client()
+
+        async def run():
+            async with Client(server, extensions=[TasksClaimExtension()]) as tasks_client:
+                async with Client(server) as legacy_client:
+                    first = asyncio.create_task(
+                        tasks_client.call_tool("delegate_code", _arguments(request_id="task-1"))
+                    )
+                    second = asyncio.create_task(
+                        tasks_client.call_tool("delegate_code", _arguments(request_id="task-2"))
+                    )
+                    await asyncio.to_thread(service.overlap.wait, 1)
+                    legacy = asyncio.create_task(
+                        legacy_client.call_tool("delegate_code", _arguments(request_id="legacy"))
+                    )
+                    await asyncio.to_thread(service.triple_overlap.wait, 0.25)
+                    triple_overlap = service.triple_overlap.is_set()
+                    service.release.set()
+                    legacy_result = await legacy
+                    first_result = await first
+                    second_result = await second
+                    await asyncio.to_thread(service.finished.wait, 1)
+                    return triple_overlap, legacy_result, first_result, second_result
+
+        triple_overlap, legacy_result, first_result, second_result = asyncio.run(run())
+
+        self.assertFalse(triple_overlap)
+        self.assertEqual(service.max_active, 2)
+        self.assertFalse(legacy_result.is_error)
+        self.assertEqual(first_result.structured_content["status"], "working")
+        self.assertEqual(second_result.structured_content["status"], "working")
 
 
 class ApplyProposalTests(unittest.TestCase):

@@ -23,6 +23,68 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class ExecutionOverload(RuntimeError):
+    """Raised when the shared runtime admission capacity is full."""
+
+
+class _ExecutionLease:
+    def __init__(self, gate: "SharedExecutionGate") -> None:
+        self._gate = gate
+        self._released = False
+        self._lock = threading.Lock()
+
+    def release(self) -> None:
+        with self._lock:
+            if self._released:
+                return
+            self._released = True
+        self._gate._release()
+
+
+class SharedExecutionGate:
+    """Thread-safe admission and active-slot gate shared by all MCP paths."""
+
+    def __init__(self, max_workers: int, max_queue: int) -> None:
+        if max_workers <= 0:
+            raise ValueError("max_workers must be positive")
+        if max_queue < 0:
+            raise ValueError("max_queue must be non-negative")
+        self._slots = threading.Semaphore(max_workers)
+        self._capacity = max_workers + max_queue
+        self._condition = threading.Condition()
+        self._admitted = 0
+
+    def try_acquire(self) -> _ExecutionLease | None:
+        with self._condition:
+            if self._admitted >= self._capacity:
+                return None
+            self._admitted += 1
+        return _ExecutionLease(self)
+
+    def run(self, function, *args):
+        lease = self.try_acquire()
+        if lease is None:
+            raise ExecutionOverload("bounded execution queue is full")
+        try:
+            return self.run_reserved(lease, function, *args)
+        finally:
+            lease.release()
+
+    def run_reserved(self, lease: _ExecutionLease, function, *args):
+        """Run an already-admitted task while holding a shared active slot."""
+
+        self._slots.acquire()
+        try:
+            return function(*args)
+        finally:
+            self._slots.release()
+
+    def _release(self) -> None:
+        with self._condition:
+            self._admitted -= 1
+            self._condition.notify_all()
+
+
 @dataclass
 class _Job:
     job_id: str
@@ -37,6 +99,7 @@ class _Job:
     cancel_event: threading.Event | None = None
     execution_complete: threading.Event | None = None
     completed: threading.Event | None = None
+    execution_lease: _ExecutionLease | None = None
 
 
 class BoundedWorkerPool:
@@ -54,6 +117,7 @@ class BoundedWorkerPool:
         max_workers: int = 1,
         max_queue: int = 16,
         max_completed_jobs: int = 256,
+        execution_gate: SharedExecutionGate | None = None,
     ) -> None:
         if max_workers <= 0:
             raise ValueError("max_workers must be positive")
@@ -69,6 +133,7 @@ class BoundedWorkerPool:
         self._idempotency: dict[tuple[str, str, str], str] = {}
         self._max_workers = max_workers
         self._max_queue = max_queue
+        self._execution_gate = execution_gate
         self._active_workers = 0
         self._stopping = False
         self._workers = [
@@ -114,6 +179,13 @@ class BoundedWorkerPool:
                     f"max_queue={self._max_queue}",
                 )
 
+            execution_lease = self._execution_gate.try_acquire() if self._execution_gate is not None else None
+            if self._execution_gate is not None and execution_lease is None:
+                return self._failure(
+                    "queue_overload",
+                    "shared execution capacity is full",
+                )
+
             job = _Job(
                 job_id=uuid.uuid4().hex,
                 caller_id=caller_id,
@@ -125,6 +197,7 @@ class BoundedWorkerPool:
                 cancel_event=threading.Event(),
                 execution_complete=threading.Event(),
                 completed=threading.Event(),
+                execution_lease=execution_lease,
             )
             self._jobs[job.job_id] = job
             self._idempotency[request_key] = job.job_id
@@ -175,6 +248,7 @@ class BoundedWorkerPool:
                 job.cancel_event.set()
                 job.state = "cancelled"
                 job.updated_at = _now_iso()
+                self._release_execution_lease(job)
                 self._complete_locked(job)
                 self._condition.notify_all()
                 return self._snapshot(job)
@@ -200,6 +274,7 @@ class BoundedWorkerPool:
                 assert job.cancel_event is not None
                 job.cancel_event.set()
                 job.state = "cancelled"
+                self._release_execution_lease(job)
                 self._complete_locked(job)
             for job in self._jobs.values():
                 if job.state == "working" and job.cancel_event is not None:
@@ -224,6 +299,8 @@ class BoundedWorkerPool:
                 job_id = self._queue.popleft()
                 job = self._jobs.get(job_id)
                 if job is None or job.state == "cancelled":
+                    if job is not None:
+                        self._release_execution_lease(job)
                     continue
                 job.state = "working"
                 job.updated_at = _now_iso()
@@ -232,12 +309,25 @@ class BoundedWorkerPool:
             try:
                 assert job.cancel_event is not None
                 assert job.execution_complete is not None
-                result = self._service.delegate(
-                    job.caller_id,
-                    job.request,
-                    cancel_event=job.cancel_event,
-                    completion_event=job.execution_complete,
-                )
+                if self._execution_gate is not None and job.execution_lease is not None:
+                    def delegate_and_wait():
+                        result = self._service.delegate(
+                            job.caller_id,
+                            job.request,
+                            cancel_event=job.cancel_event,
+                            completion_event=job.execution_complete,
+                        )
+                        job.execution_complete.wait()
+                        return result
+
+                    result = self._execution_gate.run_reserved(job.execution_lease, delegate_and_wait)
+                else:
+                    result = self._service.delegate(
+                        job.caller_id,
+                        job.request,
+                        cancel_event=job.cancel_event,
+                        completion_event=job.execution_complete,
+                    )
                 if not isinstance(result, Mapping):
                     raise TypeError("service returned a non-object result")
                 result = dict(result)
@@ -249,6 +339,7 @@ class BoundedWorkerPool:
             # thread has actually terminated. Keep the worker slot occupied
             # until the service reports that physical execution is complete.
             job.execution_complete.wait()
+            self._release_execution_lease(job)
 
             with self._condition:
                 self._active_workers -= 1
@@ -266,6 +357,12 @@ class BoundedWorkerPool:
         assert job.completed is not None
         job.completed.set()
         self._evict_completed_locked()
+
+    @staticmethod
+    def _release_execution_lease(job: _Job) -> None:
+        if job.execution_lease is not None:
+            job.execution_lease.release()
+            job.execution_lease = None
 
     def _evict_completed_locked(self) -> None:
         terminal_jobs = sum(job.state in _TERMINAL_STATES for job in self._jobs.values())

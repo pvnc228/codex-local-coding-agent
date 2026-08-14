@@ -24,6 +24,7 @@ import json
 from typing import Annotated, Any
 
 from .service import DelegationService
+from .worker_pool import ExecutionOverload, SharedExecutionGate
 
 try:
     from pydantic import BaseModel
@@ -35,34 +36,14 @@ _SERVER_NAME = "codex-local-coding-agent"
 _SERVER_VERSION = "0.2.0"
 
 
-class _ExecutionOverload(RuntimeError):
-    """Raised when bounded async execution has no admission capacity."""
-
-
 class _AsyncExecutionGate:
-    """Bound both active sync calls and their waiting admission queue."""
+    """Async adapter over the shared thread-safe runtime gate."""
 
-    def __init__(self, max_workers: int, max_queue: int) -> None:
-        if max_workers <= 0:
-            raise ValueError("max_workers must be positive")
-        if max_queue < 0:
-            raise ValueError("max_queue must be non-negative")
-        self._slots = asyncio.Semaphore(max_workers)
-        self._capacity = max_workers + max_queue
-        self._count = 0
-        self._count_lock = asyncio.Lock()
+    def __init__(self, runtime_gate: SharedExecutionGate) -> None:
+        self._runtime_gate = runtime_gate
 
     async def run(self, function, *args):
-        async with self._count_lock:
-            if self._count >= self._capacity:
-                raise _ExecutionOverload("bounded execution queue is full")
-            self._count += 1
-        try:
-            async with self._slots:
-                return await asyncio.to_thread(function, *args)
-        finally:
-            async with self._count_lock:
-                self._count -= 1
+        return await asyncio.to_thread(self._runtime_gate.run, function, *args)
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -197,14 +178,20 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
     """
 
     _require_mcp()
-    execution_gate = _AsyncExecutionGate(max_workers, max_queue)
+    runtime_gate = SharedExecutionGate(max_workers, max_queue)
+    execution_gate = _AsyncExecutionGate(runtime_gate)
 
     extensions: list[Any] = []
     if enable_tasks:
         from .tasks import TasksExtension
         from .worker_pool import BoundedWorkerPool
 
-        pool = BoundedWorkerPool(service, max_workers=max_workers, max_queue=max_queue)
+        pool = BoundedWorkerPool(
+            service,
+            max_workers=max_workers,
+            max_queue=max_queue,
+            execution_gate=runtime_gate,
+        )
         extensions.append(TasksExtension(pool, caller_id=_CALLER_ID))
 
     server = MCPServer(
@@ -235,7 +222,7 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
         request = _delegate_request(request_id, workspace_ref, model_profile, task)
         try:
             result = await execution_gate.run(service.delegate, _CALLER_ID, request)
-        except _ExecutionOverload:
+        except ExecutionOverload:
             result = {
                 "status": "failed",
                 "error": {"kind": "queue_overload", "message": "bounded execution queue is full"},
@@ -301,7 +288,7 @@ def _register_apply_proposal(server, service: DelegationService, execution_gate:
                 else:
                     try:
                         result = await execution_gate.run(service.apply, _CALLER_ID, workspace_ref, request_id)
-                    except _ExecutionOverload:
+                    except ExecutionOverload:
                         result = {
                             "status": "failed",
                             "error": {"kind": "queue_overload", "message": "bounded execution queue is full"},

@@ -16,7 +16,7 @@
 
 ### Bounded worker pool (R6 first slice)
 
-`BoundedWorkerPool` — in-memory execution layer поверх `DelegationService`. Он ограничивает число worker slots и ожидающих jobs, сохраняет caller-scoped idempotency и job state, изолирует request/result между workers и передаёт cooperative cancellation в controller. При отмене slot удерживается до фактического завершения model-call executor. MCP Tasks lifecycle использует этот pool отдельным thin adapter; сам pool не является durable store и не выбирает Ollama scheduling policy.
+`BoundedWorkerPool` — in-memory execution layer поверх `DelegationService`. Он ограничивает число worker slots и ожидающих jobs, сохраняет caller-scoped idempotency и job state, изолирует request/result между workers и передаёт cooperative cancellation в controller. Общий `SharedExecutionGate` также синхронизирует Tasks, legacy MCP и mediated apply, поэтому смешанные клиенты не обходят общий `max_workers`/`max_queue`. При отмене slot удерживается до фактического завершения model-call executor. MCP Tasks lifecycle использует этот pool отдельным thin adapter; сам pool не является durable store и не выбирает Ollama scheduling policy.
 
 ### Local model executor
 

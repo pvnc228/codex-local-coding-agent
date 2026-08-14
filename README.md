@@ -262,10 +262,10 @@ py -m compileall -q local_coding_agent tests
 git diff --check
 ```
 
-Текущий набор содержит 176 тестов. Полный gate включает optional `mcp==2.0.0`; live smoke с Ollama, benchmark и live apply выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
+Текущий набор содержит 178 тестов. Полный gate включает optional `mcp==2.0.0`; live smoke с Ollama, benchmark и live apply выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
 
 ## Статус
 
 Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
 
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации и targeted checks, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. R5.3/R5.4 repair gate и self-review hardening закрыты regression/contract tests на `mcp==2.0.0`; durable Tasks store, live Ollama benchmark, fairness и Ollama-specific scheduling остаются отдельными этапами.
+Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации и targeted checks, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. R5.3/R5.4 repair gate и self-review hardening закрыты regression/contract tests на `mcp==2.0.0`; Tasks, legacy sync и apply используют общий runtime gate, а durable Tasks store, live Ollama benchmark, fairness и Ollama-specific scheduling остаются отдельными этапами.

@@ -8,7 +8,7 @@
 
 ## Gate перед следующим функциональным этапом
 
-Статус review: предыдущий review закрыл базовые P0/P1/P2, но повторный review выявил отдельные P1/P2 в R5.3/R5.4. Первый repair gate и дополнительный self-review hardening документированы в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). Предыдущий gate прошёл `170/170`; текущий hardening gate с `mcp==2.0.0` прошёл `176/176`, `compileall` и `git diff --check`.
+Статус review: предыдущий review закрыл базовые P0/P1/P2, но повторный review выявил отдельные P1/P2 в R5.3/R5.4. Первый repair gate и дополнительный self-review hardening документированы в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). Предыдущий gate прошёл `170/170`; текущий hardening gate с `mcp==2.0.0` прошёл `178/178`, `compileall` и `git diff --check`.
 
 Реализационные требования review ниже закрыты кодом и regression tests. R4 получил свежий внешний artifact, однако loop reliability остался нулевым у всех профилей:
 
@@ -141,10 +141,11 @@ R5.4 (explicit apply) доставлен: `apply_proposal(request_id, workspace_
 
 ### R5.3/R5.4 self-review hardening — fail-closed confirmation and concurrency
 
-Статус: завершено 2026-08-14; `176/176` с `mcp==2.0.0`. Пункт добавлен после повторной проверки по `code-review-expert` и закрывает выявленные P1/P2/P3, не расширяя scope до live Ollama или durable Tasks.
+Статус: завершено 2026-08-14; `178/178` с `mcp==2.0.0`. Пункт добавлен после повторной проверки по `code-review-expert` и закрывает выявленные P1/P2/P3, не расширяя scope до live Ollama или durable Tasks.
 
 - `apply_proposal` теперь требует строгую preview: accepted proposal, непустой patch, request/workspace identity и SHA-256 digest канонического preview; preview failure и mismatch не вызывают `service.apply`;
 - sync MCP compatibility path и mediated apply используют bounded admission gate (`max_workers + max_queue`) и возвращают `queue_overload` вместо unbounded pending work;
+- Tasks, legacy sync и mediated apply теперь используют единый `SharedExecutionGate`: общий admission учитывает смешанные клиенты, active slot удерживается до `completion_event`, а queued Tasks освобождают lease при cancel/shutdown;
 - `DelegationService.apply` сериализует весь check/apply/post-check/rollback pipeline отдельным lock для каждой зарегистрированной workspace;
 - `calibrate_for_model` валидирует параметры до source shortcut и использует один `/api/ps` snapshot для footprint и других loaded models; unreachable failed-task branch удалён;
 - regression tests покрывают wrong digest, preview failure, queue overload, workspace serialization, invalid calibration inputs и single-snapshot consistency. Durable store, real Ollama benchmark, live apply и reconnect после restart остаются отдельными gates.
