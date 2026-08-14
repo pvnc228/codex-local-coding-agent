@@ -128,6 +128,36 @@ _PROFILES = {
         keep_alive="10m",
         max_context_length=131_072,
     ),
+    "qwen3.8-27b-q4": ModelProfile(
+        name="qwen3.8-27b-q4",
+        model="codex-qwen3.8-27b-q4:latest",
+        think=False,
+        temperature=0,
+        num_ctx=8192,
+        num_predict=512,
+        keep_alive="10m",
+        max_context_length=262_144,
+    ),
+    "qwen3.8-27b-q5": ModelProfile(
+        name="qwen3.8-27b-q5",
+        model="codex-qwen3.8-27b-q5:latest",
+        think=False,
+        temperature=0,
+        num_ctx=8192,
+        num_predict=512,
+        keep_alive="10m",
+        max_context_length=262_144,
+    ),
+    "qwen3.8-27b-think": ModelProfile(
+        name="qwen3.8-27b-think",
+        model="codex-qwen3.8-27b-q4:latest",
+        think=True,
+        temperature=1.0,
+        num_ctx=8192,
+        num_predict=1024,
+        keep_alive="10m",
+        max_context_length=262_144,
+    ),
 }
 
 

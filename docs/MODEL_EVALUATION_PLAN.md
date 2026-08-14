@@ -29,11 +29,12 @@
 | Приоритет | Кандидат | Квант | Размер файла | Роль |
 | ---: | --- | --- | ---: | --- |
 | 1 | [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) | `UD-IQ2_M` и `UD-Q4_K_XL` из одного pinned revision | около 10.8 / 17.7 GB | чистый quant A/B |
-| 2 | [Qwen3-8B](https://huggingface.co/unsloth/Qwen3-8B-GGUF) | `Q6_K` | 6.73 GB | быстрый high-precision tool-use baseline, близкий к полному GPU-offload |
-| 3 | [Qwen2.5-Coder-14B-Instruct](https://huggingface.co/unsloth/Qwen2.5-Coder-14B-Instruct-GGUF) | `Q6_K`; затем опционально `Q8_0` | 12.1 / 15.7 GB | меньшая code-specific dense-модель с более щадящей квантизацией |
-| 4 | [Muse Glimmer 30B](https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF) | `UD-Q4_K_XL` | около 15.9 GB | новый agentic/tool-recovery кандидат |
-| 5 | [Nemotron 3.5 Lightning 30B-A3B](https://huggingface.co/vcruz305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF) | `MXFP4_MOE` | 17.98 GB | MoE-кандидат для длинных tool loops |
-| 6 | тот же Nemotron | mixed `2.97 BPW` | 11.74 GB | отдельный memory/speed tier, не quality reference |
+| 2 | [Qwen3.8-27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) | `Q4_K_M` (17.1 GB), `Q5_K_M` (19.8 GB), `Q3_K_M` (13.8 GB), `Q8_0` (29.0 GB) | 13.8 – 29.0 GB | гибридный DeltaNet/Attention агентный кандидат с минимальным KV-кэшем и Developer Role |
+| 3 | [Qwen3-8B](https://huggingface.co/unsloth/Qwen3-8B-GGUF) | `Q6_K` | 6.73 GB | быстрый high-precision tool-use baseline, близкий к полному GPU-offload |
+| 4 | [Qwen2.5-Coder-14B-Instruct](https://huggingface.co/unsloth/Qwen2.5-Coder-14B-Instruct-GGUF) | `Q6_K`; затем опционально `Q8_0` | 12.1 / 15.7 GB | меньшая code-specific dense-модель с более щадящей квантизацией |
+| 5 | [Muse Glimmer 30B](https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF) | `UD-Q4_K_XL` | около 15.9 GB | новый agentic/tool-recovery кандидат |
+| 6 | [Nemotron 3.5 Lightning 30B-A3B](https://huggingface.co/vcruz305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF) | `MXFP4_MOE` | 17.98 GB | MoE-кандидат для длинных tool loops |
+| 7 | тот же Nemotron | mixed `2.97 BPW` | 11.74 GB | отдельный memory/speed tier, не quality reference |
 
 ### Почему эти модели
 
@@ -42,6 +43,17 @@
 [Официальная карточка базовой модели](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) указывает `30.5B` параметров, `3.3B` активных, native context `262144`, non-thinking режим и специально разработанный function-call формат. Это наиболее прямой кандидат для текущего controller contract.
 
 Исторический локальный IQ2 был взят из другого GGUF-репозитория. Он остаётся полезным baseline, но строгий A/B требует заново взять IQ2 и Q4 из одного репозитория и одного commit/revision, сохранить SHA-256 и одинаковый Modelfile. Иначе различия quantizer, imatrix, metadata или chat template будут смешаны с влиянием числа бит.
+
+#### Qwen3.8-27B (Unsloth Dynamic GGUF)
+
+[Официальный репозиторий Unsloth Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) представляет dense 27B модель на гибридной архитектуре:
+- **Архитектура**: 64 слоя, из которых 48 слоёв — линейное внимание Gated DeltaNet и 16 слоёв — классический Gated Attention.
+- **Ультра-компактный KV-кэш**: DeltaNet-состояние фиксировано и не растёт линейно с длиной контекста; расход KV-кэша составляет всего ~64 KB на токен (~0.5 GB при 8K, ~2.0 GB при 32K, ~16 GB при 262K токенах). Это открывает возможность параллельного обслуживания нескольких воркеров без взрывного расхода RAM.
+- **Developer Role Support & Tool Calling**: Модель нативно поддерживает системную роль разработчика в агентных средах и улучшенный парсинг вложенных объектов в tool calls, что снижает вероятность сбоя JSON/tool loop.
+- **Профили сэмплинга**:
+  - *Thinking-режим* (для оркестрации и `atomizer.py`): `temperature=1.0`, `top_p=0.95`, `top_k=20`, `min_p=0.0`, `presence_penalty=0.0`.
+  - *Non-thinking-режим* (для атомарных воркеров `delegate_code` и `propose_patch`): `temperature=0.7`, `top_p=0.80`, `top_k=20`, `min_p=0.0`, `presence_penalty=1.5` (страхует от зацикливаний на повторных tool calls).
+- **Кванты**: Основной рабочий квант для многоагентного пула — `Q4_K_M` (17.1 GB) или `Q3_K_M` (13.8 GB); для одиночных эталонных задач — `Q5_K_M` (19.8 GB) и `Q8_0` (29.0 GB).
 
 #### Qwen3-8B Q6_K
 

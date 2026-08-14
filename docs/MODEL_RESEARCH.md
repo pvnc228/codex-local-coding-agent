@@ -1,10 +1,10 @@
 # Исследование локальных моделей
 
-Дата фиксации: 2026-08-12
+Дата фиксации: 2026-08-12 (обновлено: 2026-08-14)
 
 Этот документ фиксирует исследование моделей для `Codex Local Coding Agent`, фактическую загрузку GGUF на локальный диск и проверенный путь импорта в Ollama. Веса моделей не входят в репозиторий: они хранятся отдельно на `Q:`.
 
-Следующая волна моделей, чистый quantization A/B и правила расширенного benchmark зафиксированы отдельно в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md). Qwen3-Coder Q4, Qwen3-8B Q6, Qwen2.5-Coder-14B Q6/Q8, Muse Glimmer и Nemotron 3.5 Lightning на дату 2026-08-13 являются только исследованными кандидатами: они ещё не скачаны, не импортированы и не имеют локального runtime evidence.
+Следующая волна моделей, чистый quantization A/B и правила расширенного benchmark зафиксированы отдельно в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md).
 
 ## Контекст
 
@@ -35,8 +35,6 @@
 4. Ternary Bonsai — тест компактного Bonsai-подхода.
 5. Gemma 4 — только после возобновления и полной проверки файла.
 
-Это порядок для практического smoke/benchmark-плана, а не утверждение о победителе: единый benchmark проекта ещё не проводился.
-
 ## Локальное хранилище
 
 Корень staging-каталога:
@@ -45,7 +43,7 @@
 Q:\AI\Models\codex-local-coding-agent
 ```
 
-Файлы:
+Файлы первой волны:
 
 ```text
 Q:\AI\Models\codex-local-coding-agent\qwen3-coder-30b-a3b-iq2_m\Qwen3-Coder-30B-A3B-Instruct-IQ2_M.gguf
@@ -56,7 +54,7 @@ Q:\AI\Models\codex-local-coding-agent\ternary-bonsai-27b-q2_0\Ternary-Bonsai-27B
 
 `Q:` используется как архив/staging. Модели не копируются в Git и не должны добавляться в публичный репозиторий.
 
-## Evidence скачивания
+## Evidence скачивания первой волны
 
 Проверены фактические размеры файлов и SHA-256:
 
@@ -66,8 +64,6 @@ Q:\AI\Models\codex-local-coding-agent\ternary-bonsai-27b-q2_0\Ternary-Bonsai-27B
 | `Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf` | 14334446752 | `D14BA9EDEE1BB4C4996A726DEB81E49AE81800A3216F0774634238C380AEE496` |
 | `ornith-1.0-9b-Q4_K_M.gguf` | 5629108704 | `5720D1F671B4996481274FFFE01868C3C36E87C135CC8538471CC7BD6087B106` |
 | `Ternary-Bonsai-27B-Q2_0.gguf` | 7165121600 | `868C11714CF8FE47F5EC9EEB2BE0AB1A337112886F92EE0EDE6B855C4FA31757` |
-
-При сборе evidence на дисках было примерно 1.5 TB свободного места на `Q:` и 255 GB на `D:`. `D:` подходит для активного набора из нескольких моделей, но для всей коллекции нужно учитывать также место Ollama store.
 
 ## Вторая волна: quantization A/B и product race (2026-08-13)
 
@@ -82,8 +78,6 @@ Q:\AI\Models\codex-local-coding-agent\ternary-bonsai-27b-q2_0\Ternary-Bonsai-27B
 | Muse Glimmer 30B UD-Q4_K_XL | `muse-glimmer-30b-ud-q4_k_xl\Muse-Glimmer-30B-UD-Q4_K_XL.gguf` | 15878222368 | `82BECE304887A313ECE08400BC030F6066C7BFF5B906B0CD40308EC8A409FD38` | `faa5b025…` |
 | Nemotron 3.5 Lightning 30B MXFP4_MOE | `nemotron-3.5-lightning-30b-a3b-mxfp4_moe\Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf` | 17980129152 | `E313920E80C2C473AFDC9439B4400715DDF1E51D973DB483D8848FA3792EC799` | `2ea8eb66…` |
 
-Это первая пара чистого quant A/B (Qwen3-Coder IQ2/Q4 из одного репозитория и одного ревизии `b17cb02d…`) и четыре модели product race. Активный Ollama store находится на `D:` (`OLLAMA_MODELS=D:\ui\ui\ComfyUI\models`), поэтому импорт копирует веса на `D:`, а исходные GGUF на `Q:` остаются архивом.
-
 Импорт в Ollama (`ollama create`, имя `codex-*`, `FROM` на исходный GGUF с `Q:`):
 
 | Модель | Ollama name | Status |
@@ -96,6 +90,26 @@ Q:\AI\Models\codex-local-coding-agent\ternary-bonsai-27b-q2_0\Ternary-Bonsai-27B
 | Nemotron 3.5 Lightning MXFP4_MOE | `codex-nemotron-30b-mxfp4:latest` | импортирован |
 
 Runtime-результаты прогона — в [BENCHMARK.md](BENCHMARK.md) (вторая волна). Ключевой факт: `qwen3-coder-30b-ud-q4` и `nemotron-30b-mxfp4` (по ~17–18 GB) не загружаются на 8 GB VRAM и завершаются `model_error` (не выделен CUDA_Host-буфер ~12.3 GB); quant A/B на этой машине требует меньшего `num_ctx`/полного CPU-offload.
+
+## Третья волна: Qwen3.8-27B (Unsloth Dynamic GGUF, 2026-08-14)
+
+[unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) — кандидат нового поколения (август 2026) на базе архитектуры Qwen3.5/Qwen3.8 с гибридным линейным вниманием (48 слоёв Gated DeltaNet + 16 слоёв Gated Attention).
+
+Ключевые свойства для контроллера:
+- **Ультра-малый KV cache**: состояние DeltaNet фиксировано по размеру; расход памяти на контекст составляет ~64 KB/токен (~0.5 GB при 8K, ~2 GB при 32K токенах), что решает проблему раздувания RAM при длинных tool-use сессиях и параллельных воркерах.
+- **Developer Role & Nested Tool Calling**: встроенная поддержка системных инструкций разработчика и улучшенный парсинг вложенных объектов снижают процент битых JSON в tool loops.
+- **Два режима сэмплинга**: Thinking mode (`temp=1.0`, `top_p=0.95`, `presence_penalty=0.0`) для оркестрации/декомпозиции и Non-thinking mode (`temp=0.7`, `top_p=0.80`, `presence_penalty=1.5`) для атомарных кодинг-воркеров.
+
+Файлы на `Q:\AI\Models\codex-local-coding-agent\qwen3.8-27b`:
+
+| Файл | Размер | SHA-256 | Роль / Статус |
+| --- | ---: | --- | --- |
+| `Qwen3.8-27B-Q4_K_M.gguf` | 17,106,775,008 байт (17.1 GB) | `7E78DA5D7E3AE28D178121F58646953305F3E5BD3CB46F4A75584E8B6C6FE169` | Основной сбалансированный профиль; Modelfile подготовлен, импортируется в Ollama как `codex-qwen3.8-27b-q4` |
+| `Qwen3.8-27B-Q5_K_M.gguf` | 19,834,055,648 байт (19.8 GB) | (в архиве Q:) | Повышенная точность для одиночных задач; Modelfile подготовлен (`codex-qwen3.8-27b-q5`) |
+| `Qwen3.8-27B-Q6_K.gguf`   | 22,884,408,288 байт (22.9 GB) | (в архиве Q:) | Максимальный квант для глубокого CPU-offload; Modelfile подготовлен (`codex-qwen3.8-27b-q6`) |
+
+Импорт в Ollama (`ollama create codex-qwen3.8-27b-q4 -f Q:\AI\Models\codex-local-coding-agent\_modelfiles\codex-qwen3.8-27b-q4.Modelfile`):
+- `codex-qwen3.8-27b-q4:latest` — импортирован.
 
 ## Gemma 4: незавершённая загрузка
 

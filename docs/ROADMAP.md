@@ -1,6 +1,6 @@
 # Roadmap
 
-Дата: 2026-08-13.
+Дата: 2026-08-13 (обновлено: 2026-08-14).
 
 Историческая летопись завершённых этапов (M0–M6) перенесена в [ROADMAP_HISTORICAL.md](ROADMAP_HISTORICAL.md). Этот файл — план вперёд, отсортированный по приоритету.
 
@@ -74,10 +74,11 @@
 Полный план, приоритеты, источники и gates находятся в [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md).
 
 - сначала сравнить Qwen3-Coder `UD-IQ2_M` и `UD-Q4_K_XL` из одного pinned revision;
-- отдельно провести product race с Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse Glimmer Q4 и Nemotron MXFP4_MOE;
+- включить в product race [Qwen3.8-27B GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) (Unsloth `Q4_K_M`, `Q5_K_M`, `Q3_K_M`, `Q8_0`) для проверки преимуществ гибридного DeltaNet/Attention KV-кэша, нативной Developer Role и оптимизированного парсинга вложенных tool calls;
+- провести product race с Qwen3.8-27B, Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse Glimmer Q4 и Nemotron MXFP4_MOE;
 - расширить benchmark минимум до 20 задач и 3 повторов;
 - сохранить source revision, SHA-256, model digest, generation profile, RAM/VRAM и внешний oracle в artifact;
-- не смешивать quant A/B с model-native reasoning/sampling lane.
+- не смешивать quant A/B с model-native reasoning/sampling lane (отдельно Thinking для декомпозиции и Non-thinking для атомарных воркеров).
 
 Критерии приёмки:
 

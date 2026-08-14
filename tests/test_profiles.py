@@ -21,6 +21,9 @@ class ModelProfileTests(unittest.TestCase):
                 "qwen3-coder-30b",
                 "qwen3-coder-30b-iq2",
                 "qwen3-coder-30b-q4",
+                "qwen3.8-27b-q4",
+                "qwen3.8-27b-q5",
+                "qwen3.8-27b-think",
                 "ternary-bonsai-27b",
             ),
         )
