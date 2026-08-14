@@ -59,6 +59,14 @@ def model_vram_bytes(client: OllamaRuntime, model_name: str) -> tuple[int, str]:
     """
 
     loaded = client.loaded_models()
+    footprint, source = _model_vram_from_loaded(loaded, model_name)
+    if source != "unknown":
+        return footprint, source
+
+    return _model_vram_from_tags(client.available_models(), model_name)
+
+
+def _model_vram_from_loaded(loaded: Any, model_name: str) -> tuple[int, str]:
     raw_models = loaded.get("models") if isinstance(loaded, Mapping) else None
     if isinstance(raw_models, list):
         for model in raw_models:
@@ -67,8 +75,10 @@ def model_vram_bytes(client: OllamaRuntime, model_name: str) -> tuple[int, str]:
             name = model.get("name") or model.get("model")
             if name == model_name and isinstance(model.get("size_vram"), int) and model["size_vram"] > 0:
                 return model["size_vram"], "ps.size_vram"
+    return 0, "unknown"
 
-    available = client.available_models()
+
+def _model_vram_from_tags(available: Any, model_name: str) -> tuple[int, str]:
     raw_tags = available.get("models") if isinstance(available, Mapping) else None
     if isinstance(raw_tags, list):
         for model in raw_tags:
@@ -95,8 +105,17 @@ def calibrate_for_model(
     offload, compute buffers, and runtime configuration.
     """
 
-    footprint, source = model_vram_bytes(client, model_name)
+    if vram_budget_bytes <= 0:
+        raise ValueError("vram_budget_bytes must be positive")
+    if hard_max <= 0:
+        raise ValueError("hard_max must be positive")
+    if per_worker_context_bytes is not None and per_worker_context_bytes <= 0:
+        raise ValueError("per_worker_context_bytes must be positive")
+
     loaded = client.loaded_models()
+    footprint, source = _model_vram_from_loaded(loaded, model_name)
+    if source == "unknown":
+        footprint, source = _model_vram_from_tags(client.available_models(), model_name)
     raw_models = loaded.get("models") if isinstance(loaded, Mapping) else None
     other_loaded = 0
     if isinstance(raw_models, list):

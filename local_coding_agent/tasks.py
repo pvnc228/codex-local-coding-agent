@@ -93,12 +93,6 @@ def task_dict(pool: BoundedWorkerPool, caller_id: str, task_id: str) -> dict[str
     }
     if status == "completed":
         task["result"] = _call_tool_result(snapshot.get("result") or {})
-    elif status == "failed":
-        error = {}
-        result = snapshot.get("result")
-        if isinstance(result, Mapping):
-            error = result.get("error") or {}
-        task["error"] = error
     return task
 
 

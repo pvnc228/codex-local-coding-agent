@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Literal
+from unittest.mock import patch
 
 from pydantic import BaseModel, Field
 
@@ -288,7 +289,21 @@ class ApplyProposalTests(unittest.TestCase):
     async def _accept_callback(context, params):
         from mcp.types import ElicitResult
 
-        return ElicitResult(action="accept", content={"confirm": True})
+        message = str(getattr(params, "message", ""))
+        values = {}
+        for line in message.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                values[key.strip()] = value.strip()
+        return ElicitResult(
+            action="accept",
+            content={
+                "confirm": True,
+                "proposal_id": values.get("proposal_id", "r1"),
+                "workspace_ref": values.get("workspace", "fixture"),
+                "proposal_digest": values.get("proposal_digest", ""),
+            },
+        )
 
     @staticmethod
     async def _decline_callback(context, params):
@@ -339,9 +354,7 @@ class ApplyProposalTests(unittest.TestCase):
 
         async def accept(context, params):
             messages.append(getattr(params, "message", str(params)))
-            from mcp.types import ElicitResult
-
-            return ElicitResult(action="accept", content={"confirm": True})
+            return await ApplyProposalTests._accept_callback(context, params)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -363,6 +376,62 @@ class ApplyProposalTests(unittest.TestCase):
         message = str(messages[0])
         for expected in ("r1", "изменено значение", "fixture", "value.py", "VALUE = 2"):
             self.assertIn(expected, message)
+
+    def test_apply_proposal_rejects_confirmation_with_wrong_digest(self):
+        from mcp.client import Client
+
+        async def wrong_digest(context, params):
+            content = await ApplyProposalTests._accept_callback(context, params)
+            content.content["proposal_digest"] = "wrong-digest"
+            return content
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            server = build_server(self._service(workspace), enable_tasks=True)
+
+            async def run():
+                async with Client(server, elicitation_callback=wrong_digest) as client:
+                    await client.call_tool(
+                        "delegate_code",
+                        _arguments(checks=(CHECK_COMMAND,), files=("value.py",), goal="change"),
+                    )
+                    return await client.call_tool("apply_proposal", self._apply_arguments())
+
+            applied = asyncio.run(run())
+            content = (workspace / "value.py").read_text(encoding="utf-8")
+
+        self.assertTrue(applied.is_error)
+        self.assertEqual(applied.structured_content["error"]["kind"], "apply_confirmation_mismatch")
+        self.assertEqual(content, "VALUE = 1\n")
+
+    def test_apply_proposal_fails_closed_when_preview_is_unavailable(self):
+        from mcp.client import Client
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            service = self._service(workspace)
+            server = build_server(service, enable_tasks=True)
+
+            async def run():
+                async with Client(server, elicitation_callback=self._accept_callback) as client:
+                    await client.call_tool(
+                        "delegate_code",
+                        _arguments(checks=(CHECK_COMMAND,), files=("value.py",), goal="change"),
+                    )
+                    try:
+                        result = await client.call_tool("apply_proposal", self._apply_arguments())
+                    except Exception:  # SDK may surface resolver failures as JSON-RPC errors.
+                        return True, None
+                    return False, result
+
+            with patch.object(service, "proposal_preview", side_effect=ValueError("preview unavailable")):
+                raised, applied = asyncio.run(run())
+            content = (workspace / "value.py").read_text(encoding="utf-8")
+
+        self.assertTrue(raised or applied.is_error)
+        self.assertEqual(content, "VALUE = 1\n")
 
     def test_apply_proposal_decline_leaves_workspace_untouched(self):
         from mcp.client import Client

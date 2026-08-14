@@ -296,7 +296,7 @@ MCP Task создаётся только после успешной durable res
 
 ### R5.4 — Explicit apply
 
-Статус: реализовано и contract-проверено. `apply_proposal(request_id, workspace_ref)` — отдельный tool с MRTR elicitation подтверждением; preview связан с request id, workspace, summary, files и diff; `DelegationService.apply` требует targeted check, перевалидирует, применяет, прогоняет checks и откатывает. host UI fallback и durable proposal store остаются отдельными gates.
+Статус: реализовано и contract-проверено. `apply_proposal(request_id, workspace_ref)` — отдельный tool с MRTR elicitation подтверждением; preview связан с request id, workspace, summary, files, diff и SHA-256 digest; resolver и handler fail-closed при недоступном или изменившемся preview. `DelegationService.apply` требует targeted check, сериализует mutation pipeline по workspace, перевалидирует, применяет, прогоняет checks и откатывает. host UI fallback и durable proposal store остаются отдельными gates.
 
 ### R5.5 — Remote HTTP
 

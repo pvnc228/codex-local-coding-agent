@@ -97,6 +97,7 @@ class DelegationService:
                 raise ValueError(f"registered workspace is not a directory: {reference!r}")
             registered[reference] = path
         self._workspaces = registered
+        self._apply_locks = {reference: RLock() for reference in registered}
         self._model_factory = model_factory
         self._max_turns = max_turns
         self._max_cached_results = max_cached_results
@@ -263,6 +264,22 @@ class DelegationService:
         workspace = self._workspaces.get(request.workspace_ref)
         if workspace is None:
             return self._apply_failure("unknown_workspace", "workspace_ref is not registered", audit)
+
+        workspace_lock = self._apply_locks.get(request.workspace_ref)
+        if workspace_lock is None:
+            return self._apply_failure("unknown_workspace", "workspace_ref is not registered", audit)
+        with workspace_lock:
+            return self._apply_to_workspace(request, proposal, workspace, patch, cancel_event, audit)
+
+    def _apply_to_workspace(
+        self,
+        request: DelegationRequest,
+        proposal: Mapping[str, Any],
+        workspace: Path,
+        patch: str,
+        cancel_event: Event | None,
+        audit: list[dict[str, Any]],
+    ) -> dict[str, Any]:
 
         try:
             applies, detail = check_patch_applies(workspace, patch)

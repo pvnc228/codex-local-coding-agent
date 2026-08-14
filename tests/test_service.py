@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Event, Thread
+from unittest.mock import patch
 
 from local_coding_agent.atomizer import TaskBudget
 from local_coding_agent.service import DelegationRequest, DelegationService
@@ -448,6 +449,76 @@ class DelegationServiceApplyTests(unittest.TestCase):
         self.assertEqual(delegated["status"], "rejected")
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"]["kind"], "proposal_not_accepted")
+
+    def test_apply_serializes_mutation_pipeline_per_workspace(self):
+        import sys
+
+        command = f'"{sys.executable}" -B -c "pass"'
+        first_check_entered = Event()
+        release_first_check = Event()
+        second_started = Event()
+        second_finished = Event()
+        state = {"active": 0, "max_active": 0}
+        state_lock = __import__("threading").Lock()
+
+        def blocking_check(workspace, patch_text):
+            with state_lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            first_check_entered.set()
+            release_first_check.wait(timeout=5)
+            with state_lock:
+                state["active"] -= 1
+            return False, "held for serialization test"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            model = SequenceModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {"function": {"name": "run_tests", "arguments": {"command": command}}}
+                            ],
+                        }
+                    },
+                    self._candidate(
+                        checks=[{"command": command, "passed": True, "evidence": "exit_code=0; passed=True"}]
+                    ),
+                ]
+            )
+            service = DelegationService({"fixture": workspace}, model_factory=lambda profile: model)
+            service.delegate("caller-a", self._request(checks=(command,)))
+            results = []
+
+            def apply_first():
+                results.append(service.apply("caller-a", "fixture", "request-1"))
+
+            def apply_second():
+                second_started.set()
+                results.append(service.apply("caller-a", "fixture", "request-1"))
+                second_finished.set()
+
+            with patch("local_coding_agent.service.check_patch_applies", side_effect=blocking_check):
+                first = Thread(target=apply_first)
+                second = Thread(target=apply_second)
+                first.start()
+                self.assertTrue(first_check_entered.wait(timeout=2))
+                second.start()
+                self.assertTrue(second_started.wait(timeout=2))
+                self.assertFalse(second_finished.wait(timeout=0.1))
+                with state_lock:
+                    self.assertEqual(state["max_active"], 1)
+                release_first_check.set()
+                first.join(timeout=5)
+                second.join(timeout=5)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["error"]["kind"] == "stale_workspace" for result in results))
 
 
 if __name__ == "__main__":

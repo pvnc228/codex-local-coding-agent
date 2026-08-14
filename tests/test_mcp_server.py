@@ -184,6 +184,29 @@ build_server(service).run(transport="stdio")
         self.assertLess(elapsed, 0.15)
         self.assertFalse(result.is_error)
 
+    def test_sync_compatibility_path_rejects_when_bounded_gate_is_full(self):
+        service = BlockingService()
+        server = build_server(service, max_workers=1, max_queue=0)
+        arguments = {
+            "request_id": "blocking",
+            "workspace_ref": "fixture",
+            "model_profile": "qwen2.5-1.5b",
+            "task": {"id": "blocking", "goal": "read", "files": ["allowed.py"]},
+        }
+
+        async def run():
+            first = asyncio.create_task(server.call_tool("delegate_code", arguments))
+            await asyncio.to_thread(service.started.wait, 1)
+            second = await server.call_tool("delegate_code", {**arguments, "request_id": "second"})
+            first_result = await first
+            return first_result, second
+
+        first, second = asyncio.run(run())
+
+        self.assertFalse(first.is_error)
+        self.assertTrue(second.is_error)
+        self.assertEqual(second.structured_content["error"]["kind"], "queue_overload")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import json
 from typing import Annotated, Any
 
 from .service import DelegationService
@@ -31,6 +33,36 @@ except ImportError:  # pragma: no cover - pydantic comes with mcp
 _CALLER_ID = "mcp-stdio"
 _SERVER_NAME = "codex-local-coding-agent"
 _SERVER_VERSION = "0.2.0"
+
+
+class _ExecutionOverload(RuntimeError):
+    """Raised when bounded async execution has no admission capacity."""
+
+
+class _AsyncExecutionGate:
+    """Bound both active sync calls and their waiting admission queue."""
+
+    def __init__(self, max_workers: int, max_queue: int) -> None:
+        if max_workers <= 0:
+            raise ValueError("max_workers must be positive")
+        if max_queue < 0:
+            raise ValueError("max_queue must be non-negative")
+        self._slots = asyncio.Semaphore(max_workers)
+        self._capacity = max_workers + max_queue
+        self._count = 0
+        self._count_lock = asyncio.Lock()
+
+    async def run(self, function, *args):
+        async with self._count_lock:
+            if self._count >= self._capacity:
+                raise _ExecutionOverload("bounded execution queue is full")
+            self._count += 1
+        try:
+            async with self._slots:
+                return await asyncio.to_thread(function, *args)
+        finally:
+            async with self._count_lock:
+                self._count -= 1
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -87,6 +119,36 @@ def _delegate_request(request_id: Any, workspace_ref: Any, model_profile: Any, t
 if BaseModel is not None:
     class ApplyConfirmation(BaseModel):
         confirm: bool
+        proposal_id: str
+        workspace_ref: str
+        proposal_digest: str
+
+
+    def _proposal_digest(preview: dict[str, Any]) -> str:
+        canonical = {
+            "request_id": preview.get("request_id"),
+            "workspace_ref": preview.get("workspace_ref"),
+            "status": preview.get("status"),
+            "summary": preview.get("summary", ""),
+            "files": preview.get("files", []),
+            "patch": preview.get("patch", ""),
+        }
+        encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
+    def _require_apply_preview(preview: Any, request_id: str, workspace_ref: str) -> dict[str, Any]:
+        if not isinstance(preview, dict):
+            raise ValueError("proposal preview is unavailable")
+        if preview.get("status") != "accepted":
+            raise ValueError("proposal preview is not an accepted proposal")
+        if preview.get("request_id") != request_id or preview.get("workspace_ref") != workspace_ref:
+            raise ValueError("proposal preview identity does not match the apply request")
+        if not isinstance(preview.get("files"), list):
+            raise ValueError("proposal preview files are unavailable")
+        if not isinstance(preview.get("patch"), str) or not preview["patch"].strip():
+            raise ValueError("proposal preview does not contain a patch")
+        return preview
 
     def _resolve_apply(ctx: Context) -> Elicit[ApplyConfirmation]:
         arguments: dict[str, Any] = {}
@@ -103,23 +165,18 @@ if BaseModel is not None:
 
         request_id = arguments.get("request_id", "unknown")
         workspace_ref = arguments.get("workspace_ref", "unknown")
-        preview: dict[str, Any] = {
-            "status": "unknown_proposal",
-            "request_id": request_id,
-            "workspace_ref": workspace_ref,
-        }
-        try:
-            service = ctx.mcp_server._codex_service
-            preview = service.proposal_preview(_CALLER_ID, workspace_ref, request_id)
-        except (AttributeError, TypeError, ValueError):
-            pass
+        service = ctx.mcp_server._codex_service
+        preview = _require_apply_preview(
+            service.proposal_preview(_CALLER_ID, workspace_ref, request_id), request_id, workspace_ref
+        )
         files = ", ".join(str(path) for path in preview.get("files", [])) or "(не указаны)"
-        patch = preview.get("patch") or "(пустой diff)"
+        patch = preview["patch"]
         message = (
             "Подтвердите применение именно этого предложения к рабочей области.\n"
-            f"proposal_id: {preview.get('request_id', request_id)}\n"
-            f"workspace: {preview.get('workspace_ref', workspace_ref)}\n"
-            f"status: {preview.get('status', 'unknown')}\n"
+            f"proposal_id: {preview['request_id']}\n"
+            f"workspace: {preview['workspace_ref']}\n"
+            f"proposal_digest: {_proposal_digest(preview)}\n"
+            f"status: {preview['status']}\n"
             f"summary: {preview.get('summary', '')}\n"
             f"files: {files}\n"
             f"diff:\n{patch}"
@@ -135,11 +192,12 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
         enable_tasks: When True, mount the Tasks extension (async lifecycle) and
             ``apply_proposal``. When False (default), keep the pure synchronous
             proposal-only path.
-        max_workers: Worker slots for the task backend when ``enable_tasks``.
-        max_queue: Queue bound for the task backend when ``enable_tasks``.
+        max_workers: Active sync/task worker slots.
+        max_queue: Admission queue bound for sync/task work.
     """
 
     _require_mcp()
+    execution_gate = _AsyncExecutionGate(max_workers, max_queue)
 
     extensions: list[Any] = []
     if enable_tasks:
@@ -175,7 +233,14 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
         task: dict[str, Any],
     ) -> CallToolResult:
         request = _delegate_request(request_id, workspace_ref, model_profile, task)
-        result = await asyncio.to_thread(service.delegate, _CALLER_ID, request)
+        try:
+            result = await execution_gate.run(service.delegate, _CALLER_ID, request)
+        except _ExecutionOverload:
+            result = {
+                "status": "failed",
+                "error": {"kind": "queue_overload", "message": "bounded execution queue is full"},
+                "applied": False,
+            }
         text = _json(result)
         return CallToolResult(
             content=[TextContent(type="text", text=text)],
@@ -184,12 +249,12 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
         )
 
     if enable_tasks:
-        _register_apply_proposal(server, service)
+        _register_apply_proposal(server, service, execution_gate)
 
     return server
 
 
-def _register_apply_proposal(server, service: DelegationService) -> None:
+def _register_apply_proposal(server, service: DelegationService, execution_gate: _AsyncExecutionGate) -> None:
     @server.tool(
         name="apply_proposal",
         description=(
@@ -208,7 +273,40 @@ def _register_apply_proposal(server, service: DelegationService) -> None:
         elif isinstance(confirmation, CancelledElicitation):
             result = {"status": "rejected", "error": {"kind": "apply_cancelled", "message": "apply was cancelled"}}
         elif isinstance(confirmation, AcceptedElicitation) and confirmation.data.confirm is True:
-            result = await asyncio.to_thread(service.apply, _CALLER_ID, workspace_ref, request_id)
+            try:
+                preview = _require_apply_preview(
+                    service.proposal_preview(_CALLER_ID, workspace_ref, request_id), request_id, workspace_ref
+                )
+                expected_digest = _proposal_digest(preview)
+            except (AttributeError, TypeError, ValueError) as error:
+                result = {
+                    "status": "failed",
+                    "error": {"kind": "apply_confirmation_mismatch", "message": str(error)},
+                    "applied": False,
+                }
+            else:
+                if (
+                    confirmation.data.proposal_id != request_id
+                    or confirmation.data.workspace_ref != workspace_ref
+                    or confirmation.data.proposal_digest != expected_digest
+                ):
+                    result = {
+                        "status": "failed",
+                        "error": {
+                            "kind": "apply_confirmation_mismatch",
+                            "message": "confirmation does not match the current proposal preview",
+                        },
+                        "applied": False,
+                    }
+                else:
+                    try:
+                        result = await execution_gate.run(service.apply, _CALLER_ID, workspace_ref, request_id)
+                    except _ExecutionOverload:
+                        result = {
+                            "status": "failed",
+                            "error": {"kind": "queue_overload", "message": "bounded execution queue is full"},
+                            "applied": False,
+                        }
         else:
             result = {"status": "rejected", "error": {"kind": "apply_declined", "message": "apply was not confirmed"}}
         text = _json(result)

@@ -19,6 +19,18 @@ class FakeRuntime:
         return {"models": self._tags}
 
 
+class SnapshotRuntime(FakeRuntime):
+    def __init__(self):
+        super().__init__()
+        self.loaded_calls = 0
+
+    def loaded_models(self):
+        self.loaded_calls += 1
+        if self.loaded_calls == 1:
+            return {"models": [{"name": "m", "size_vram": 100}, {"name": "other", "size_vram": 20}]}
+        return {"models": [{"name": "m", "size_vram": 900}]}
+
+
 class CalibrationTests(unittest.TestCase):
     def test_calibrate_workers_charges_model_once_and_context_per_worker(self):
         self.assertEqual(
@@ -122,6 +134,30 @@ class CalibrationTests(unittest.TestCase):
         )
         self.assertEqual(report["max_workers"], 1)
         self.assertEqual(report["calibration_basis"], "runtime_vram_unconfirmed")
+
+    def test_calibrate_for_model_validates_inputs_before_source_shortcuts(self):
+        client = FakeRuntime(tags=[{"name": "m", "size": 5000}])
+        for kwargs in (
+            {"vram_budget_bytes": 0},
+            {"vram_budget_bytes": 1000, "hard_max": 0},
+            {"vram_budget_bytes": 1000, "per_worker_context_bytes": -1},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                calibrate_for_model(client, "m", **kwargs)
+
+    def test_calibrate_for_model_uses_one_loaded_snapshot(self):
+        client = SnapshotRuntime()
+        report = calibrate_for_model(
+            client,
+            "m",
+            vram_budget_bytes=300,
+            per_worker_context_bytes=50,
+            hard_max=4,
+        )
+
+        self.assertEqual(client.loaded_calls, 1)
+        self.assertEqual(report["model_vram_bytes"], 100)
+        self.assertEqual(report["other_loaded_vram_bytes"], 20)
 
 
 if __name__ == "__main__":

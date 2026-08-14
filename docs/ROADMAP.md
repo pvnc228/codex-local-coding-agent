@@ -8,7 +8,7 @@
 
 ## Gate перед следующим функциональным этапом
 
-Статус review: предыдущий review закрыл базовые P0/P1/P2, но повторный review выявил отдельные P1/P2 в R5.3/R5.4. Этот repair gate документирован в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). После исправлений полный локальный gate с `mcp==2.0.0` прошёл `170/170`, `compileall` и `git diff --check`.
+Статус review: предыдущий review закрыл базовые P0/P1/P2, но повторный review выявил отдельные P1/P2 в R5.3/R5.4. Первый repair gate и дополнительный self-review hardening документированы в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). Предыдущий gate прошёл `170/170`; текущий hardening gate с `mcp==2.0.0` прошёл `176/176`, `compileall` и `git diff --check`.
 
 Реализационные требования review ниже закрыты кодом и regression tests. R4 получил свежий внешний artifact, однако loop reliability остался нулевым у всех профилей:
 
@@ -138,6 +138,16 @@ R5.4 (explicit apply) доставлен: `apply_proposal(request_id, workspace_
 - sync service/apply calls вынесены из async MCP handlers; external runner является владельцем checks/evidence, rollback failure явно помечает `workspace_modified`;
 - SEARCH/REPLACE final newline, bounded child-process output, conservative VRAM calibration и pinned `mcp==2.0.0` исправлены и покрыты regression/contract tests;
 - детали и границы evidence находятся в [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](SESSION-2026-08-14-R5.3-R5.4-REPAIR.md). Durable store, real Ollama benchmark, live apply и reconnect после restart остаются отдельными gates.
+
+### R5.3/R5.4 self-review hardening — fail-closed confirmation and concurrency
+
+Статус: завершено 2026-08-14; `176/176` с `mcp==2.0.0`. Пункт добавлен после повторной проверки по `code-review-expert` и закрывает выявленные P1/P2/P3, не расширяя scope до live Ollama или durable Tasks.
+
+- `apply_proposal` теперь требует строгую preview: accepted proposal, непустой patch, request/workspace identity и SHA-256 digest канонического preview; preview failure и mismatch не вызывают `service.apply`;
+- sync MCP compatibility path и mediated apply используют bounded admission gate (`max_workers + max_queue`) и возвращают `queue_overload` вместо unbounded pending work;
+- `DelegationService.apply` сериализует весь check/apply/post-check/rollback pipeline отдельным lock для каждой зарегистрированной workspace;
+- `calibrate_for_model` валидирует параметры до source shortcut и использует один `/api/ps` snapshot для footprint и других loaded models; unreachable failed-task branch удалён;
+- regression tests покрывают wrong digest, preview failure, queue overload, workspace serialization, invalid calibration inputs и single-snapshot consistency. Durable store, real Ollama benchmark, live apply и reconnect после restart остаются отдельными gates.
 
 R6 first slice доставлен: `BoundedWorkerPool` ограничивает worker slots и queued jobs, возвращает bounded `queue_overload`, сохраняет caller-scoped idempotency, изолирует concurrent request state и поддерживает queued/running cooperative cancellation; при отмене физический model-call slot удерживается до завершения executor. Это in-memory execution primitive; durable task store, timeout policy, fairness и Ollama-specific scheduling остаются отдельными gates.
 
