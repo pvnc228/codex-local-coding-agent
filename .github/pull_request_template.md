@@ -9,8 +9,8 @@
 - [ ] `python -m unittest discover -s tests -v` (All unit & integration tests pass)
 - [ ] `python -m compileall -q local_coding_agent tests` (Zero syntax/bytecode errors)
 - [ ] `git diff --check` (Diff is clean)
-- [ ] `codex-agent doctor`
-- [ ] `codex-agent test-run --mock`
+- [ ] `local-agent doctor`
+- [ ] `local-agent test-run --mock`
 
 ## Invariants Compliance
 - [ ] Proposal-only mode preserved as default

@@ -1,6 +1,6 @@
 ---
 name: local-delegate
-description: Use when delegating a small, atomic coding task to a local Ollama model, or when wiring this repo's controller into a host agent (MCP server or direct Python API). Triggers on "delegate", "локальная модель", "delegate_code", "codex-local-coding-agent".
+description: Use when delegating a small, atomic coding task to a local Ollama model, or when wiring this repo's controller into a host agent (MCP server or direct Python API). Triggers on "delegate", "локальная модель", "delegate_code", "local-coding-agent".
 ---
 
 # Local coding delegation
