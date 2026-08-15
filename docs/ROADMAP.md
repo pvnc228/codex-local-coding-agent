@@ -251,6 +251,44 @@ Live evidence 2026-08-13 (scripted model, `python .codex-run/live_check_r7_r8.py
 
 8. **Read-only live мониторинг и HTML дашборд** — реализован `BoundedWorkerPool.status()` со снимком очереди и задач, а также `local_coding_agent/monitor.py` на stdlib `ThreadingHTTPServer` (`/health`, `/stats`, `/tasks`, `/dashboard` с авто-обновлением и карточками нагрузки, очередей, задержек и распределения ошибок).
 
+## R11 — Продуктовая упаковка, дистрибуция и Developer Experience (DX)
+
+Цель: предоставить сторонним разработчикам бесшовный onboarding за 60 секунд без ручной возни с путями и Modelfiles.
+
+1. **CLI Setup & Diagnostic Wizard (`codex-agent doctor`)**:
+   - Автоматическая проверка локального окружения: доступность Ollama HTTP API (`127.0.0.1:11434`), наличие `git` в PATH, проверка доступной RAM/VRAM;
+   - Обнаружение установленных моделей и рекомендация с готовой командой `ollama pull` для рекомендованных профилей (`qwen3-8b-q6k` для 8 GB VRAM, `qwen3.8-27b-q4` для максимального качества).
+2. **Интегратор конфигов MCP (`codex-agent init-mcp`)**:
+   - Генератор готовых конфигурационных файлов в один клик для **Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`cursor_mcp.json`), **Windsurf** и **VS Code**;
+   - Флаги для автоматической прописки путей к рабочим директориям и выбора модели.
+3. **Пакетная дистрибуция (PyPI & CLI entrypoint)**:
+   - Конфигурация `[project.scripts]` в `pyproject.toml` (`codex-local-agent`, `codex-agent`);
+   - Поддержка запуска без клонирования репозитория через `pipx run codex-local-agent` или `pip install codex-local-agent`.
+4. **Интерактивный тестовый запуск (`codex-agent test-run`)**:
+   - Быстрый smoke-тест (одна тестовая атомарная задача), выводящий в консоль красивый progress-bar, TPS, результат валидации diff и ссылку на локальный дашборд.
+
+Критерии приёмки:
+- Новый пользователь одной командой `pip install` + `codex-agent doctor` видит статус готовности системы;
+- Команда `codex-agent init-mcp --claude` автоматически регистрирует MCP-сервер в клиенте.
+
+## R12 — Публичная витрина и подготовка репозитория (Open-Source Showcase & Clean-up)
+
+Цель: подготовить репозиторий к публичному релизу на Reddit (r/LocalLLaMA, r/programming), Hacker News и GitHub так, чтобы проект вызывал доверие, выглядел эстетично, авторитетно и понятно за 15 секунд первого экрана.
+
+1. **Очистка репозитория и структурирование внутренней документации**:
+   - Перенос внутренних сырых логов сессий (`SESSION-*.md`, `HANDOFF.md`, `ROADMAP_HISTORICAL.md`, `AUDIT.md`) в подпапку `docs/archive/` или `docs/internal/`;
+   - Выстраивание чёткой внешней навигации в документации: `Quickstart`, `Architecture`, `MCP Integration`, `Model Benchmarks & Weights Guide`.
+2. **Премиальный витринный README.md**:
+   - **Hero-секция**: ёмкое ценностное предложение (Save 90% LLM cost by offloading atomic coding tasks to local Ollama models via MCP);
+   - **Ключевые фичи и бейджи**: 100% test pass, 100% patch reliability, MCP 2026-07-28 compliant, Zero-Risk sandbox;
+   - **Наглядная архитектурная схема (Mermaid/SVG)**: как большие агенты (Claude/Cursor) безопасно делегируют рутину в локальный контроллер;
+   - **Сводная таблица бенчмарков**: наглядное сравнение 27B и 8B с реальным TPS, 95% Wilson CIs и требованиями к VRAM;
+   - **Скриншоты и GIF**: демонстрация работы живого дашборда `/dashboard` и MCP Elicitation workflow в Claude Desktop;
+   - **30-секундный Quickstart**: установка, подключение к Claude/Cursor, запуск первой задачи.
+3. **Open-Source Readiness Kit**:
+   - Добавление `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, шаблонов issue/PR;
+   - GitHub Actions CI workflow (`.github/workflows/ci.yml`) с автоматическим прогоном всех 191 тестов на Linux, macOS и Windows при каждом коммите.
+
 ## Вне MVP (осознанно отложено)
 
 - `content`-JSON fallback для моделей без native tool calling (`qwen2.5-coder`);
