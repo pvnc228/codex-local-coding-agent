@@ -14,7 +14,7 @@ def get_client_config_path(client: str, workspace: str | Path = ".") -> Path:
     home = Path.home()
     ws = Path(workspace).resolve()
 
-    if client_norm in ("claude", "claude-desktop", "claudedesktop"):
+    if client_norm in ("claude", "claude-desktop", "claudedesktop", "claude-code"):
         if sys.platform == "win32":
             appdata = os.environ.get("APPDATA")
             base = Path(appdata) if appdata else home / "AppData" / "Roaming"
@@ -32,22 +32,37 @@ def get_client_config_path(client: str, workspace: str | Path = ".") -> Path:
     if client_norm in ("windsurf", "codeium"):
         return home / ".codeium" / "windsurf" / "mcp_config.json"
 
-    if client_norm in ("vscode", "roo", "cline"):
-        return ws / ".vscode" / "mcp.json"
+    if client_norm in ("cline", "cline-desktop", "roo", "roo-code", "vscode"):
+        # Check workspace .vscode/mcp.json or user-level .cline/mcp.json
+        if (ws / ".vscode").is_dir():
+            return ws / ".vscode" / "mcp.json"
+        return home / ".cline" / "mcp.json"
 
-    raise ValueError(f"Unsupported MCP client: {client}. Supported: claude, cursor, windsurf, vscode")
+    if client_norm in ("antigravity", "antigravity-desktop", "agy"):
+        return home / ".gemini" / "config" / "mcp_config.json"
+
+    if client_norm in ("opencode", "opencode-desktop", "opencode-cli"):
+        return home / ".config" / "opencode" / "opencode.jsonc"
+
+    if client_norm in ("chatgpt", "chatgpt-desktop", "codex", "codex-cli", "openai"):
+        return home / ".codex" / "config.json"
+
+    raise ValueError(
+        f"Unsupported MCP client: {client}. Supported: claude, cursor, windsurf, cline, antigravity, opencode, chatgpt, vscode"
+    )
 
 
 def detect_installed_clients(workspace: str | Path = ".") -> list[str]:
     """Detect available IDE / MCP clients in workspace and host environment."""
     ws = Path(workspace).resolve()
+    home = Path.home()
     detected: list[str] = []
 
     # Check workspace directories
     if (ws / ".cursor").is_dir():
         detected.append("cursor")
     if (ws / ".vscode").is_dir():
-        detected.append("vscode")
+        detected.append("cline")
 
     # Check user-level configurations
     try:
@@ -64,10 +79,29 @@ def detect_installed_clients(workspace: str | Path = ".") -> list[str]:
     except Exception:
         pass
 
+    try:
+        if (home / ".gemini").is_dir():
+            detected.append("antigravity")
+    except Exception:
+        pass
+
+    try:
+        if (home / ".config" / "opencode").is_dir() or (home / ".opencode").is_dir():
+            detected.append("opencode")
+    except Exception:
+        pass
+
+    try:
+        if (home / ".codex").is_dir():
+            detected.append("chatgpt")
+    except Exception:
+        pass
+
     if not detected:
         detected = ["claude", "cursor"]
 
     return detected
+
 
 
 def generate_mcp_config_dict(

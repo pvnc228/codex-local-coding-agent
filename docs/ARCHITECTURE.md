@@ -20,7 +20,8 @@ The core orchestration layer. It selects the model profile, packs minimal contex
 ### Developer Experience & Setup Wizard
 CLI subcommands:
 - `local-agent doctor`: Automated diagnostics for Ollama API connectivity, Git availability, system RAM/VRAM, and model catalog.
-- `local-agent init-mcp`: Configuration generator and merger for Claude Desktop, Cursor, Windsurf, and VS Code.
+- `local-agent init-mcp`: Multi-client configuration generator and merger supporting Claude (Desktop & Code), ChatGPT (Desktop & Codex), Google Antigravity (Desktop & agy), OpenCode (Desktop & CLI), Cline (Desktop & CLI), Cursor, and Windsurf.
+
 - `local-agent test-run`: Isolated end-to-end smoke test verifying task delegation, patch generation, TPS calculation, and diff application.
 
 ### Local Model Executor

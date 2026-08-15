@@ -24,8 +24,8 @@ Frontier cloud models (Claude Opus 5, GPT-5.6 Sol, Gemini 3.7 Flash) are excepti
 
 ```mermaid
 flowchart LR
-    subgraph Host["Any Agent / Harness"]
-        A["Claude Desktop / Cursor / Windsurf /<br>VS Code / Aider / Custom Python Agent"]
+    subgraph Host["Any Agent / Harness (Desktop & CLI)"]
+        A["Claude (Desktop & Code CLI) / ChatGPT (Desktop & Codex) /<br>Antigravity (Desktop & agy) / OpenCode (Desktop & CLI) /<br>Cline (Desktop & CLI) / Cursor / Windsurf"]
     end
 
     subgraph Sandbox["Local Coding Agent (Bounded Sandbox)"]
@@ -51,14 +51,17 @@ flowchart LR
 
 ## Universal Harness & Agent Support
 
-Local Coding Agent is completely agent- and harness-agnostic. It integrates across the entire landscape of modern AI coding environments:
+Local Coding Agent is completely agent- and harness-agnostic. It seamlessly integrates across modern AI coding environments in both **Desktop IDE** and **CLI** modes:
 
-1. **AI-Native IDEs (Cursor, Windsurf)**: Connects via MCP to Cursor's Composer mode and Windsurf's Flow/Cascade engine to offload single-file edits without burning cloud quotas.
-2. **Terminal-Native Agents (Claude Code, Aider, Roo Code)**: Integrates directly with terminal harnesses and VS Code agents for automated sub-task delegation.
-3. **OpenAI Codex & ChatGPT Integrations**: Interfaces with OpenAI Codex powered pipelines and GPT-5.6 agent loops.
-4. **Model Context Protocol (MCP 2026-07-28 + Dual-Era)**: Compatible with Claude Desktop, Cursor, Windsurf, Roo Code, and any standard MCP host.
-5. **Direct Python API (`DelegationService`)**: Embeds into custom Python agent frameworks, background task queues, and orchestrators as an in-process library.
-6. **Process-Bound JSONL stdio (`StdioDelegationAdapter`)**: Connects to external CLI pipelines and non-Python tools via standard input/output streams.
+1. **Claude (Desktop & Claude Code CLI)**: Integrates into Claude Desktop via `claude_desktop_config.json` and connects with Claude Code CLI workflows (`local-agent init-mcp --claude --write`).
+2. **ChatGPT (Desktop & Codex CLI)**: Connects to ChatGPT Desktop Developer Mode MCP and OpenAI Codex pipelines (`local-agent init-mcp --chatgpt --write`).
+3. **Google Antigravity (Desktop & agy CLI)**: Plugs directly into Antigravity IDE and `agy` agent sidecars via `local-agent init-mcp --antigravity --write`.
+4. **OpenCode (Desktop & OpenCode CLI)**: Integrates with OpenCode Studio and CLI interpreters via `~/.config/opencode/opencode.jsonc` (`local-agent init-mcp --opencode --write`).
+5. **Cline (Desktop & CLI / VS Code)**: Connects to the Cline MCP panel, Cline Desktop, Roo Code, and VS Code workspaces (`local-agent init-mcp --cline --write`).
+6. **Cursor Composer & Windsurf Cascade**: Offloads atomic sub-tasks from Cursor and Windsurf Flow engines (`local-agent init-mcp --cursor --write`, `local-agent init-mcp --windsurf --write`).
+7. **Direct Python API (`DelegationService`)**: Embeds into custom Python agent frameworks, background task queues, and orchestrators as an in-process library.
+8. **Process-Bound JSONL stdio (`StdioDelegationAdapter`)**: Connects to external CLI pipelines and non-Python tools via standard input/output streams.
+
 
 ---
 
@@ -76,7 +79,7 @@ Local Coding Agent is completely agent- and harness-agnostic. It integrates acro
 
 ### 🤖 1-Prompt Setup for Coding Agents
 
-If you are using an AI coding assistant (**Claude Code**, **Cursor Composer**, **Windsurf Cascade**, **Roo Code**, or **OpenAI Codex**), simply give it this prompt:
+If you are using an AI coding assistant (**Claude Code / Desktop**, **ChatGPT Desktop / Codex CLI**, **Antigravity Desktop / agy CLI**, **OpenCode Desktop / CLI**, **Cline Desktop / CLI**, **Cursor**, or **Windsurf**), simply give it this prompt:
 
 ```text
 Install and configure https://github.com/pvnc228/local-coding-agent:
@@ -132,12 +135,16 @@ Automatically register Local Coding Agent into your editor configuration:
 # Auto-detect IDE in current workspace and system:
 local-agent init-mcp --auto --write
 
-# Or configure a specific editor:
-local-agent init-mcp --cursor --write
-local-agent init-mcp --claude --write
-local-agent init-mcp --windsurf --write
-local-agent init-mcp --vscode --write
+# Or configure a specific editor / harness:
+local-agent init-mcp --claude --write       # Claude Desktop & Claude Code
+local-agent init-mcp --chatgpt --write      # ChatGPT Desktop & Codex CLI
+local-agent init-mcp --antigravity --write  # Google Antigravity Desktop & agy CLI
+local-agent init-mcp --opencode --write     # OpenCode Desktop & OpenCode CLI
+local-agent init-mcp --cline --write        # Cline Desktop & CLI / VS Code
+local-agent init-mcp --cursor --write       # Cursor Composer
+local-agent init-mcp --windsurf --write     # Windsurf Flow / Cascade
 ```
+
 
 
 ### 4. Interactive Smoke Test (`test-run`)

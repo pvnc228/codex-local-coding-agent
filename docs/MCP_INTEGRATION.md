@@ -68,7 +68,7 @@ When the MCP client announces the `io.modelcontextprotocol/tasks` capability:
 
 ## Configuration Snippets
 
-### Claude Desktop (`claude_desktop_config.json`)
+### Claude (Desktop & Claude Code CLI)
 ```json
 {
   "mcpServers": {
@@ -85,7 +85,57 @@ When the MCP client announces the `io.modelcontextprotocol/tasks` capability:
 }
 ```
 
-### Cursor (`.cursor/mcp.json`)
+### ChatGPT Desktop & Codex CLI
+Configure in ChatGPT Developer Mode or `~/.codex/config.json`:
+```json
+{
+  "mcpServers": {
+    "local-coding-agent": {
+      "command": "python",
+      "args": ["-m", "local_coding_agent", "serve-mcp", "--workspace", "."]
+    }
+  }
+}
+```
+
+### Google Antigravity Desktop & agy CLI (`~/.gemini/config/mcp_config.json`)
+```json
+{
+  "mcpServers": {
+    "local-coding-agent": {
+      "command": "python",
+      "args": ["-m", "local_coding_agent", "serve-mcp", "--workspace", "."]
+    }
+  }
+}
+```
+
+### OpenCode Desktop & OpenCode CLI (`~/.config/opencode/opencode.jsonc`)
+```json
+{
+  "mcp": {
+    "local-coding-agent": {
+      "type": "local",
+      "command": "local-agent",
+      "args": ["serve-mcp", "--workspace", "."]
+    }
+  }
+}
+```
+
+### Cline (Desktop & VS Code extension / `~/.cline/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "local-coding-agent": {
+      "command": "local-agent",
+      "args": ["serve-mcp", "--workspace", "${workspaceFolder}", "--profile", "qwen3-8b-q6k"]
+    }
+  }
+}
+```
+
+### Cursor Composer (`.cursor/mcp.json`)
 ```json
 {
   "mcpServers": {
@@ -100,3 +150,20 @@ When the MCP client announces the `io.modelcontextprotocol/tasks` capability:
   }
 }
 ```
+
+### Windsurf Cascade (`~/.codeium/windsurf/mcp_config.json`)
+```json
+{
+  "mcpServers": {
+    "local-coding-agent": {
+      "command": "local-agent",
+      "args": [
+        "serve-mcp",
+        "--workspace", "${workspaceFolder}",
+        "--profile", "qwen3-8b-q6k"
+      ]
+    }
+  }
+}
+```
+

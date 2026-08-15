@@ -37,6 +37,27 @@ class TestMcpConfig(unittest.TestCase):
         self.assertIsInstance(path, Path)
         self.assertTrue(str(path).endswith("mcp.json"))
 
+    def test_get_client_config_path_antigravity(self):
+        path = get_client_config_path("antigravity")
+        self.assertIsInstance(path, Path)
+        self.assertTrue(str(path).endswith("mcp_config.json"))
+
+    def test_get_client_config_path_opencode(self):
+        path = get_client_config_path("opencode")
+        self.assertIsInstance(path, Path)
+        self.assertTrue(str(path).endswith("opencode.jsonc") or str(path).endswith("mcp.json"))
+
+    def test_get_client_config_path_cline(self):
+        path = get_client_config_path("cline")
+        self.assertIsInstance(path, Path)
+        self.assertTrue(str(path).endswith("mcp.json"))
+
+    def test_get_client_config_path_chatgpt(self):
+        path = get_client_config_path("chatgpt")
+        self.assertIsInstance(path, Path)
+        self.assertTrue(str(path).endswith("config.json") or str(path).endswith("mcp.json"))
+
+
     def test_integrate_mcp_config_dry_run(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg_file = Path(tmpdir) / "config.json"
@@ -90,7 +111,8 @@ class TestMcpConfig(unittest.TestCase):
 
             detected = detect_installed_clients(workspace=ws)
             self.assertIn("cursor", detected)
-            self.assertIn("vscode", detected)
+            self.assertIn("cline", detected)
+
 
     def test_integrate_auto_clients_writes_to_detected(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -97,14 +97,18 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_p = subparsers.add_parser("init-mcp", help="Generate or configure MCP client integration")
     mcp_p.add_argument(
         "--client",
-        choices=["claude", "cursor", "windsurf", "vscode", "auto", "all"],
+        choices=["claude", "cursor", "windsurf", "cline", "antigravity", "opencode", "chatgpt", "vscode", "auto", "all"],
         default="claude",
         help="Target MCP client (default: claude, or 'auto'/'all')",
     )
-    mcp_p.add_argument("--claude", action="store_const", const="claude", dest="client", help="Configure for Claude Desktop")
+    mcp_p.add_argument("--claude", action="store_const", const="claude", dest="client", help="Configure for Claude Desktop & Claude Code")
     mcp_p.add_argument("--cursor", action="store_const", const="cursor", dest="client", help="Configure for Cursor")
     mcp_p.add_argument("--windsurf", action="store_const", const="windsurf", dest="client", help="Configure for Windsurf")
-    mcp_p.add_argument("--vscode", action="store_const", const="vscode", dest="client", help="Configure for VS Code / Roo Code")
+    mcp_p.add_argument("--cline", action="store_const", const="cline", dest="client", help="Configure for Cline Desktop / Extension")
+    mcp_p.add_argument("--antigravity", action="store_const", const="antigravity", dest="client", help="Configure for Antigravity Desktop & agy CLI")
+    mcp_p.add_argument("--opencode", action="store_const", const="opencode", dest="client", help="Configure for OpenCode Desktop & CLI")
+    mcp_p.add_argument("--chatgpt", action="store_const", const="chatgpt", dest="client", help="Configure for ChatGPT Desktop & Codex CLI")
+    mcp_p.add_argument("--vscode", action="store_const", const="cline", dest="client", help="Configure for VS Code / Cline")
     mcp_p.add_argument("--auto", action="store_const", const="auto", dest="client", help="Auto-detect IDEs in workspace and host environment")
     mcp_p.add_argument("--all", action="store_const", const="all", dest="client", help="Configure all detected IDE environments")
     mcp_p.add_argument("--workspace", default=".", help="Workspace path for the MCP server")
@@ -112,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_p.add_argument("--dry-run", action="store_true", help="Print config without writing to disk")
     mcp_p.add_argument("--write", action="store_true", help="Write/merge directly to client configuration file")
     mcp_p.add_argument("--path", type=Path, help="Explicit configuration file path")
+
 
     # test-run / smoke
     smoke_p = subparsers.add_parser("test-run", aliases=["smoke"], help="Run interactive end-to-end smoke test")

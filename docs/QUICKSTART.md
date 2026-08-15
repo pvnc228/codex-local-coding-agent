@@ -14,7 +14,7 @@ Get up and running with **Local Coding Agent** in under 60 seconds.
 
 ## ⚡ 1-Prompt Setup for AI Coding Agents
 
-If you are using an AI coding agent (**Claude Code**, **Cursor Composer**, **Windsurf Cascade**, **Roo Code**, or **OpenAI Codex**), simply copy-paste this instruction directly to your agent:
+If you are using an AI coding agent (**Claude Code / Desktop**, **ChatGPT Desktop / Codex CLI**, **Antigravity Desktop / agy CLI**, **OpenCode Desktop / CLI**, **Cline Desktop / CLI**, **Cursor**, or **Windsurf**), simply copy-paste this instruction directly to your agent:
 
 ```text
 Install and configure https://github.com/pvnc228/local-coding-agent:
@@ -91,29 +91,24 @@ local-agent test-run --mock
 
 ---
 
-## 5. Connect to Your AI Editor (Claude Desktop / Cursor / VS Code)
+## 5. Connect to Your AI Editor (Desktop & CLI)
 
 Integrate Local Coding Agent as a standard MCP server in one click:
 
-### Claude Desktop
 ```bash
-# Preview config:
-local-agent init-mcp --claude --dry-run
+# Auto-detect IDE in current workspace and system:
+local-agent init-mcp --auto --write
 
-# Write directly to claude_desktop_config.json:
-local-agent init-mcp --claude --write
+# Or configure a specific client:
+local-agent init-mcp --claude --write       # Claude Desktop & Claude Code
+local-agent init-mcp --chatgpt --write      # ChatGPT Desktop & Codex CLI
+local-agent init-mcp --antigravity --write  # Google Antigravity Desktop & agy CLI
+local-agent init-mcp --opencode --write     # OpenCode Desktop & OpenCode CLI
+local-agent init-mcp --cline --write        # Cline Desktop & CLI / VS Code
+local-agent init-mcp --cursor --write       # Cursor Composer
+local-agent init-mcp --windsurf --write     # Windsurf Flow / Cascade
 ```
 
-### Cursor IDE
-```bash
-local-agent init-mcp --cursor --write
-```
-
-### Windsurf / VS Code
-```bash
-local-agent init-mcp --windsurf --write
-local-agent init-mcp --vscode --write
-```
 
 ---
 
