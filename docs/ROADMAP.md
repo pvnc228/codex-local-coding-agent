@@ -248,6 +248,20 @@ Live evidence 2026-08-13 (scripted model, `python .codex-run/live_check_r7_r8.py
 6. **Live apply** — mediated apply реализован, но live-прогон `--apply` на реальной модели (8B/27B) не повторён после последних изменений протокола.
 7. **Quant A/B на 8B** — `Q8_0` вместо `Q6_K` влезает в 8 GB VRAM; чистая проверка влияния точности весов без дискового барьера 27B.
 
+### Живой мониторинг (observability)
+
+8. **Read-only live мониторинг поверх существующего `BoundedWorkerPool`** — данные для него уже в памяти, перекройки core не требуется. Состояние каждого job (`state` queued/working/completed/failed/cancelled, `created_at`, `updated_at`, `caller_id`) уже лежит в `worker_pool._jobs`, а счётчики/латентности — в `DelegationStats.snapshot()` (`stats.py`). Не хватает только публичного seam:
+   - добавить `BoundedWorkerPool.status()` — read-only снимок всех job'ов под `self._condition` (~20 строк, чисто аддитивно);
+   - опционально stdlib `http.server` с `/stats` (JSON) + одна HTML-страница с auto-refresh — без тяжёлого фреймворка;
+   - **не трогать** controller, protocol, tool schema, validators, policy и MCP — это отдельный observability-слой.
+   - Оценка для делегирования: ~1 новый модуль (наблюдатель + опц. HTTP) + 1 метод `status()` + тест, суммарно 100–150 строк.
+
+### Вне MVP (осознанно отложено)
+
+9. `content`-JSON fallback для моделей без native tool calling (`qwen2.5-coder` — остаётся на 0%, это capability-барьер, а не протокольный);
+10. round-robin fairness между профилями на одной GPU (см. примечание R6);
+11. автоматическая отправка задачи во внешний платный API из локального controller core.
+
 ### Вне MVP (осознанно отложено)
 
 8. `content`-JSON fallback для моделей без native tool calling (`qwen2.5-coder` — остаётся на 0%, это capability-барьер, а не протокольный);
