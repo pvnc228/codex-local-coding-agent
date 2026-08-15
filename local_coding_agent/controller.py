@@ -70,15 +70,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "propose_patch",
             "description": (
                 "Return a complete change proposal without writing files. "
-                "Prefer SEARCH/REPLACE: provide a list of edits, each copying the "
-                "current code exactly (search) and the new code (replace); no line "
-                "numbers needed. Copy the search block BYTE-FOR-BYTE from the file "
-                "including every leading space/indent of each line; a line that "
-                "starts with spaces in the file must keep those spaces in search. "
-                "Alternatively provide one complete unified diff "
-                "with diff --git, ---, +++ and valid hunk headers. Use real newlines "
-                "and relative allowlisted paths. Applicability is checked by the "
-                "controller-owned validator and git."
+                "Prefer SEARCH/REPLACE: a list of edits, each with file+search+replace "
+                "(no line numbers needed). Copy search BYTE-FOR-BYTE from the file "
+                "including every leading space/indent of each line. Example: "
+                "{\"edits\":[{\"file\":\"src/a.py\",\"search\":\"def f(x):\\n    return x+1\","
+                "\"replace\":\"def f(x):\\n    return x+2\"}]}. "
+                "Alternatively provide one unified diff with diff --git, ---, +++ and "
+                "valid hunk headers. Use real newlines and relative allowlisted paths. "
+                "Applicability is checked by the controller-owned validator and git."
             ),
             "parameters": {
                 "type": "object",
