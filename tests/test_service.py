@@ -382,8 +382,8 @@ class DelegationServiceApplyTests(unittest.TestCase):
         # The check passes pre-apply (VALUE = 1) and fails post-apply, forcing rollback.
         command = (
             f'"{sys.executable}" -B -c "import pathlib; '
-            "raise SystemExit(0 if pathlib.Path('value.py').read_text() == "
-            "'VALUE = 1\\n' else 1)"
+            "raise SystemExit(0 if pathlib.Path('value.py').read_text().strip() == "
+            "'VALUE = 1' else 1)\""
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -414,6 +414,7 @@ class DelegationServiceApplyTests(unittest.TestCase):
         self.assertEqual(result["error"]["kind"], "post_apply_check_failed")
         self.assertNotIn("workspace_modified", result)
         self.assertTrue(any(e["event"] == "patch_rolled_back" for e in result["audit"]))
+
 
     def test_apply_unknown_proposal_fails_without_changes(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -677,8 +677,8 @@ class ControllerTests(unittest.TestCase):
             target.write_text("VALUE = 1\n", encoding="utf-8")
             command = (
                 f'"{sys.executable}" -B -c "import pathlib; '
-                "raise SystemExit(0 if pathlib.Path('src/value.py').read_text() == "
-                "'VALUE = 1\\n' else 1)"
+                "raise SystemExit(0 if pathlib.Path('src/value.py').read_text().strip() == "
+                "'VALUE = 1' else 1)\""
             )
             task = TaskEnvelope(
                 id="controller-post-check",
@@ -749,9 +749,10 @@ class ControllerTests(unittest.TestCase):
     def test_controller_marks_workspace_modified_when_rollback_fails(self):
         command = (
             f'"{sys.executable}" -B -c "import pathlib; '
-            "raise SystemExit(0 if pathlib.Path('src/value.py').read_text() == "
-            "'VALUE = 1\\n' else 1)"
+            "raise SystemExit(0 if pathlib.Path('src/value.py').read_text().strip() == "
+            "'VALUE = 1' else 1)\""
         )
+
         patch_text = (
             "diff --git a/src/value.py b/src/value.py\n"
             "--- a/src/value.py\n"
