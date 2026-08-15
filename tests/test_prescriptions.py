@@ -94,6 +94,19 @@ class PrescriptionsEngineTests(unittest.TestCase):
         self.assertEqual(payload["error_code"], "ERR_DUAL_FORMAT")
         self.assertIn("edits", payload["hint"])
 
+    def test_english_prescriptions(self):
+        prescription = prescribe_issue("provide either patch or edits, not both", lang="en")
+        self.assertEqual(prescription.kind, DiagnosticKind.TOOL_DUAL_PATCH_AND_EDITS)
+        self.assertIn("Do not provide 'patch' and 'edits'", prescription.instruction)
+        self.assertEqual(prescription.code, "ERR_DUAL_FORMAT")
+
+        json_err = json_syntax_prescription("Expecting comma", lang="en")
+        self.assertIn("JSON SYNTAX ERROR", json_err)
+
+        all_err = prescribe_all(["each check must be an object"], lang="en")
+        self.assertIn("The 'checks' field must not contain", all_err)
+
 
 if __name__ == "__main__":
     unittest.main()
+

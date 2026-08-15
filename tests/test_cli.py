@@ -105,6 +105,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "monitor")
         self.assertEqual(args.port, 9000)
 
+    def test_load_task_input_inline_json_string(self):
+        from local_coding_agent.cli import load_task_input
+
+        inline = '{"id": "inline-1", "goal": "test inline", "files": ["a.py"]}'
+        task = load_task_input(task_value=inline)
+        self.assertEqual(task.id, "inline-1")
+        self.assertEqual(task.goal, "test inline")
+        self.assertEqual(task.files, ("a.py",))
+
+    def test_load_task_input_task_file(self):
+        from local_coding_agent.cli import load_task_input
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "envelope.json"
+            file_path.write_text('{"id": "from-file", "goal": "file test", "files": ["b.py"]}', encoding="utf-8")
+            task = load_task_input(task_file=file_path)
+            self.assertEqual(task.id, "from-file")
+            self.assertEqual(task.files, ("b.py",))
+
+    def test_cli_parser_accepts_task_file(self):
+        args = build_parser().parse_args(["--task-file", "my_task.json"])
+        self.assertEqual(args.task_file, Path("my_task.json"))
+        self.assertIsNone(args.task)
+
 
 if __name__ == "__main__":
     unittest.main()
+

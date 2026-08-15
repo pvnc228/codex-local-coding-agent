@@ -29,6 +29,35 @@ def load_task_file(path: str | Path) -> TaskEnvelope:
     return TaskEnvelope.from_mapping(value)
 
 
+def load_task_input(
+    task_value: str | Path | None = None,
+    task_file: str | Path | None = None,
+) -> TaskEnvelope:
+    if task_file is not None:
+        return load_task_file(task_file)
+    if task_value is not None:
+        val_str = str(task_value).strip()
+        if val_str.startswith("{") and val_str.endswith("}"):
+            try:
+                parsed = json.loads(val_str)
+                if not isinstance(parsed, dict):
+                    raise ValueError("task JSON must be an object")
+                return TaskEnvelope.from_mapping(parsed)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"malformed inline task JSON: {exc}") from exc
+        path = Path(task_value)
+        if path.is_file():
+            return load_task_file(path)
+        try:
+            parsed = json.loads(val_str)
+            if isinstance(parsed, dict):
+                return TaskEnvelope.from_mapping(parsed)
+        except Exception:
+            pass
+        return load_task_file(path)
+    raise ValueError("--task or --task-file is required")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="local-agent",
@@ -36,7 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # Global options
-    parser.add_argument("--task", type=Path, help="UTF-8 JSON task envelope")
+    parser.add_argument("--task", help="UTF-8 JSON task envelope (inline JSON string or file path)")
+    parser.add_argument("--task-file", type=Path, dest="task_file", help="Path to UTF-8 JSON task envelope file")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--profile", choices=list_profiles(), default="qwen2.5-1.5b")
     parser.add_argument("--endpoint", help="Override the profile Ollama endpoint")
@@ -236,8 +266,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         profile = get_profile(args.profile, **overrides)
         client = OllamaClient(profile)
         if args.benchmark:
-            if args.task is not None:
-                raise ValueError("--benchmark cannot be combined with --task")
+            if args.task is not None or getattr(args, "task_file", None) is not None:
+                raise ValueError("--benchmark cannot be combined with --task or --task-file")
             if args.unload_all or args.unload_model or args.vram_limit_bytes is not None or args.calibrate_workers is not None:
                 raise ValueError("--benchmark cannot be combined with memory controls")
             if args.benchmark_repeats <= 0:
@@ -345,9 +375,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 snapshot = manager.enforce_limit(args.vram_limit_bytes, keep=tuple(args.keep_model))
             print(json.dumps({"status": "memory_reconciled", "memory": snapshot.as_dict()}, ensure_ascii=False, indent=2))
             return 0
-        if args.task is None:
-            raise ValueError("--task is required unless --unload-model or --unload-all is used")
-        task = load_task_file(args.task)
+        if args.task is None and getattr(args, "task_file", None) is None:
+            raise ValueError("--task or --task-file is required unless memory controls are used")
+        task = load_task_input(args.task, getattr(args, "task_file", None))
         result = Controller(
             client,
             args.workspace,

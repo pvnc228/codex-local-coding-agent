@@ -202,8 +202,22 @@ def run_smoke_test(
 
         tps = round(total_eval_tokens / (total_eval_duration_ns / 1e9), 1) if total_eval_duration_ns > 0 else 85.0
 
-        if verbose:
-            print(f"[OK] Step 5: Patch validated & applied. Generation speed: {tps} tokens/sec.")
+        if success:
+            steps.append({
+                "step": "validation",
+                "status": "ok",
+                "message": f"Patch candidate validated ({tps} tok/s)",
+            })
+            if verbose:
+                print(f"[OK] Step 5: Patch candidate validated. Generation speed: {tps} tokens/sec.")
+        else:
+            steps.append({
+                "step": "validation",
+                "status": "fail",
+                "message": f"Patch validation skipped or failed (Status: {status})",
+            })
+            if verbose:
+                print(f"[FAIL] Step 5: Patch validation skipped or failed (Status: {status}). Generation speed: {tps} tokens/sec.")
             print("")
             print("-" * 60)
             print("  Smoke Test Summary")

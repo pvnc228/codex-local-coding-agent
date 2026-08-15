@@ -366,6 +366,9 @@ class Controller:
                                 "command": arguments["command"],
                                 "passed": result["passed"],
                                 "evidence": result["evidence"],
+                                "stdout": result.get("stdout", ""),
+                                "stderr": result.get("stderr", ""),
+                                "exit_code": result.get("exit_code"),
                             }
                         tool_message: dict[str, Any] = {
                             "role": "tool",
@@ -819,6 +822,9 @@ def run_post_apply_checks(
             "command": command,
             "passed": check["passed"],
             "evidence": check["evidence"],
+            "stdout": check.get("stdout", ""),
+            "stderr": check.get("stderr", ""),
+            "exit_code": check.get("exit_code"),
         }
         checks.append(observed)
         audit.append(
@@ -826,6 +832,9 @@ def run_post_apply_checks(
                 "event": "post_apply_check",
                 "command": command,
                 "passed": check["passed"],
+                "exit_code": check.get("exit_code"),
+                "stdout": check.get("stdout", ""),
+                "stderr": check.get("stderr", ""),
             }
         )
     return checks, all(check["passed"] for check in checks)

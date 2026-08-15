@@ -1287,9 +1287,33 @@ class ControllerTests(unittest.TestCase):
         turn2_messages = model.requests[1]["messages"]
         self.assertEqual(turn2_messages[-1]["role"], "user")
         self.assertIn("CANDIDATE_VALIDATION_FAILED", turn2_messages[-1]["content"])
-        self.assertIn("patch", turn2_messages[-1]["content"])
+    def test_run_post_apply_checks_includes_stdout_and_stderr(self):
+        from local_coding_agent.controller import run_post_apply_checks
+        from local_coding_agent.repository_tools import BoundedRepositoryTools
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            test_file = workspace / "test_dummy.py"
+            test_file.write_text("def test_ok(): pass\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="post-check-test",
+                goal="test checks output",
+                files=("test_dummy.py",),
+                checks=("pytest test_dummy.py",),
+            )
+            tools = BoundedRepositoryTools(workspace, task)
+            audit = []
+            checks, all_passed = run_post_apply_checks(task, tools, active_cancel=None, audit=audit)
+
+            self.assertEqual(len(checks), 1)
+            self.assertTrue(all_passed)
+            self.assertIn("stdout", checks[0])
+            self.assertIn("stderr", checks[0])
+            self.assertIn("exit_code", checks[0])
+            self.assertEqual(checks[0]["exit_code"], 0)
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

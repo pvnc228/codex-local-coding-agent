@@ -25,6 +25,18 @@ class TestSmoke(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertTrue(result.get("mock_fallback", False))
 
+    def test_run_smoke_handles_controller_failure(self):
+        with patch("local_coding_agent.smoke.Controller") as mock_ctrl_cls:
+            mock_ctrl = MagicMock()
+            mock_ctrl.run.return_value = {"status": "failed", "audit": []}
+            mock_ctrl_cls.return_value = mock_ctrl
+
+            result = run_smoke_test(use_mock=True, verbose=False)
+            self.assertFalse(result["success"])
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(any(step["status"] == "fail" for step in result["steps"]))
+
 
 if __name__ == "__main__":
     unittest.main()
+
