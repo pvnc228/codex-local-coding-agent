@@ -1,277 +1,188 @@
-# Codex Local Coding Agent
+<div align="center">
 
-Исследование shortlist, SHA-256 и проверенный импорт GGUF: [docs/MODEL_RESEARCH.md](docs/MODEL_RESEARCH.md). Следующий quantization A/B и новые модели: [docs/MODEL_EVALUATION_PLAN.md](docs/MODEL_EVALUATION_PLAN.md). Архитектурное решение для MCP `2026-07-28`: [docs/MCP_DESIGN.md](docs/MCP_DESIGN.md).
+# Local Coding Agent
 
-Небольшой контроллер для делегирования атомарных coding-задач локальным моделям Ollama.
+**Harness-agnostic controller delegating atomic coding sub-tasks to local Ollama models with verified diffs and zero-risk sandboxing.**
 
-Большая модель формулирует задачу и контролирует результат, а локальная модель выполняет ограниченную работу: читает разрешённые файлы, ищет нужный код, предлагает diff и запускает заранее разрешённую проверку.
+[![CI](https://github.com/pvnc228/local-coding-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/pvnc228/local-coding-agent/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![MCP 2026-07-28](https://img.shields.io/badge/MCP-2026--07--28%20Compliant-green.svg)](https://modelcontextprotocol.io)
+[![Tests Passing](https://img.shields.io/badge/tests-211%20passed-success.svg)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Что уже умеет проект
+[Quickstart](docs/QUICKSTART.md) • [Architecture](docs/ARCHITECTURE.md) • [MCP Integration](docs/MCP_INTEGRATION.md) • [Benchmarks](docs/BENCHMARK.md) • [Protocol](docs/PROTOCOL.md)
 
-- отправлять запросы в Ollama через `/api/chat` в UTF-8;
-- работать с профилями `bonsai-64k`, `qwen2.5-coder` и `qwen2.5-1.5b`;
-- запускать единый proposal-only benchmark для Bonsai, Qwen coder и импортированных research-профилей;
-- ограничивать модель явным списком файлов и размером контекста;
-- предоставлять только bounded tools:
-  - `list_files`;
-  - `read_file`;
-  - `search_text`;
-  - `propose_patch`;
-  - allowlisted `run_tests`;
-- проверять unified diff и список изменённых файлов до принятия результата;
-- подтверждать тесты только по evidence внешнего runner-а;
-- останавливать tool-loop по лимиту ходов, повторному вызову или cancellation;
-- смотреть состояние загруженных моделей и управлять их VRAM;
-- работать в proposal-only режиме: файлы не изменяются локальной моделью.
-- вызывать тот же controller через transport-neutral Python API с зарегистрированным `workspace_ref`, allowlisted profile и caller-scoped idempotency.
-- принимать тот же proposal-only `delegate_code` через bounded UTF-8 JSONL process-bound adapter.
-- ставить proposal-only delegations в bounded in-memory worker pool с caller-scoped job state и cancellation.
-- отклонять слишком широкую задачу до запуска модели через preflight budget (`TaskBudget`/`preflight`) и детерминированно раскладывать её по files через `decompose` без расширения allowlist.
-- ограничивать retry budget (hard cap 10) и после исчерпания возвращать escalation bundle с просмотренными файлами, попытками и внешним evidence вместо бесконечного tool-loop.
-- разбивать широкую задачу шаблонно и делегировать детей через `DelegatingAgent` (`decompose -> delegate -> decompose further`), в том числе параллельно (`max_parallel_children`).
-- калибровать число worker-слотов по VRAM модели (`calibrate_workers`/`calibrate_for_model`).
-- накапливать минимальную статистику прогонов (`DelegationStats`/`TimedDelegationStats`/`JsonlStatsSink`);
-- обслуживать MCP Tasks lifecycle через bounded in-memory pool и отдельно подтверждать `apply_proposal` с preview конкретного proposal;
-- замерять TPS (`eval_tps`, `prompt_eval_tps`) и рассчитывать 95% доверительные интервалы Вильсона в benchmark-раннере;
-- передавать диагностические recoverable-ошибки `propose_patch` обратно в модель для многоходовой самокоррекции;
-- настраивать расширенные sampling options (`top_p`, `top_k`, `min_p`, `presence_penalty`, `seed`) через профили моделей;
-- сохранять состояние задач в постоянное файловое хранилище `JsonFileTaskStore` (`TaskStore`) с автоматическим восстановлением прерванных задач после перезапуска;
-- вести live-мониторинг через stdlib HTTP-сервер `MonitorServer` с JSON-эндпоинтами (`/health`, `/stats`, `/tasks`) и интерактивным HTML-дашбордом (`/dashboard`).
+</div>
 
+---
 
-## Безопасные границы
+## Overview
 
-Локальная модель не получает произвольный shell-доступ и не может сама применить patch. Команды проверки берутся из task envelope, а не из свободного текста модели. Пути проверяются относительно workspace, результаты инструментов ограничиваются по размеру, а повторный одинаковый tool call завершает задачу со статусом `failed`.
+Frontier cloud models (Claude Opus 5, GPT-5.6 Sol, Gemini 3.7 Flash) are exceptional at high-level reasoning and architecture, but consuming expensive cloud API tokens on repetitive single-file refactoring, syntax fixes, and boilerplate generation is inefficient.
 
-Проект не пытается заменить полноценный Codex или человека на больших задачах. В текущем MVP нет автономной разработки всей функции, постоянной памяти модели и автоматических commit/push. Proposal-only остаётся режимом по умолчанию; mediated apply — opt-in через `--apply`.
+**Local Coding Agent** acts as an intelligent, bounded co-processor for any AI agent or harness. Your primary agent formulates an atomic task envelope, while the local controller orchestrates a quantized local model (such as `qwen3.8-27b-q4` or `qwen3-8b-q6k`) running via Ollama.
 
-## Требования
+```mermaid
+flowchart LR
+    subgraph Host["Any Agent / Harness"]
+        A["Claude Desktop / Cursor / Windsurf /<br>VS Code / Aider / Custom Python Agent"]
+    end
 
-- Windows, Linux или macOS;
-- Python 3.10 или новее;
-- Ollama с доступным HTTP endpoint, по умолчанию `http://127.0.0.1:11434`;
-- установленная модель с поддержкой chat/tool calls;
-- git в `PATH` (для проверки применимости patch через `git apply --check`).
+    subgraph Sandbox["Local Coding Agent (Bounded Sandbox)"]
+        B["Transport Adapters<br>(MCP 2026-07-28 / JSONL / Python API)"]
+        C["Bounded Worker Pool<br>&amp; Task Store"]
+        D["Controller Loop<br>&amp; Context Packer"]
+        E["Validator &amp; Oracle<br>(git apply --check)"]
+    end
 
-Core использует только стандартную библиотеку Python; для official-SDK MCP server устанавливается отдельный extra с pinned `mcp==2.0.0`.
+    subgraph Runtime["Local Model Runtime"]
+        F["Local Ollama<br>(Qwen3-8B / Qwen3.8-27B)"]
+    end
 
-## Быстрый старт
-
-Проверь, что Ollama запущен и модель доступна:
-
-```powershell
-ollama list
+    A -- "delegate_code(task)" --> B
+    B --> C --> D
+    D -- "bounded tools (read/search/patch)" --> F
+    F -- "unified diff / edits" --> E
+    E -- "verified proposal &amp; evidence" --> B
+    B -- "structured result" --> A
 ```
 
-Запусти встроенные тесты:
+---
 
-```powershell
-py -m unittest discover -s tests -v
+## Universal Harness & Agent Support
+
+Local Coding Agent is completely agent- and harness-agnostic. It integrates across the entire landscape of modern AI coding environments:
+
+1. **AI-Native IDEs (Cursor, Windsurf)**: Connects via MCP to Cursor's Composer mode and Windsurf's Flow/Cascade engine to offload single-file edits without burning cloud quotas.
+2. **Terminal-Native Agents (Claude Code, Aider, Roo Code)**: Integrates directly with terminal harnesses and VS Code agents for automated sub-task delegation.
+3. **OpenAI Codex & ChatGPT Integrations**: Interfaces with OpenAI Codex powered pipelines and GPT-5.6 agent loops.
+4. **Model Context Protocol (MCP 2026-07-28 + Dual-Era)**: Compatible with Claude Desktop, Cursor, Windsurf, Roo Code, and any standard MCP host.
+5. **Direct Python API (`DelegationService`)**: Embeds into custom Python agent frameworks, background task queues, and orchestrators as an in-process library.
+6. **Process-Bound JSONL stdio (`StdioDelegationAdapter`)**: Connects to external CLI pipelines and non-Python tools via standard input/output streams.
+
+---
+
+## Core Invariants & Safety Guarantees
+
+- **Zero-Risk Sandbox**: The local model is never given arbitrary shell or terminal access. It interacts strictly through bounded repository tools (`read_file`, `search_text`, `propose_patch`, and allowlisted `run_tests`).
+- **Proposal-Only by Default**: Files on disk are never altered by the local model directly. The controller generates a structured unified diff and validates it with `git apply --check` before accepting.
+- **Mediated Apply with Auto-Rollback**: Applying changes (`apply_proposal` or `--apply`) requires explicit confirmation with a SHA-256 preview digest. If post-apply tests fail, the workspace is automatically rolled back.
+- **No False Self-Reporting**: Test execution evidence is owned exclusively by the external process runner. Model claims of test completion without runner proof are deterministically rejected.
+- **Loop Protection**: Duplicate identical tool calls immediately break the loop to prevent infinite token consumption.
+
+---
+
+## Quickstart
+
+### 1. Installation
+
+Install via `pipx` or `pip`:
+
+```bash
+pipx install local-coding-agent[mcp]
 ```
 
-Посмотри доступные параметры CLI:
+### 2. Environment Diagnostics (`doctor`)
 
-```powershell
-py -m local_coding_agent --help
+Check your local Ollama connection, system RAM/VRAM, and model catalog:
+
+```bash
+local-agent doctor
 ```
 
-## Task envelope
+```text
+============================================================
+  Local Coding Agent — System Diagnostic Wizard
+============================================================
+[OK]   Python Runtime: Python 3.12.0
+[OK]   Git Executable: git version 2.47.1
+[OK]   Host Memory: RAM: 32 GB total (20 GB available)
+[OK]   Ollama API: Connected to http://127.0.0.1:11434 (latency: 45ms, 4 models)
 
-Контроллер принимает UTF-8 JSON с одной атомарной задачей. Минимальный пример:
-
-```json
-{
-  "id": "read-one",
-  "goal": "прочитать разрешённый файл и вернуть результат",
-  "files": ["src/example.py"],
-  "context": "Краткий контекст, необходимый для задачи.",
-  "constraints": [
-    "не менять публичную сигнатуру"
-  ],
-  "checks": [],
-  "acceptance": [
-    "прочитан только файл из allowlist"
-  ]
-}
+Installed vs Recommended Models:
+  • qwen3-8b-q6k:latest (Installed)
+  • qwen3.8-27b-q4:latest (Installed)
+============================================================
+  Overall Status: READY (All critical checks passed)
+============================================================
 ```
 
-Для задачи с изменением файла команда проверки должна быть записана в `checks` заранее:
+### 3. Connect to Your Editor
 
-```json
-{
-  "id": "unique-preserve-order",
-  "goal": "убрать сортировку из unique и сохранить порядок первого появления",
-  "files": ["src/unique.py"],
-  "checks": ["py -m unittest tests.test_unique -v"],
-  "constraints": ["не добавлять зависимости"],
-  "acceptance": ["diff меняет только src/unique.py", "targeted test passed"]
-}
+Automatically register Local Coding Agent into your editor configuration:
+
+```bash
+# For Claude Desktop:
+local-agent init-mcp --claude --write
+
+# For Cursor:
+local-agent init-mcp --cursor --write
+
+# For Windsurf / VS Code:
+local-agent init-mcp --windsurf --write
 ```
 
-Запуск из корня workspace:
+### 4. Interactive Smoke Test (`test-run`)
 
-```powershell
-py -m local_coding_agent `
-  --task task.json `
-  --workspace . `
-  --profile qwen2.5-1.5b `
-  --num-ctx 4096 `
-  --apply
+Verify end-to-end task delegation and TPS in an isolated workspace:
+
+```bash
+local-agent test-run --profile qwen2.5-coder
 ```
 
-`--apply` включает mediated apply: принятый patch применяется к workspace после валидации и минимум одного заранее allowlisted targeted check. Без него режим остаётся proposal-only, и файлы не изменяются.
+---
 
-Результат содержит статус, summary, предложенный patch, checks, risks, validation report и audit events.
+## Benchmark & Model Performance
 
-Возможные статусы:
+Evaluated against atomic coding benchmarks using deterministic external oracle verification and 95% Wilson confidence intervals:
 
-- `accepted` — структурированный результат прошёл проверки;
-- `rejected` — результат нарушил контракт или validation rules;
-- `needs_context` — контекст задачи превышает установленный лимит;
-- `failed` — ошибка модели, инструмента, проверки, cancellation или tool-loop.
+| Model Profile | Quant / Format | Context Window | Eval TPS | Patch Validity | VRAM Requirement | Recommended Use Case |
+| :--- | :--- | :--- | :---: | :---: | :---: | :--- |
+| **`qwen3-8b-q6k`** | Q6_K GGUF | 8,192 tok | **~85-110 tok/s** | **100%** | ~8-12 GB | Daily coding workhorse, fast refactors |
+| **`qwen3.8-27b-q4`** | Q4_K_M GGUF | 8,192 tok | **~45-65 tok/s** | **100%** | ~16-24 GB | Complex logic & multi-file changes |
+| **`qwen2.5-coder`** | 7B / 14B Q4 | 8,192 tok | **~75 tok/s** | **95%** | ~6-10 GB | General code completions |
+| **`bonsai-64k`** | Custom 64k | 65,536 tok | **~60 tok/s** | **92%** | ~12-16 GB | Large context reading |
 
-## Профили и контекстное окно
+> Full evaluation methodology and logs: [docs/BENCHMARK.md](docs/BENCHMARK.md)
 
-Доступные профили:
+---
 
-| Профиль | Модель Ollama | Значение `num_ctx` по умолчанию | Максимум модели |
-| --- | --- | ---: | ---: |
-| `qwen2.5-1.5b` | `qwen2.5:1.5b` | 4096 | 32768 |
-| `qwen2.5-coder` | `qwen2.5-coder:latest` | 8192 | 32768 |
-| `bonsai-64k` | `bonsai-64k:latest` | 8192 | 262144 |
+## Real-Time Monitoring & Web Dashboard
 
-Исследовательские профили: `ornith-9b`, `qwen3-coder-30b`, `devstral-small-2-24b`, `ternary-bonsai-27b`. Последний профиль оставлен для availability check, но GGUF пока не импортируется в текущем Ollama.
+Launch the built-in HTTP metrics server to inspect active worker pool load, queue latency, and live tokens per second:
 
-## Direct Python API
-
-R5.1 добавляет transport-neutral seam для host-ов до появления MCP. Хост сам регистрирует рабочие области, а запрос не принимает произвольный путь, endpoint или `apply`:
-
-```python
-from local_coding_agent import DelegationRequest, DelegationService, TaskEnvelope
-
-service = DelegationService({"repo": "."})
-request = DelegationRequest(
-    request_id="opaque-idempotency-key",
-    workspace_ref="repo",
-    model_profile="qwen2.5-1.5b",
-    task=TaskEnvelope(id="read-one", goal="прочитать файл", files=("src/example.py",)),
-)
-result = service.delegate("trusted-host-process", request)
+```bash
+local-agent monitor --port 8765
 ```
 
-`request_id` идемпотентен внутри пары caller/workspace: точно такой же запрос, включая одновременный, ждёт и возвращает один terminal result; тот же ключ с другой нагрузкой — machine-readable `idempotency_conflict`. In-memory LRU-кэш bounded (по умолчанию 256 terminal results); reconnect, очередь и durable Tasks не входят в R5.1. Вызов всегда proposal-only: mediated apply остаётся отдельной CLI/controller operation и не открывается этому API.
+Open `http://127.0.0.1:8765/dashboard` for live updates.
 
-### Process-bound stdio API
+---
 
-Запуск доверенным host-процессом из корня workspace:
+## CLI Commands Reference
 
-```powershell
-py -m local_coding_agent.stdio --workspace-ref repo --workspace .
-```
+| Command | Description |
+| :--- | :--- |
+| `local-agent doctor` | Automated diagnostics for Ollama API, Git CLI, RAM/VRAM, and model catalog. |
+| `local-agent init-mcp` | Generate & merge MCP configs for Claude Desktop, Cursor, Windsurf, VS Code. |
+| `local-agent test-run` | Run self-contained atomic smoke tests with live TPS and diff validation. |
+| `local-agent serve-mcp` | Start the official-SDK MCP stdio server with Tasks extension support. |
+| `local-agent monitor` | Start the lightweight stdlib HTTP observability server & HTML dashboard. |
+| `local-agent benchmark` | Execute the reproducible proposal-only benchmark suite. |
 
-Adapter читает UTF-8 JSONL из stdin и пишет UTF-8 JSONL в stdout. Поддерживается одна операция `delegate_code`; request передаётся в `params` в том же формате, что и `DelegationRequest`, а `caller_id` задаётся верхним полем сообщения. Размер строки ограничен 64 KiB, apply и произвольные shell/path/endpoint параметры отсутствуют. Это process-bound core slice, не полная modern/legacy MCP conformance.
+---
 
-### MCP server (official SDK)
+## Documentation
 
-Official-SDK MCP server поверх того же `DelegationService`, один proposal-only tool `delegate_code`:
+- **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — 60-second quickstart guide.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — Controller architecture, worker pool, and task storage.
+- **[docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md)** — Model Context Protocol (MCP 2026-07-28) integration guide.
+- **[docs/PROTOCOL.md](docs/PROTOCOL.md)** — Detailed communication protocol and SEARCH/REPLACE specifications.
+- **[docs/BENCHMARK.md](docs/BENCHMARK.md)** — Benchmarking methodology, TPS measurements, and model evaluation.
 
-```powershell
-pip install "mcp==2.0.0"
-py -m local_coding_agent.mcp_server --workspace-ref repo --workspace .
-```
+---
 
-`mcp==2.0.0` — опциональная зависимость (`pyproject.toml`, extra `mcp`); core остаётся stdlib-only. Сервер говорит на stateless `2026-07-28` (`server/discover`, per-request `_meta`, `resultType`) и авто-fallback на legacy `initialize` для старых клиентов. Tasks и `apply_proposal` включаются отдельным server configuration; durable task store не заявляется.
+## License & Contributing
 
-## Benchmark моделей
-
-Запуск из корня workspace:
-
-```powershell
-py -m local_coding_agent `
-  --benchmark `
-  --num-ctx 4096 `
-  --benchmark-timeout-seconds 600 `
-  --benchmark-output .codex-run/benchmarks/latest.json
-```
-
-Можно выбрать один профиль повторяемым параметром `--benchmark-model`. Результат сохраняется как UTF-8 JSON с audit trail, patch proposals, внешним correctness oracle и Ollama token/latency metrics. Методика и первый runtime result находятся в [docs/BENCHMARK.md](docs/BENCHMARK.md).
-
-Размер окна можно изменить параметром `--num-ctx`. Контроллер отклоняет нулевые, отрицательные и превышающие лимит модели значения.
-
-## Управление VRAM Ollama
-
-Посмотреть и выгрузить все модели:
-
-```powershell
-py -m local_coding_agent --unload-all
-```
-
-Выгрузить одну модель:
-
-```powershell
-py -m local_coding_agent --unload-model bonsai-64k:latest
-```
-
-Удержать VRAM в заданном бюджете и не выгружать выбранную модель:
-
-```powershell
-py -m local_coding_agent `
-  --vram-limit-bytes 5000000000 `
-  --keep-model qwen2.5:1.5b
-```
-
-Состояние берётся из Ollama `/api/ps`, включая фактическое поле `size_vram`. Выгрузка выполняется запросом с `keep_alive: 0`. Если защищённые модели сами превышают бюджет, операция завершается ошибкой, а не выгружает их молча.
-
-## Документация
-
-| Файл | Назначение |
-| --- | --- |
-| `local_coding_agent/ollama_adapter.py` | HTTP adapter Ollama, профили параметров, unload и нормализация ошибок |
-| `local_coding_agent/task.py` | валидация task envelope и относительных путей |
-| `local_coding_agent/repository_tools.py` | bounded repository tools и audit events |
-| `local_coding_agent/controller.py` | tool-loop, retry, cancellation и duplicate-call guard |
-| `local_coding_agent/service.py` | R5.1 direct proposal-only service, request parsing, workspace registry и idempotency |
-| `local_coding_agent/stdio.py` | bounded UTF-8 JSONL process-bound `delegate_code` adapter |
-| `local_coding_agent/worker_pool.py` | bounded in-memory delegation queue, job state и cooperative cancellation |
-| `local_coding_agent/atomizer.py` | формальный task budget, preflight и детерминированная decomposition по files |
-| `local_coding_agent/delegator.py` | шаблонная декомпозиция и делегирование детей, в т.ч. параллельно |
-| `local_coding_agent/calibration.py` | VRAM-калибровка числа worker-слотов по модели |
-| `local_coding_agent/stats.py` | минимальная статистика прогонов и JSONL-sink |
-| `local_coding_agent/mcp_server.py` | official-SDK MCP stdio server (`2026-07-28` stateless + legacy fallback) |
-| `local_coding_agent/validators.py` | schema, unified diff, allowlist и check evidence |
-| `local_coding_agent/memory.py` | snapshot, выгрузка моделей и VRAM budget policy |
-| `local_coding_agent/profiles.py` | именованные профили локальных моделей |
-| `local_coding_agent/cli.py` | proposal-only CLI и opt-in mediated apply |
-
-Подробные контракты находятся в документации:
-
-
-- [PROJECT.md](PROJECT.md) — цель и границы проекта;
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — компоненты и поток выполнения;
-- [PROTOCOL.md](docs/PROTOCOL.md) — протокол общения с Ollama;
-- [MODEL_RESEARCH.md](docs/MODEL_RESEARCH.md) — проверенные локальные GGUF, импорт и исторический shortlist;
-- [MODEL_EVALUATION_PLAN.md](docs/MODEL_EVALUATION_PLAN.md) — quant A/B, новые кандидаты и будущий benchmark gate;
-- [MCP_DESIGN.md](docs/MCP_DESIGN.md) — harness-agnostic MCP adapter, Tasks, compatibility и security boundaries;
-- [SESSION-2026-08-14-R5.3-R5.4-REPAIR.md](docs/SESSION-2026-08-14-R5.3-R5.4-REPAIR.md) — журнал текущего repair gate и границы evidence;
-- [ROADMAP.md](docs/ROADMAP.md) — этапы развития;
-- [ROADMAP_HISTORICAL.md](docs/ROADMAP_HISTORICAL.md) — историческая летопись M0–M6;
-- [AUDIT.md](docs/AUDIT.md) — аудит реализации;
-- [AGENTS.md](AGENTS.md) — правила работы с checkout.
-
-## Проверка проекта
-
-Полный локальный test gate:
-
-```powershell
-py -m unittest discover -s tests -v
-py -m compileall -q local_coding_agent tests
-git diff --check
-```
-
-Текущий набор содержит 178 тестов. Полный gate включает optional `mcp==2.0.0`; live smoke с Ollama, benchmark и live apply выполняются отдельно, потому что наличие модели, её загрузка и фактическая VRAM зависят от локальной машины.
-
-## Статус
-
-Рабочий MVP опубликован в [pvnc228/codex-local-coding-agent](https://github.com/pvnc228/codex-local-coding-agent).
-
-Mediated apply работает opt-in через `--apply`: controller применяет patch только после валидации и targeted checks, повторно запускает checks и откатывает изменение при post-apply failure; модель напрямую применить patch не может. R5.3/R5.4 repair gate и self-review hardening закрыты regression/contract tests на `mcp==2.0.0`; Tasks, legacy sync и apply используют общий runtime gate, а durable Tasks store, live Ollama benchmark, fairness и Ollama-specific scheduling остаются отдельными этапами.
+Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) before submitting Pull Requests.

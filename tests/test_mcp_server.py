@@ -111,7 +111,7 @@ class McpSdkServerTests(unittest.TestCase):
             protocol_version, server_info = asyncio.run(run())
 
         self.assertEqual(protocol_version, "2026-07-28")
-        self.assertEqual(server_info.name, "codex-local-coding-agent")
+        self.assertEqual(server_info.name, "local-coding-agent")
 
     def test_process_bound_stdio_matches_in_process_result(self):
         helper = r'''

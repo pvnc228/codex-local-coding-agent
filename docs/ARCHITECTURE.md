@@ -1,41 +1,45 @@
 # Architecture
 
-## Роли
+## System Components
 
-### Codex controller
+### Controller
+The core orchestration layer. It selects the model profile, packs minimal context, provides bounded tools, enforces execution policies, and validates results against deterministic oracles.
 
-Главный управляющий слой. Он выбирает модель, собирает контекст, выдаёт инструменты, применяет политики и проверяет результат.
+### Direct Service Seam
+`DelegationService` is the transport-neutral API entry point for trusted host processes. It validates that the requested `workspace_ref` is pre-registered and that the requested `model_profile` exists in the configuration allowlist. It performs bounded `TaskBudget` preflight validation and runs the `Controller` loop strictly in proposal-only mode. The `request_id` is reserved atomically per caller/workspace pair to prevent duplicate concurrent executions, while an in-memory LRU cache stores terminal results.
 
-### Direct service seam (R5.1)
+### Process-Bound stdio Adapter
+`StdioDelegationAdapter` provides a lightweight UTF-8 JSONL process boundary exposing the single `delegate_code` operation. It decodes bounded JSONL lines, converts them into `DelegationRequest` instances, and forwards them to `DelegationService`. It does not own workspace registry, model allowlist, or direct file operations.
 
-`DelegationService` — transport-neutral вход для доверенного host-процесса. Он разрешает только заранее зарегистрированный `workspace_ref` и имя из существующего списка model profiles, выполняет обязательный bounded `TaskBudget` preflight и затем запускает обычный `Controller` строго без `apply`. `request_id` атомарно резервируется внутри пары caller/workspace: параллельный повтор ждёт тот же terminal result, а другая нагрузка с тем же ключом отклоняется. In-memory LRU-кэш ограничен числом terminal results; durable state, очередь и reconnect относятся к последующим срезам.
+### Bounded Worker Pool & Task Store
+`BoundedWorkerPool` provides a concurrency-limited execution layer over `DelegationService`. It bounds active worker slots and queued jobs, preserves caller-scoped idempotency, isolates requests/results between workers, and propagates cooperative cancellation to the controller. `JsonFileTaskStore` provides persistent on-disk storage for task records and recovers interrupted tasks upon restart. A `SharedExecutionGate` synchronizes MCP tasks, legacy MCP calls, and mediated apply requests to ensure strict concurrency limits.
 
-### Process-bound stdio adapter (R5.2 first slice)
+### Observability & HTTP Monitor
+`MonitorServer` is a lightweight stdlib HTTP server providing real-time JSON metrics (`/health`, `/stats`, `/tasks`) and an interactive HTML web dashboard (`/dashboard`) to monitor active worker load, queue latencies, live TPS, and patch audit logs.
 
-`StdioDelegationAdapter` — тонкий UTF-8 JSONL process boundary с одной операцией `delegate_code`. Он декодирует ограниченную строку, строит тот же `DelegationRequest` и передаёт её в `DelegationService`; он не владеет workspace registry, model allowlist, validation, audit или apply. Это process-bound seam для будущего MCP adapter, но не заявка на полную MCP conformance, Tasks или reconnect.
+### Developer Experience & Setup Wizard
+CLI subcommands:
+- `local-agent doctor`: Automated diagnostics for Ollama API connectivity, Git availability, system RAM/VRAM, and model catalog.
+- `local-agent init-mcp`: Configuration generator and merger for Claude Desktop, Cursor, Windsurf, and VS Code.
+- `local-agent test-run`: Isolated end-to-end smoke test verifying task delegation, patch generation, TPS calculation, and diff application.
 
-### Bounded worker pool (R6 first slice)
+### Local Model Executor
+The local Ollama runtime. It ingests the bounded task context, executes reasoning loops, and returns structured edit proposals or tool calls.
 
-`BoundedWorkerPool` — in-memory execution layer поверх `DelegationService`. Он ограничивает число worker slots и ожидающих jobs, сохраняет caller-scoped idempotency и job state, изолирует request/result между workers и передаёт cooperative cancellation в controller. Общий `SharedExecutionGate` также синхронизирует Tasks, legacy MCP и mediated apply, поэтому смешанные клиенты не обходят общий `max_workers`/`max_queue`. При отмене slot удерживается до фактического завершения model-call executor. MCP Tasks lifecycle использует этот pool отдельным thin adapter; сам pool не является durable store и не выбирает Ollama scheduling policy.
+### Repository Tools
+Narrow operations with explicit security boundaries:
+- `list_files`: Restricted strictly to allowlisted workspace paths.
+- `read_file`: Restricted to allowlisted files with bounded byte limits.
+- `search_text`: Bounded pattern and literal text search within allowlisted files.
+- `propose_patch`: Propose code changes without writing to disk, either as unified diffs or SEARCH/REPLACE blocks (`edits`).
+- `apply_patch`: Controller-only operation. Never exposed directly to the model; only executed during mediated apply after full validation.
+- `run_tests`: Restricted to pre-allowlisted verification commands in isolated child processes.
 
-### Local model executor
+---
 
-Локальная модель Ollama. Она читает разрешённые данные, делает рассуждение и предлагает изменение через инструменты.
+## Execution Flow
 
-### Repository tools
-
-Узкие операции с явными ограничениями:
-
-- 'list_files' — только внутри рабочей области;
-- 'read_file' — только allowlist;
-- 'search_text' — ограниченный поиск;
-- 'propose_patch' — вернуть изменение без записи, либо как unified diff, либо как SEARCH/REPLACE-блоки (`edits`);
-- 'apply_patch' — controller-only seam, не является tool-ом модели: применяется только после валидации и только при `--apply`;
-- 'run_tests' — только allowlisted-команда.
-
-## Поток
-
-~~~mermaid
+```mermaid
 flowchart TD
     A["Task envelope"] --> B["Context packer"]
     B --> C["Ollama adapter"]
@@ -48,17 +52,19 @@ flowchart TD
     H --> I{"Candidate valid?"}
     I -- "no" --> L["Rejected result and audit log"]
     I -- "yes, proposal-only" --> L2["Accepted proposal and audit log"]
-    I -- "yes, --apply" --> J["Controller applies patch"]
+    I -- "yes, mediated apply" --> J["Controller applies patch"]
     J --> K["Re-run all targeted checks"]
     K --> M{"Post-apply checks pass?"}
     M -- "yes" --> L3["Accepted applied result and audit log"]
     M -- "no" --> R["Rollback patch"]
     R --> L
-~~~
+```
 
-## Состояния задачи
+---
 
-~~~text
+## Task Lifecycle States
+
+```text
 received
   -> context_ready
   -> awaiting_model
@@ -68,44 +74,52 @@ received
   -> validating
   -> checking
   -> accepted | rejected | needs_context | failed
-~~~
+```
 
-## Защитные границы
+---
 
-- Список файлов передаётся явно.
-- Абсолютные пути отбрасываются или нормализуются внутри workspace.
-- Размер tool-result ограничивается.
-- Команды тестов берутся из конфигурации задачи, а не из свободного текста модели.
-- `run_tests` непрерывно дренирует stdout/stderr через bounded collectors, чтобы verbose child не мог заблокировать controller на заполненном pipe или неограниченно разрастить временный sink.
-- Завершение процесса и всего его дерева имеет bounded wait; ошибка termination не превращается в безлимитный `wait()`.
-- 'apply_patch' не вызывается напрямую локальной моделью: это controller-only seam.
-- Proposal-only является режимом по умолчанию; mediated apply — opt-in через `--apply`.
-- При `--apply` targeted checks запускаются после изменения; `applied: true` выдаётся только после успешного post-apply результата, иначе patch откатывается.
-- Non-empty apply отклоняется без хотя бы одного заранее allowlisted targeted check.
-- `audit`, `validation` и `applied` принадлежат controller и не принимаются из model result.
-- `checks`/`evidence` в принятом результате принадлежат внешнему runner-у; текст модели не является доказательством запуска.
-- При повторном tool call с теми же именем и аргументами цикл завершается.
-- После достижения 'max_turns' задача считается незавершённой.
+## Security Boundaries & Invariants
 
-## Модельный профиль
+- File access is strictly bounded by the task allowlist.
+- Absolute paths outside the workspace boundary are rejected or normalized.
+- Tool result sizes are strictly capped (`max_tool_result_bytes`).
+- Test commands are taken exclusively from the pre-configured task definition, never from model text.
+- `run_tests` continuously drains stdout/stderr via bounded collectors so child processes cannot block on full pipes.
+- Process trees are terminated with bounded timeouts.
+- `apply_patch` is a controller-only internal seam. The local model cannot directly write to disk.
+- Proposal-only is the default execution mode. Disk writes require explicit mediated apply (`apply_proposal` or `--apply`).
+- When applying changes, allowlisted targeted checks are re-run post-apply; `applied: true` is only returned if all checks pass, otherwise changes are immediately rolled back.
+- Non-empty patch proposals are rejected if no targeted check is configured.
+- `audit`, `validation`, and `applied` status fields are owned strictly by the controller.
+- Test execution evidence belongs exclusively to the external process runner.
+- Duplicate identical tool calls immediately break the loop to prevent infinite execution.
+- Tasks exceeding `max_turns` are terminated and marked incomplete.
 
-Профиль модели должен быть отдельной конфигурацией, а не зашитым условием:
+---
 
-~~~yaml
-name: bonsai-64k
+## Model Profile Configuration
+
+Model profiles are defined as declarative configurations:
+
+```yaml
+name: qwen3-8b-q6k
 provider: ollama
-model: bonsai-64k:latest
+model: qwen3-8b-q6k:latest
 endpoint: http://127.0.0.1:11434
 think: false
-temperature: 0
+temperature: 0.7
+top_p: 0.8
+presence_penalty: 1.5
 num_ctx: 8192
 num_predict: 512
 keep_alive: 10m
 max_context_length: 262144
-~~~
+```
 
-## Управление VRAM и контекстом
+---
 
-`/api/ps` является источником фактического состояния загруженных моделей и их `size_vram`. `ModelMemoryManager` умеет снять snapshot, выгрузить одну или все модели и вытеснить незащищённые модели до явного VRAM-бюджета. Защита от неожиданной выгрузки задаётся списком `keep`.
+## VRAM & Context Management
 
-`ModelProfile.num_ctx` задаёт окно контекста для запроса, а `max_context_length` ограничивает значение по возможностям конкретной модели. CLI пробрасывает настройку через `--num-ctx`.
+Ollama's `/api/ps` endpoint is used as the source of truth for active models and allocated VRAM (`size_vram`). `ModelMemoryManager` captures snapshots, unloads idle models, and evicts unprotected models to maintain memory budgets. Protected models can be specified via a `keep` allowlist.
+
+`ModelProfile.num_ctx` sets the context window for requests, while `max_context_length` enforces hardware and model limits.

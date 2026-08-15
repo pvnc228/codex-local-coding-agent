@@ -1,0 +1,117 @@
+# Quickstart Guide
+
+Get up and running with **Local Coding Agent** in under 60 seconds.
+
+---
+
+## 1. Prerequisites
+
+- **Python 3.10+** (Python 3.10, 3.11, 3.12, or 3.13)
+- **Git** (available in your system `PATH`)
+- **Ollama** running locally: [ollama.ai](https://ollama.ai) (default port `11434`)
+
+---
+
+## 2. Installation
+
+You can install Local Coding Agent directly via `pipx` or `pip`:
+
+```bash
+# Recommended with pipx:
+pipx install local-coding-agent[mcp]
+
+# Or with standard pip:
+pip install local-coding-agent[mcp]
+```
+
+Or clone and install in development mode:
+
+```bash
+git clone https://github.com/pvnc228/local-coding-agent.git
+cd local-coding-agent
+pip install -e .[mcp]
+```
+
+---
+
+## 3. Verify Environment (`doctor`)
+
+Run the automated diagnostic wizard to verify your Ollama connection, RAM/VRAM, and model availability:
+
+```bash
+local-agent doctor
+```
+
+Output example:
+```text
+============================================================
+  Local Coding Agent — System Diagnostic Wizard
+============================================================
+[OK]   Python Runtime: Python 3.12.0 (Windows / Linux / macOS)
+[OK]   Git Executable: git version 2.47.1
+[OK]   Host Memory: RAM: 32 GB total (20 GB available)
+[OK]   Ollama API: Connected to http://127.0.0.1:11434 (latency: 45ms, 4 models)
+
+Installed vs Recommended Models:
+  • qwen3-8b-q6k:latest (Installed)
+  • qwen3.8-27b-q4:latest (Installed)
+============================================================
+  Overall Status: READY (All critical checks passed)
+============================================================
+```
+
+---
+
+## 4. Run an End-to-End Smoke Test (`test-run`)
+
+Verify end-to-end task execution in an isolated sandbox:
+
+```bash
+# Using live Ollama model:
+local-agent test-run --profile qwen2.5-coder
+
+# Or using the built-in deterministic mock runner:
+local-agent test-run --mock
+```
+
+---
+
+## 5. Connect to Your AI Editor (Claude Desktop / Cursor / VS Code)
+
+Integrate Local Coding Agent as a standard MCP server in one click:
+
+### Claude Desktop
+```bash
+# Preview config:
+local-agent init-mcp --claude --dry-run
+
+# Write directly to claude_desktop_config.json:
+local-agent init-mcp --claude --write
+```
+
+### Cursor IDE
+```bash
+local-agent init-mcp --cursor --write
+```
+
+### Windsurf / VS Code
+```bash
+local-agent init-mcp --windsurf --write
+local-agent init-mcp --vscode --write
+```
+
+---
+
+## 6. Live Monitoring Dashboard
+
+Start the built-in real-time HTTP metrics and monitoring dashboard:
+
+```bash
+local-agent monitor --port 8765
+```
+
+Open your browser at `http://127.0.0.1:8765/dashboard` to inspect:
+- Active delegations & queued tasks
+- Real-time TPS (Tokens Per Second)
+- Latency percentile distributions
+- Validation report audit log

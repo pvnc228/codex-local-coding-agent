@@ -4,13 +4,18 @@ from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, pre
 from .calibration import calibrate_for_model, calibrate_workers, model_vram_bytes
 from .controller import Controller
 from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_failure
-from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
+from .doctor import CheckResult, DoctorReport, diagnose_environment
+from .mcp_config import generate_mcp_config_dict, get_client_config_path, integrate_mcp_config
 from .mcp_server import build_server
+from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
+from .monitor import MonitorServer
 from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
 from .service import DelegationRequest, DelegationService
+from .smoke import run_smoke_test
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
 from .stdio import StdioDelegationAdapter
 from .task import TaskEnvelope
+from .task_store import JsonFileTaskStore, TaskRecord, TaskStore
 from .validators import ValidationReport, validate_candidate
 from .worker_pool import BoundedWorkerPool
 
@@ -53,4 +58,15 @@ __all__ = [
     "validate_candidate",
     "TasksExtension",
     "TASKS_IDENTIFIER",
+    "diagnose_environment",
+    "DoctorReport",
+    "CheckResult",
+    "generate_mcp_config_dict",
+    "get_client_config_path",
+    "integrate_mcp_config",
+    "run_smoke_test",
+    "MonitorServer",
+    "TaskStore",
+    "TaskRecord",
+    "JsonFileTaskStore",
 ]

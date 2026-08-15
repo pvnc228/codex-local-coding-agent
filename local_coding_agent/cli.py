@@ -1,4 +1,4 @@
-"""Command-line entry point for one proposal-only local coding task."""
+"""Command-line entry point for codex-local-coding-agent."""
 
 from __future__ import annotations
 
@@ -12,9 +12,12 @@ from typing import Sequence
 from .benchmark import run_benchmark, write_artifact
 from .calibration import calibrate_for_model
 from .controller import Controller
+from .doctor import diagnose_environment
+from .mcp_config import integrate_mcp_config
 from .memory import ModelMemoryManager
 from .ollama_adapter import OllamaClient, OllamaError
 from .profiles import get_profile, list_profiles
+from .smoke import run_smoke_test
 from .task import TaskEnvelope
 
 
@@ -27,7 +30,12 @@ def load_task_file(path: str | Path) -> TaskEnvelope:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run one bounded proposal-only Ollama coding task.")
+    parser = argparse.ArgumentParser(
+        prog="codex-agent",
+        description="Codex Local Coding Agent: Bounded controller for atomic coding tasks.",
+    )
+
+    # Global options
     parser.add_argument("--task", type=Path, help="UTF-8 JSON task envelope")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--profile", choices=list_profiles(), default="qwen2.5-1.5b")
@@ -74,11 +82,130 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Measured incremental VRAM estimate per concurrent request context/KV cache",
     )
+
+    # Subcommands
+    subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
+
+    # doctor
+    doc_p = subparsers.add_parser("doctor", help="Run system diagnostics and model recommendations")
+    doc_p.add_argument("--endpoint", default="http://127.0.0.1:11434", help="Ollama endpoint to check")
+    doc_p.add_argument("--json", action="store_true", help="Output diagnostic report in JSON format")
+
+    # init-mcp
+    mcp_p = subparsers.add_parser("init-mcp", help="Generate or configure MCP client integration")
+    mcp_p.add_argument(
+        "--client",
+        choices=["claude", "cursor", "windsurf", "vscode"],
+        default="claude",
+        help="Target MCP client (default: claude)",
+    )
+    mcp_p.add_argument("--claude", action="store_const", const="claude", dest="client", help="Configure for Claude Desktop")
+    mcp_p.add_argument("--cursor", action="store_const", const="cursor", dest="client", help="Configure for Cursor")
+    mcp_p.add_argument("--windsurf", action="store_const", const="windsurf", dest="client", help="Configure for Windsurf")
+    mcp_p.add_argument("--vscode", action="store_const", const="vscode", dest="client", help="Configure for VS Code")
+    mcp_p.add_argument("--workspace", default=".", help="Workspace path for the MCP server")
+    mcp_p.add_argument("--profile", default="qwen3-8b-q6k", help="Default profile for MCP delegation")
+    mcp_p.add_argument("--dry-run", action="store_true", help="Print config without writing to disk")
+    mcp_p.add_argument("--write", action="store_true", help="Write/merge directly to client configuration file")
+    mcp_p.add_argument("--path", type=Path, help="Explicit configuration file path")
+
+    # test-run / smoke
+    smoke_p = subparsers.add_parser("test-run", aliases=["smoke"], help="Run interactive end-to-end smoke test")
+    smoke_p.add_argument("--profile", default="qwen2.5-coder", help="Model profile to use")
+    smoke_p.add_argument("--mock", action="store_true", help="Use scripted mock model instead of live Ollama")
+    smoke_p.add_argument("--no-fallback", action="store_true", help="Do not fallback to mock if Ollama is offline")
+
+    # serve-mcp
+    serve_mcp_p = subparsers.add_parser("serve-mcp", help="Run the MCP stdio server")
+    serve_mcp_p.add_argument("--workspace-ref", default="workspace")
+    serve_mcp_p.add_argument("--workspace", default=".")
+    serve_mcp_p.add_argument("--enable-tasks", action="store_true", help="Mount Tasks extension and apply_proposal")
+    serve_mcp_p.add_argument("--profile", help="Default model profile")
+    serve_mcp_p.add_argument("--endpoint", help="Ollama API endpoint")
+
+    # monitor
+    mon_p = subparsers.add_parser("monitor", help="Start the live HTTP monitoring dashboard")
+    mon_p.add_argument("--host", default="127.0.0.1")
+    mon_p.add_argument("--port", type=int, default=8765)
+
     return parser
+
+
+def handle_subcommand(args: argparse.Namespace) -> int:
+    sub = args.subcommand
+    if sub == "doctor":
+        report = diagnose_environment(endpoint=args.endpoint)
+        if args.json:
+            print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(report.render_text())
+        return 0 if report.healthy else 1
+
+    if sub == "init-mcp":
+        dry_run = not args.write or args.dry_run
+        res = integrate_mcp_config(
+            client=args.client,
+            workspace=args.workspace,
+            profile=args.profile,
+            target_path=args.path,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            print(f"--- MCP Configuration Preview ({args.client}) ---")
+            print(f"Target Path: {res['path']}")
+            print(json.dumps(res["config"], indent=2, ensure_ascii=False))
+            print("\nUse --write to automatically merge this config into the file.")
+        else:
+            print(f"[OK] Successfully integrated MCP server into: {res['path']}")
+        return 0
+
+    if sub in ("test-run", "smoke"):
+        res = run_smoke_test(
+            profile_name=args.profile,
+            use_mock=args.mock,
+            fallback_to_mock=not args.no_fallback,
+            verbose=True,
+        )
+        return 0 if res["success"] else 1
+
+    if sub == "serve-mcp":
+        from .mcp_server import build_server
+        from .service import DelegationService
+
+        ws_path = str(Path(args.workspace).resolve())
+        service = DelegationService({args.workspace_ref: ws_path})
+        server = build_server(service, enable_tasks=args.enable_tasks)
+        server.run(transport="stdio")
+        return 0
+
+    if sub == "monitor":
+        from .monitor import MonitorServer
+        from .stats import DelegationStats
+
+        stats = DelegationStats()
+        server = MonitorServer(host=args.host, port=args.port, stats=stats)
+        print(f"Starting Codex Monitor on {server.url}/dashboard (Press Ctrl+C to stop)...")
+        server.start()
+        try:
+            while True:
+                import time
+                time.sleep(1)
+        except KeyboardInterrupt:
+            server.stop()
+            print("\nMonitor stopped.")
+        return 0
+
+    return -1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.subcommand:
+        sub_code = handle_subcommand(args)
+        if sub_code != -1:
+            return sub_code
+
     try:
         overrides = {}
         if args.endpoint:

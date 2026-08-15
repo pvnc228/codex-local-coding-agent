@@ -1,11 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "codex-local-coding-agent"
-version = "0.2.0"
-description = "Bounded controller delegating small coding tasks to local Ollama models."
+name = "local-coding-agent"
+version = "0.3.0"
+description = "Harness-agnostic controller delegating atomic coding tasks to local Ollama models via MCP and direct Python API."
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
+authors = [{ name = "Local Coding Agent Contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.scripts]
+local-agent = "local_coding_agent.cli:main"
+local-coding-agent = "local_coding_agent.cli:main"
+codex-agent = "local_coding_agent.cli:main"
+codex-local-agent = "local_coding_agent.cli:main"
 
 [project.optional-dependencies]
 mcp = ["mcp==2.0.0"]
+dev = ["pytest"]
 
 [tool.setuptools]
 packages = ["local_coding_agent"]
