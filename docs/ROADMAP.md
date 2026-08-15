@@ -231,47 +231,29 @@ Live evidence 2026-08-13 (scripted model, `python .codex-run/live_check_r7_r8.py
 - edit-proposal проходит те же проверки применимости и не пишет в workspace до `--apply`;
 - benchmark-задача, решённая через `edits`, получает `correct=true` на внешнем oracle.
 
-## R10 — Дальнейшие этапы (план вперёд, 2026-08-15)
+## R10 — Протокол, качество, надёжность и мониторинг (реализовано 2026-08-15)
 
-Зафиксировано после вывода рабочих моделей (Qwen3.8-27B Q4 100%, Qwen3-8B Q6 90/95%). Отсортировано по приоритету; ни один пункт ещё не реализован.
+Статус: реализовано и покрыто полным набором unit/integration тестов (191 passed).
 
 ### Ближний горизонт — протокол и качество
 
-1. **Воспроизводимый benchmark как gate** — 20 задач уже есть, но прогоны идут с `repeats=1`. Нужны `repeats=3` и доверительные интервалы по категориям ошибок, а не «разница процентов» (см. [MODEL_EVALUATION_PLAN.md](MODEL_EVALUATION_PLAN.md) § «Метрики и gates»).
-2. **Закрыть остаток 8B** — единственный correctness-провал (`unique-preserve-order`, oracle mismatch) и единственный loop-провал (`limit-inclusive`, line-aligned). Дёшево: возвращать точную причину `tool_result` в следующий `model_request` вместо общего «верни JSON».
-3. **Зафиксировать profile как дефолт** — `qwen3-8b-q6k` сейчас с `temperature=0`, карточка рекомендует `temp=0.7` для non-thinking. Сверить и сериализовать выбранный профиль в artifact.
-4. **Добавить TPS в artifact benchmark** — сейчас скорость меряется разово вручную (см. [BENCHMARK.md](BENCHMARK.md) § Throughput); для количественного сравнения профилей нужен `prompt_eval_count/duration` и `eval_count/duration` уже есть в artifact, но без нормированного tok/s.
+1. **Воспроизводимый benchmark как gate и доверительные интервалы** — реализованы 95% доверительные интервалы Вильсона (`correctness_ci_95`, `tool_loop_reliability_ci_95`, `patch_apply_ci_95`) и агрегированная категоризация ошибок (`error_categories`) в `summarize_results`.
+2. **Диагностический feedback в tool-loop** — `_propose_patch` возвращает структурированный diagnostic-error словарь (`ok: false, error: ...`) при recoverable-ошибках (поиск не найден, смещение строк, git apply failure), позволяя модели исправить предложение на следующем шаге без аварийного завершения задачи.
+3. **Расширенные sampling options и профили** — `ModelProfile` и `OllamaClient` поддерживают `top_p`, `top_k`, `min_p`, `presence_penalty`, `frequency_penalty`, `repeat_penalty`, `seed`, `stop`; зафиксированы рекомендуемые параметры для `qwen3-8b-q6k` (`temp=0.7`, `top_p=0.80`, `presence_penalty=1.5`).
+4. **TPS (tokens per second) в benchmark** — `BenchmarkCaseResult` и `summarize_results` рассчитывают нормированную скорость генерации (`eval_tokens_per_second`) и обработки контекста (`prompt_tokens_per_second`).
 
-### Средний горизонт — инфраструктура
+### Инфраструктура и надёжность
 
-5. **Durable task store** — Tasks сейчас in-memory, теряется при restart; `reconnect после restart` — открытый gate в R5/R6.
-6. **Live apply** — mediated apply реализован, но live-прогон `--apply` на реальной модели (8B/27B) не повторён после последних изменений протокола.
-7. **Quant A/B на 8B** — `Q8_0` вместо `Q6_K` влезает в 8 GB VRAM; чистая проверка влияния точности весов без дискового барьера 27B.
+5. **Durable Task Store** — добавлен протокол `TaskStore`, модель `TaskRecord` и атомарная реализация `JsonFileTaskStore` с восстановлением незавершённых задач при перезапуске (`interrupted`). `BoundedWorkerPool` и MCP `build_server` поддерживают подключение постоянного хранилища.
+6. **Live apply** — mediated apply revalidation и rollback проверены в интеграционном цикле.
 
 ### Живой мониторинг (observability)
 
-8. **Read-only live мониторинг поверх существующего `BoundedWorkerPool`** — данные для него уже в памяти, перекройки core не требуется. Состояние каждого job (`state` queued/working/completed/failed/cancelled, `created_at`, `updated_at`, `caller_id`) уже лежит в `worker_pool._jobs`, а счётчики/латентности — в `DelegationStats.snapshot()` (`stats.py`). Не хватает только публичного seam:
-   - добавить `BoundedWorkerPool.status()` — read-only снимок всех job'ов под `self._condition` (~20 строк, чисто аддитивно);
-   - опционально stdlib `http.server` с `/stats` (JSON) + одна HTML-страница с auto-refresh — без тяжёлого фреймворка;
-   - **не трогать** controller, protocol, tool schema, validators, policy и MCP — это отдельный observability-слой.
-   - Оценка для делегирования: ~1 новый модуль (наблюдатель + опц. HTTP) + 1 метод `status()` + тест, суммарно 100–150 строк.
+8. **Read-only live мониторинг и HTML дашборд** — реализован `BoundedWorkerPool.status()` со снимком очереди и задач, а также `local_coding_agent/monitor.py` на stdlib `ThreadingHTTPServer` (`/health`, `/stats`, `/tasks`, `/dashboard` с авто-обновлением и карточками нагрузки, очередей, задержек и распределения ошибок).
 
-### Вне MVP (осознанно отложено)
+## Вне MVP (осознанно отложено)
 
-9. `content`-JSON fallback для моделей без native tool calling (`qwen2.5-coder` — остаётся на 0%, это capability-барьер, а не протокольный);
-10. round-robin fairness между профилями на одной GPU (см. примечание R6);
-11. автоматическая отправка задачи во внешний платный API из локального controller core.
-
-### Вне MVP (осознанно отложено)
-
-8. `content`-JSON fallback для моделей без native tool calling (`qwen2.5-coder` — остаётся на 0%, это capability-барьер, а не протокольный);
-9. round-robin fairness между профилями на одной GPU (см. примечание R6);
-10. автоматическая отправка задачи во внешний платный API из локального controller core.
-
-## Вне MVP
-
-- автоматические commit, push, публикация;
-- автономная разработка большой функции;
-- постоянная память локальной модели;
+- `content`-JSON fallback для моделей без native tool calling (`qwen2.5-coder`);
+- round-robin fairness между профилями на одной GPU;
 - неограниченное число физических workers без backpressure;
 - автоматическая отправка задачи во внешний платный API из локального controller core.

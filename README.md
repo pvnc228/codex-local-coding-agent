@@ -30,8 +30,14 @@
 - ограничивать retry budget (hard cap 10) и после исчерпания возвращать escalation bundle с просмотренными файлами, попытками и внешним evidence вместо бесконечного tool-loop.
 - разбивать широкую задачу шаблонно и делегировать детей через `DelegatingAgent` (`decompose -> delegate -> decompose further`), в том числе параллельно (`max_parallel_children`).
 - калибровать число worker-слотов по VRAM модели (`calibrate_workers`/`calibrate_for_model`).
-- накапливать минимальную статистику прогонов (`DelegationStats`/`TimedDelegationStats`/`JsonlStatsSink`).
+- накапливать минимальную статистику прогонов (`DelegationStats`/`TimedDelegationStats`/`JsonlStatsSink`);
 - обслуживать MCP Tasks lifecycle через bounded in-memory pool и отдельно подтверждать `apply_proposal` с preview конкретного proposal;
+- замерять TPS (`eval_tps`, `prompt_eval_tps`) и рассчитывать 95% доверительные интервалы Вильсона в benchmark-раннере;
+- передавать диагностические recoverable-ошибки `propose_patch` обратно в модель для многоходовой самокоррекции;
+- настраивать расширенные sampling options (`top_p`, `top_k`, `min_p`, `presence_penalty`, `seed`) через профили моделей;
+- сохранять состояние задач в постоянное файловое хранилище `JsonFileTaskStore` (`TaskStore`) с автоматическим восстановлением прерванных задач после перезапуска;
+- вести live-мониторинг через stdlib HTTP-сервер `MonitorServer` с JSON-эндпоинтами (`/health`, `/stats`, `/tasks`) и интерактивным HTML-дашбордом (`/dashboard`).
+
 
 ## Безопасные границы
 
