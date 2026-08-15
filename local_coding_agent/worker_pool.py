@@ -214,6 +214,31 @@ class BoundedWorkerPool:
                 return self._failure("unknown_job", "job is unknown or belongs to another caller")
             return self._snapshot(job)
 
+    def status(self) -> dict[str, Any]:
+        """Return a snapshot of worker pool load, queue, and jobs for monitoring."""
+        with self._condition:
+            jobs_summary = [
+                {
+                    "job_id": job.job_id,
+                    "caller_id": job.caller_id,
+                    "state": job.state,
+                    "created_at": job.created_at,
+                    "updated_at": job.updated_at,
+                    "has_result": job.result is not None,
+                }
+                for job in self._jobs.values()
+            ]
+            return {
+                "active_workers": self._active_workers,
+                "max_workers": self._max_workers,
+                "queued_jobs": len(self._queue),
+                "max_queue": self._max_queue,
+                "stopping": self._stopping,
+                "total_jobs": len(self._jobs),
+                "jobs": jobs_summary,
+            }
+
+
     def wait(self, caller_id: str, job_id: str, *, timeout: float = 5.0) -> dict[str, Any]:
         """Wait at most ``timeout`` seconds, then return the current snapshot."""
 

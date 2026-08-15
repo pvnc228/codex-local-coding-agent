@@ -272,5 +272,28 @@ class BoundedWorkerPoolTests(unittest.TestCase):
                 pool.shutdown()
 
 
+    def test_worker_pool_status_reports_accurate_metrics(self):
+        service = RecordingService()
+        pool = BoundedWorkerPool(service, max_workers=2, max_queue=4)
+        try:
+            status_before = pool.status()
+            self.assertEqual(status_before["active_workers"], 0)
+            self.assertEqual(status_before["max_workers"], 2)
+            self.assertEqual(status_before["queued_jobs"], 0)
+            self.assertEqual(status_before["max_queue"], 4)
+            self.assertFalse(status_before["stopping"])
+
+            job_resp = pool.submit("caller-status", self._request("status-check"))
+            self.assertEqual(pool.wait("caller-status", job_resp["job_id"], timeout=1)["status"], "completed")
+
+            status_after = pool.status()
+            self.assertGreaterEqual(status_after["total_jobs"], 1)
+            self.assertEqual(len(status_after["jobs"]), 1)
+            self.assertEqual(status_after["jobs"][0]["caller_id"], "caller-status")
+            self.assertEqual(status_after["jobs"][0]["state"], "completed")
+        finally:
+            pool.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()
