@@ -97,14 +97,16 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_p = subparsers.add_parser("init-mcp", help="Generate or configure MCP client integration")
     mcp_p.add_argument(
         "--client",
-        choices=["claude", "cursor", "windsurf", "vscode"],
+        choices=["claude", "cursor", "windsurf", "vscode", "auto", "all"],
         default="claude",
-        help="Target MCP client (default: claude)",
+        help="Target MCP client (default: claude, or 'auto'/'all')",
     )
     mcp_p.add_argument("--claude", action="store_const", const="claude", dest="client", help="Configure for Claude Desktop")
     mcp_p.add_argument("--cursor", action="store_const", const="cursor", dest="client", help="Configure for Cursor")
     mcp_p.add_argument("--windsurf", action="store_const", const="windsurf", dest="client", help="Configure for Windsurf")
-    mcp_p.add_argument("--vscode", action="store_const", const="vscode", dest="client", help="Configure for VS Code")
+    mcp_p.add_argument("--vscode", action="store_const", const="vscode", dest="client", help="Configure for VS Code / Roo Code")
+    mcp_p.add_argument("--auto", action="store_const", const="auto", dest="client", help="Auto-detect IDEs in workspace and host environment")
+    mcp_p.add_argument("--all", action="store_const", const="all", dest="client", help="Configure all detected IDE environments")
     mcp_p.add_argument("--workspace", default=".", help="Workspace path for the MCP server")
     mcp_p.add_argument("--profile", default="qwen3-8b-q6k", help="Default profile for MCP delegation")
     mcp_p.add_argument("--dry-run", action="store_true", help="Print config without writing to disk")
@@ -155,14 +157,23 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             target_path=args.path,
             dry_run=dry_run,
         )
-        if dry_run:
-            print(f"--- MCP Configuration Preview ({args.client}) ---")
-            print(f"Target Path: {res['path']}")
-            print(json.dumps(res["config"], indent=2, ensure_ascii=False))
-            print("\nUse --write to automatically merge this config into the file.")
+        if "results" in res:
+            print(f"--- Multi-Client MCP Configuration ({'Preview' if dry_run else 'Applied'}) ---")
+            for sub_res in res["results"]:
+                status = "[DRY-RUN]" if dry_run else "[OK]"
+                print(f"{status} {sub_res['client'].upper()}: {sub_res['path']}")
+            if dry_run:
+                print("\nUse --write to automatically merge these configs into the files.")
         else:
-            print(f"[OK] Successfully integrated MCP server into: {res['path']}")
+            if dry_run:
+                print(f"--- MCP Configuration Preview ({args.client}) ---")
+                print(f"Target Path: {res['path']}")
+                print(json.dumps(res["config"], indent=2, ensure_ascii=False))
+                print("\nUse --write to automatically merge this config into the file.")
+            else:
+                print(f"[OK] Successfully integrated MCP server into: {res['path']}")
         return 0
+
 
     if sub in ("test-run", "smoke"):
         res = run_smoke_test(

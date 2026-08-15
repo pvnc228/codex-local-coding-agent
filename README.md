@@ -74,13 +74,30 @@ Local Coding Agent is completely agent- and harness-agnostic. It integrates acro
 
 ## Quickstart
 
-### 1. Installation
+### 🤖 1-Prompt Setup for Coding Agents
+
+If you are using an AI coding assistant (**Claude Code**, **Cursor Composer**, **Windsurf Cascade**, **Roo Code**, or **OpenAI Codex**), simply give it this prompt:
+
+```text
+Install and configure https://github.com/pvnc228/local-coding-agent:
+1. Run `pip install -e .[mcp]` (or `pip install local-coding-agent[mcp]`)
+2. Run `python -m local_coding_agent doctor` to verify Ollama status
+3. Run `python -m local_coding_agent init-mcp --auto --write` to register the MCP server
+4. Run `python -m local_coding_agent test-run --mock` to verify sandbox execution
+```
+
+---
+
+### Manual Setup
+
+#### 1. Installation
 
 Install via `pipx` or `pip`:
 
 ```bash
 pipx install local-coding-agent[mcp]
 ```
+
 
 ### 2. Environment Diagnostics (`doctor`)
 
@@ -112,15 +129,16 @@ Installed vs Recommended Models:
 Automatically register Local Coding Agent into your editor configuration:
 
 ```bash
-# For Claude Desktop:
-local-agent init-mcp --claude --write
+# Auto-detect IDE in current workspace and system:
+local-agent init-mcp --auto --write
 
-# For Cursor:
+# Or configure a specific editor:
 local-agent init-mcp --cursor --write
-
-# For Windsurf / VS Code:
+local-agent init-mcp --claude --write
 local-agent init-mcp --windsurf --write
+local-agent init-mcp --vscode --write
 ```
+
 
 ### 4. Interactive Smoke Test (`test-run`)
 

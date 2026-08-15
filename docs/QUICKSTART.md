@@ -12,7 +12,21 @@ Get up and running with **Local Coding Agent** in under 60 seconds.
 
 ---
 
-## 2. Installation
+## ⚡ 1-Prompt Setup for AI Coding Agents
+
+If you are using an AI coding agent (**Claude Code**, **Cursor Composer**, **Windsurf Cascade**, **Roo Code**, or **OpenAI Codex**), simply copy-paste this instruction directly to your agent:
+
+```text
+Install and configure https://github.com/pvnc228/local-coding-agent:
+1. Run `pip install -e .[mcp]` (or `pip install local-coding-agent[mcp]`)
+2. Run `python -m local_coding_agent doctor` to check Ollama status
+3. Run `python -m local_coding_agent init-mcp --auto --write` to register the MCP server in my IDE
+4. Run `python -m local_coding_agent test-run --mock` to verify the execution sandbox
+```
+
+---
+
+## 2. Manual Installation
 
 You can install Local Coding Agent directly via `pipx` or `pip`:
 
@@ -23,6 +37,7 @@ pipx install local-coding-agent[mcp]
 # Or with standard pip:
 pip install local-coding-agent[mcp]
 ```
+
 
 Or clone and install in development mode:
 

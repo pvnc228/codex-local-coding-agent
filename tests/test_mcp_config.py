@@ -19,8 +19,8 @@ class TestMcpConfig(unittest.TestCase):
             profile="qwen3-8b-q6k",
         )
         self.assertIn("mcpServers", conf)
-        self.assertIn("codex-local-agent", conf["mcpServers"])
-        server = conf["mcpServers"]["codex-local-agent"]
+        self.assertIn("local-coding-agent", conf["mcpServers"])
+        server = conf["mcpServers"]["local-coding-agent"]
         self.assertIn("command", server)
         self.assertIn("args", server)
         self.assertIn("serve-mcp", server["args"])
@@ -78,8 +78,37 @@ class TestMcpConfig(unittest.TestCase):
 
             saved = json.loads(cfg_file.read_text(encoding="utf-8"))
             self.assertIn("existing-server", saved["mcpServers"])
-            self.assertIn("codex-local-agent", saved["mcpServers"])
+            self.assertIn("local-coding-agent", saved["mcpServers"])
+
+    def test_auto_detect_clients_with_workspace_cursor_and_vscode(self):
+        from local_coding_agent.mcp_config import detect_installed_clients
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            (ws / ".cursor").mkdir()
+            (ws / ".vscode").mkdir()
+
+            detected = detect_installed_clients(workspace=ws)
+            self.assertIn("cursor", detected)
+            self.assertIn("vscode", detected)
+
+    def test_integrate_auto_clients_writes_to_detected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir)
+            cursor_dir = ws / ".cursor"
+            cursor_dir.mkdir()
+
+            res = integrate_mcp_config(
+                client="auto",
+                workspace=ws,
+                profile="qwen3-8b-q6k",
+                dry_run=False,
+            )
+            self.assertTrue((cursor_dir / "mcp.json").exists())
+            saved = json.loads((cursor_dir / "mcp.json").read_text(encoding="utf-8"))
+            self.assertIn("local-coding-agent", saved["mcpServers"])
 
 
 if __name__ == "__main__":
     unittest.main()
+

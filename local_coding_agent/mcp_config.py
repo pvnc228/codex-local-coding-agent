@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any
 
 
-def get_client_config_path(client: str) -> Path:
+def get_client_config_path(client: str, workspace: str | Path = ".") -> Path:
     client_norm = client.lower().strip()
     home = Path.home()
+    ws = Path(workspace).resolve()
 
     if client_norm in ("claude", "claude-desktop", "claudedesktop"):
         if sys.platform == "win32":
@@ -26,16 +27,47 @@ def get_client_config_path(client: str) -> Path:
         return base / "Claude" / "claude_desktop_config.json"
 
     if client_norm in ("cursor", "cursor-ide"):
-        # Cursor workspace-level .cursor/mcp.json or user config
-        return Path.cwd() / ".cursor" / "mcp.json"
+        return ws / ".cursor" / "mcp.json"
 
     if client_norm in ("windsurf", "codeium"):
         return home / ".codeium" / "windsurf" / "mcp_config.json"
 
     if client_norm in ("vscode", "roo", "cline"):
-        return Path.cwd() / ".vscode" / "mcp.json"
+        return ws / ".vscode" / "mcp.json"
 
     raise ValueError(f"Unsupported MCP client: {client}. Supported: claude, cursor, windsurf, vscode")
+
+
+def detect_installed_clients(workspace: str | Path = ".") -> list[str]:
+    """Detect available IDE / MCP clients in workspace and host environment."""
+    ws = Path(workspace).resolve()
+    detected: list[str] = []
+
+    # Check workspace directories
+    if (ws / ".cursor").is_dir():
+        detected.append("cursor")
+    if (ws / ".vscode").is_dir():
+        detected.append("vscode")
+
+    # Check user-level configurations
+    try:
+        claude_path = get_client_config_path("claude", ws)
+        if claude_path.parent.is_dir() or claude_path.exists():
+            detected.append("claude")
+    except Exception:
+        pass
+
+    try:
+        windsurf_path = get_client_config_path("windsurf", ws)
+        if windsurf_path.parent.is_dir() or windsurf_path.exists():
+            detected.append("windsurf")
+    except Exception:
+        pass
+
+    if not detected:
+        detected = ["claude", "cursor"]
+
+    return detected
 
 
 def generate_mcp_config_dict(
@@ -43,7 +75,7 @@ def generate_mcp_config_dict(
     profile: str = "qwen3-8b-q6k",
     endpoint: str | None = None,
     command: str | None = None,
-    server_name: str = "codex-local-agent",
+    server_name: str = "local-coding-agent",
 ) -> dict[str, Any]:
     cmd = command or sys.executable
     args = ["-m", "local_coding_agent", "serve-mcp", "--workspace", str(Path(workspace).resolve()), "--profile", profile]
@@ -67,9 +99,35 @@ def integrate_mcp_config(
     target_path: Path | None = None,
     dry_run: bool = False,
     endpoint: str | None = None,
-    server_name: str = "codex-local-agent",
+    server_name: str = "local-coding-agent",
 ) -> dict[str, Any]:
-    resolved_path = target_path if target_path is not None else get_client_config_path(client)
+    client_norm = client.lower().strip()
+
+    if client_norm in ("auto", "all", "*"):
+        targets = detect_installed_clients(workspace)
+        sub_results = []
+        all_written = True
+        for tgt in targets:
+            sub_res = integrate_mcp_config(
+                client=tgt,
+                workspace=workspace,
+                profile=profile,
+                dry_run=dry_run,
+                endpoint=endpoint,
+                server_name=server_name,
+            )
+            sub_results.append(sub_res)
+            if not sub_res.get("written", False):
+                all_written = False
+        return {
+            "client": client,
+            "detected_clients": targets,
+            "results": sub_results,
+            "dry_run": dry_run,
+            "written": all_written if not dry_run else False,
+        }
+
+    resolved_path = target_path if target_path is not None else get_client_config_path(client, workspace)
     snippet = generate_mcp_config_dict(
         workspace=workspace,
         profile=profile,
