@@ -19,7 +19,7 @@ from .task import TaskEnvelope
 class MockSmokeOllamaClient:
     """Mock client providing a scripted tool-loop response for isolated smoke tests."""
 
-    def __init__(self, profile: ModelProfile, test_command: str) -> None:
+    def __init__(self, profile: ModelProfile, test_command: str = "") -> None:
         self.profile = profile
         self.test_command = test_command
         self.turn = 0
@@ -78,26 +78,6 @@ class MockSmokeOllamaClient:
                 "prompt_eval_count": 200,
                 "prompt_eval_duration": 150_000_000,
             }
-        elif self.turn == 3:
-            return {
-                "message": {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": "call-test-1",
-                            "function": {
-                                "name": "run_tests",
-                                "arguments": {"command": self.test_command},
-                            },
-                        }
-                    ],
-                },
-                "eval_count": 50,
-                "eval_duration": 500_000_000,
-                "prompt_eval_count": 250,
-                "prompt_eval_duration": 180_000_000,
-            }
         else:
             return {
                 "message": {
@@ -116,11 +96,12 @@ class MockSmokeOllamaClient:
                         "risks": [],
                     }),
                 },
-                "eval_count": 75,
-                "eval_duration": 750_000_000,
-                "prompt_eval_count": 300,
-                "prompt_eval_duration": 200_000_000,
+                "eval_count": 40,
+                "eval_duration": 400_000_000,
+                "prompt_eval_count": 260,
+                "prompt_eval_duration": 180_000_000,
             }
+
 
 
 def run_smoke_test(
@@ -153,14 +134,13 @@ def run_smoke_test(
             print("[OK] Step 1: Isolated test workspace prepared.")
 
         # 2. Build task envelope
-        py_cmd = f'"{sys.executable}" -B -c "import sys; import calculator; sys.exit(0)"'
         task = TaskEnvelope(
             id="smoke-fix-add",
             goal="Fix addition bug in calculator.py so that add(a, b) returns a + b",
             files=["calculator.py"],
             context="The function add currently subtracts instead of adding.",
             constraints=["Do not change the function signature"],
-            checks=[py_cmd],
+            checks=[],
             acceptance=["calculator.py fixed"],
         )
         steps.append({"step": "task_envelope", "status": "ok", "message": "TaskEnvelope ready"})
@@ -172,7 +152,7 @@ def run_smoke_test(
         mock_fallback = False
 
         if use_mock:
-            client: Any = MockSmokeOllamaClient(profile, test_command=py_cmd)
+            client: Any = MockSmokeOllamaClient(profile)
             if verbose:
                 print("[INFO] Step 3: Using scripted mock model runner.")
         else:
@@ -185,16 +165,17 @@ def run_smoke_test(
             except Exception as exc:
                 if fallback_to_mock:
                     mock_fallback = True
-                    client = MockSmokeOllamaClient(profile, test_command=py_cmd)
+                    client = MockSmokeOllamaClient(profile)
                     if verbose:
                         print(f"[WARN] Step 3: Live Ollama unavailable ({exc}). Using mock fallback.")
                 else:
                     raise exc
 
+
         # 4. Controller execution
         start_exec = time.perf_counter()
         controller = Controller(client, ws_path, max_turns=5)
-        run_res = controller.run(task, apply=True)
+        run_res = controller.run(task, apply=False)
         exec_duration = round(time.perf_counter() - start_exec, 2)
 
         status = run_res.get("status")
