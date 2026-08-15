@@ -21,7 +21,7 @@ SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной �
 Для файлов используй только относительные пути из task allowlist; абсолютные пути и '..' запрещены.
 Если данных не хватает, задай один точный вопрос.
 Патч должен быть минимальным и затрагивать только разрешённые файлы.
-Для propose_patch предпочтителен SEARCH/REPLACE (edits: file+search+replace, номера строк не нужны) либо полный unified diff с корректными hunk headers. Применимость проверяют validator и git.
+Для propose_patch предпочтителен SEARCH/REPLACE (edits: file+search+replace, номера строк не нужны) либо полный unified diff с корректными hunk headers. Применимость проверяют validator и git. В search копируй старый код точно, включая ведущие пробелы каждой строки.
 После завершения верни один JSON без markdown: {"status":"candidate","summary":"...","patch":"<diff>","checks":[],"risks":[]}. Вместо "patch" можно "edits":[{"file","search","replace"}]. Патч из propose_patch можно не дублировать."""
 
 
@@ -72,7 +72,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Return a complete change proposal without writing files. "
                 "Prefer SEARCH/REPLACE: provide a list of edits, each copying the "
                 "current code exactly (search) and the new code (replace); no line "
-                "numbers needed. Alternatively provide one complete unified diff "
+                "numbers needed. Copy the search block BYTE-FOR-BYTE from the file "
+                "including every leading space/indent of each line; a line that "
+                "starts with spaces in the file must keep those spaces in search. "
+                "Alternatively provide one complete unified diff "
                 "with diff --git, ---, +++ and valid hunk headers. Use real newlines "
                 "and relative allowlisted paths. Applicability is checked by the "
                 "controller-owned validator and git."

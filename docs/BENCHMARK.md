@@ -198,3 +198,15 @@ Product race (`repeats=3`) на четырёх fixtures среди доступ�
 - `qwen3.8-27b-q4` — первый профиль с устойчиво ненулевой loop reliability и лучший по correctness как на 4, так и на 20 задачах. Гипотеза о нативной Developer Role и корректном завершении tool loop подтверждается.
 - Quant A/B и расширенный product race ограничены: q5/q6/q3 не импортируются из-за диска (см. [MODEL_RESEARCH.md](MODEL_RESEARCH.md)), Muse/Nemotron — по OOM/import-reject из второй волны.
 - Единственный систематический дефект — потеря ведущего отступа в `search` для SEARCH/REPLACE. Следующий шаг: усилить подсказку про точное копирование строк с отступами (или перейти к allowlist строковых/структурных edits), после чего перепрогнать.
+
+## Fix подсказки про отступы SEARCH/REPLACE — 2026-08-15
+
+Подсказка `propose_patch` (system contract и tool description) усилена явным требованием копировать `search` точно, включая ведущие пробелы каждой строки. Это закрыло единственный систематический дефект третьей волны (`edit search block is not line-aligned`).
+
+Прогон `qwen3.8-27b-q4` на 20 задачах после фикса. Artifact локально в gitignored `.codex-run/benchmarks/qwen3.8-27b-q4-extended20-hint-20260815.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **100%** | **100%** | 100% | 100% | 61 |
+
+Все 20 задач решены корректно и доведены до `accepted` чистым финальным JSON. Это первый прогон в истории проекта со 100% correctness и 100% loop reliability одновременно. Остаточный дефект был протокольным (недостаточно явная инструкция про отступы), а не ограничением модели.
