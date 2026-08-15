@@ -90,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     doc_p = subparsers.add_parser("doctor", help="Run system diagnostics and model recommendations")
     doc_p.add_argument("--endpoint", default="http://127.0.0.1:11434", help="Ollama endpoint to check")
     doc_p.add_argument("--json", action="store_true", help="Output diagnostic report in JSON format")
+    doc_p.add_argument("--strict", action="store_true", help="Exit with code 1 if any check fails")
+
 
     # init-mcp
     mcp_p = subparsers.add_parser("init-mcp", help="Generate or configure MCP client integration")
@@ -139,7 +141,10 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
         else:
             print(report.render_text())
-        return 0 if report.healthy else 1
+        if getattr(args, "strict", False):
+            return 0 if report.healthy else 1
+        return 0
+
 
     if sub == "init-mcp":
         dry_run = not args.write or args.dry_run

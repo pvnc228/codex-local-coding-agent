@@ -374,21 +374,38 @@ class BoundedRepositoryTools:
 
     @staticmethod
     def _isolated_environment() -> dict[str, str]:
-        allowed = {
+        allowed_upper = {
+            "APPDATA",
+            "COMMONPROGRAMFILES",
+            "COMMONPROGRAMFILES(X86)",
             "COMSPEC",
+            "HOME",
+            "HOMEDRIVE",
+            "HOMEPATH",
             "LANG",
             "LC_ALL",
+            "LD_LIBRARY_PATH",
+            "LOCALAPPDATA",
             "PATH",
             "PATHEXT",
+            "PROGRAMDATA",
+            "PROGRAMFILES",
+            "PROGRAMFILES(X86)",
+            "PYTHONHOME",
             "PYTHONIOENCODING",
+            "PYTHONPATH",
             "PYTHONUTF8",
-            "SystemRoot",
+            "SYSTEMDRIVE",
+            "SYSTEMROOT",
             "TEMP",
             "TMP",
             "TMPDIR",
+            "USERPROFILE",
+            "VIRTUAL_ENV",
             "WINDIR",
         }
-        return {key: value for key, value in os.environ.items() if key in allowed}
+        return {key: value for key, value in os.environ.items() if key.upper() in allowed_upper}
+
 
     @staticmethod
     def _process_group_options() -> dict[str, Any]:
