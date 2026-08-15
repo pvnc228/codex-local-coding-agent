@@ -38,14 +38,14 @@ class CliTests(unittest.TestCase):
                 "--vram-limit-bytes",
                 "1000000",
                 "--keep-model",
-                "bonsai-64k:latest",
+                "qwen3-8b-q6k:latest",
             ]
         )
 
         self.assertEqual(args.num_ctx, 16_384)
         self.assertTrue(args.unload_all)
         self.assertEqual(args.vram_limit_bytes, 1_000_000)
-        self.assertEqual(args.keep_model, ["bonsai-64k:latest"])
+        self.assertEqual(args.keep_model, ["qwen3-8b-q6k:latest"])
 
     def test_cli_exposes_benchmark_controls(self):
         args = build_parser().parse_args(
@@ -89,10 +89,10 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.dry_run)
 
     def test_cli_subcommand_test_run(self):
-        args = build_parser().parse_args(["test-run", "--mock", "--profile", "bonsai-64k"])
+        args = build_parser().parse_args(["test-run", "--mock", "--profile", "qwen3-8b-q6k"])
         self.assertEqual(args.subcommand, "test-run")
         self.assertTrue(args.mock)
-        self.assertEqual(args.profile, "bonsai-64k")
+        self.assertEqual(args.profile, "qwen3-8b-q6k")
 
     def test_cli_subcommand_serve_mcp(self):
         args = build_parser().parse_args(["serve-mcp", "--workspace", "c:/code", "--enable-tasks"])

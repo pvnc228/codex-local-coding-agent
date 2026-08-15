@@ -166,7 +166,6 @@ Evaluated against atomic coding benchmarks using deterministic external oracle v
 | **`qwen3-8b-q6k`** | Q6_K GGUF | 8,192 tok | **~85-110 tok/s** | **100%** | ~8-12 GB | Daily coding workhorse, fast refactors |
 | **`qwen3.8-27b-q4`** | Q4_K_M GGUF | 8,192 tok | **~45-65 tok/s** | **100%** | ~16-24 GB | Complex logic & multi-file changes |
 | **`qwen2.5-coder`** | 7B / 14B Q4 | 8,192 tok | **~75 tok/s** | **95%** | ~6-10 GB | General code completions |
-| **`bonsai-64k`** | Custom 64k | 65,536 tok | **~60 tok/s** | **92%** | ~12-16 GB | Large context reading |
 
 > Full evaluation methodology and logs: [docs/BENCHMARK.md](docs/BENCHMARK.md)
 

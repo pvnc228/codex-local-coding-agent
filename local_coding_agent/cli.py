@@ -245,12 +245,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.benchmark_timeout_seconds <= 0:
                 raise ValueError("--benchmark-timeout-seconds must be positive")
             names = tuple(args.benchmark_models or (
-                "bonsai-64k",
+                "qwen3-8b-q6k",
+                "qwen3.8-27b-q4",
                 "qwen2.5-coder",
                 "ornith-9b",
                 "qwen3-coder-30b",
                 "devstral-small-2-24b",
-                "ternary-bonsai-27b",
             ))
             artifact = {
                 "schema": "codex-local-coding-agent/benchmark-v1",

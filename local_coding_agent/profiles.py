@@ -8,16 +8,6 @@ from .ollama_adapter import ModelProfile
 
 
 _PROFILES = {
-    "bonsai-64k": ModelProfile(
-        name="bonsai-64k",
-        model="bonsai-64k:latest",
-        think=False,
-        temperature=0,
-        num_ctx=8192,
-        num_predict=512,
-        keep_alive="10m",
-        max_context_length=262_144,
-    ),
     "qwen2.5-1.5b": ModelProfile(
         name="qwen2.5-1.5b",
         model="qwen2.5:1.5b",
@@ -67,16 +57,6 @@ _PROFILES = {
         num_predict=512,
         keep_alive="10m",
         max_context_length=393_216,
-    ),
-    "ternary-bonsai-27b": ModelProfile(
-        name="ternary-bonsai-27b",
-        model="codex-ternary-bonsai-27b:latest",
-        think=False,
-        temperature=0,
-        num_ctx=8192,
-        num_predict=512,
-        keep_alive="10m",
-        max_context_length=262_144,
     ),
     "qwen3-8b-q6k": ModelProfile(
         name="qwen3-8b-q6k",

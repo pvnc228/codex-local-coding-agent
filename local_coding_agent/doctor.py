@@ -1,4 +1,4 @@
-"""Diagnostic wizard and environment validator for codex-local-coding-agent."""
+"""Diagnostic wizard and environment validator for local-coding-agent."""
 
 from __future__ import annotations
 
@@ -33,12 +33,6 @@ RECOMMENDED_PROFILES = [
         "model": "qwen2.5-coder:latest",
         "description": "Standard coding workhorse (7B / 14B)",
         "pull_cmd": "ollama pull qwen2.5-coder",
-    },
-    {
-        "name": "bonsai-64k",
-        "model": "bonsai-64k:latest",
-        "description": "High context window (64k-256k)",
-        "pull_cmd": "ollama pull bonsai-64k",
     },
 ]
 

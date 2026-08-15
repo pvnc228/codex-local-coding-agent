@@ -42,7 +42,7 @@ class TestDoctor(unittest.TestCase):
         mock_client.available_models.return_value = {
             "models": [
                 {"name": "qwen2.5-coder:latest", "size": 4500000000},
-                {"name": "bonsai-64k:latest", "size": 8000000000},
+                {"name": "qwen3-8b-q6k:latest", "size": 8000000000},
             ]
         }
         mock_client.endpoint = "http://127.0.0.1:11434"

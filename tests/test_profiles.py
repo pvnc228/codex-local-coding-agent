@@ -10,7 +10,6 @@ class ModelProfileTests(unittest.TestCase):
         self.assertEqual(
             names,
             (
-                "bonsai-64k",
                 "devstral-small-2-24b",
                 "nemotron-30b-mxfp4",
                 "ornith-9b",
@@ -24,7 +23,6 @@ class ModelProfileTests(unittest.TestCase):
                 "qwen3.8-27b-q4",
                 "qwen3.8-27b-q5",
                 "qwen3.8-27b-think",
-                "ternary-bonsai-27b",
             ),
         )
         profile = get_profile("qwen2.5-coder")

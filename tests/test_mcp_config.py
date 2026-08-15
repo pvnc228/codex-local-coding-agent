@@ -89,7 +89,7 @@ class TestMcpConfig(unittest.TestCase):
             res = integrate_mcp_config(
                 client="claude",
                 workspace=tmpdir,
-                profile="bonsai-64k",
+                profile="qwen3-8b-q6k",
                 target_path=cfg_file,
                 dry_run=False,
             )
