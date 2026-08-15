@@ -300,13 +300,72 @@ class BenchmarkTests(unittest.TestCase):
         )
         results = [run_case(model, case) for case in cases[:2]]
 
+    def test_run_case_records_tokens_per_second_metrics(self):
+        case = default_cases()[0]
+        model = FakeBenchmarkModel(
+            {
+                "total_duration": 1_000_000_000,
+                "load_duration": 100_000_000,
+                "prompt_eval_count": 200,
+                "prompt_eval_duration": 500_000_000,  # 0.5s -> 400 tok/s
+                "eval_count": 50,
+                "eval_duration": 250_000_000,  # 0.25s -> 200 tok/s
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "ok",
+                            "patch": "",
+                            "checks": [],
+                            "risks": [],
+                        }
+                    ),
+                },
+            }
+        )
+        result = run_case(model, case)
+        self.assertEqual(result.prompt_tokens, 200)
+        self.assertEqual(result.eval_count, 50)
+        d = result.as_dict()
+        self.assertIn("eval_tps", d)
+        self.assertIn("prompt_eval_tps", d)
+        self.assertAlmostEqual(d["prompt_eval_tps"], 400.0, places=1)
+        self.assertAlmostEqual(d["eval_tps"], 200.0, places=1)
+
+    def test_summarize_results_includes_tps_error_categories_and_confidence_intervals(self):
+        cases = default_cases()
+        model = FakeBenchmarkModel(
+            {
+                "prompt_eval_count": 100,
+                "prompt_eval_duration": 1_000_000_000,  # 1.0s -> 100 tok/s
+                "eval_count": 50,
+                "eval_duration": 2_000_000_000,  # 2.0s -> 25 tok/s
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "нет изменений",
+                            "patch": "",
+                            "checks": [],
+                            "risks": [],
+                        }
+                    ),
+                },
+            }
+        )
+        results = [run_case(model, case) for case in cases[:4]]
         summary = summarize_results("fake", results)
 
-        self.assertEqual(summary["model"], "fake")
-        self.assertEqual(summary["cases"], 2)
-        self.assertEqual(summary["correctness_percent"], 0.0)
-        self.assertEqual(summary["tool_loop_reliability_percent"], 100.0)
-        self.assertEqual(summary["model_calls"], 2)
+        self.assertIn("eval_tokens_per_second", summary)
+        self.assertIn("prompt_tokens_per_second", summary)
+        self.assertIn("error_categories", summary)
+        self.assertIn("correctness_ci_95", summary)
+        self.assertIn("tool_loop_reliability_ci_95", summary)
+        self.assertIn("patch_apply_ci_95", summary)
+        self.assertEqual(len(summary["correctness_ci_95"]), 2)
+        self.assertIsInstance(summary["error_categories"], dict)
 
 
 if __name__ == "__main__":

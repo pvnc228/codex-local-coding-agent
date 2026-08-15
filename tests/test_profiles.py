@@ -54,5 +54,17 @@ class ModelProfileTests(unittest.TestCase):
             get_profile("qwen2.5-1.5b", num_ctx=32_769)
 
 
+    def test_get_profile_defaults_for_qwen3_8b_and_sampling_options(self):
+        profile = get_profile("qwen3-8b-q6k")
+        self.assertEqual(profile.temperature, 0.7)
+        self.assertEqual(profile.top_p, 0.80)
+        self.assertEqual(profile.presence_penalty, 1.5)
+
+        custom = get_profile("qwen3-8b-q6k", top_k=40, min_p=0.05, seed=42)
+        self.assertEqual(custom.top_k, 40)
+        self.assertEqual(custom.min_p, 0.05)
+        self.assertEqual(custom.seed, 42)
+
+
 if __name__ == "__main__":
     unittest.main()

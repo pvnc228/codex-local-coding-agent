@@ -342,9 +342,10 @@ class Controller:
                                 if isinstance(path, str):
                                     viewed_files.add(path)
                         elif name == "propose_patch":
-                            patch = result.get("patch")
-                            if isinstance(patch, str):
-                                last_patch[:] = [patch]
+                            if result.get("ok", True) is not False:
+                                patch = result.get("patch")
+                                if isinstance(patch, str):
+                                    last_patch[:] = [patch]
                         if name == "run_tests":
                             observed_checks[arguments["command"]] = {
                                 "command": arguments["command"],

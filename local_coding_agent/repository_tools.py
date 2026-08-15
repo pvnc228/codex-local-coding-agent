@@ -182,7 +182,9 @@ class BoundedRepositoryTools:
         except ToolPolicyError as error:
             self._record(name, arguments, False, str(error))
             raise
-        self._record(name, arguments, True, None)
+        success = result.get("ok", True) is not False
+        error_msg = result.get("error") if not success else None
+        self._record(name, arguments, success, error_msg)
         return result
 
     def _run_tests(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -482,25 +484,41 @@ class BoundedRepositoryTools:
                 max_patch_bytes=self.max_patch_bytes,
             )
             if edit_issues:
-                raise ToolPolicyError("; ".join(edit_issues))
+                return {
+                    "ok": False,
+                    "error": f"propose_patch rejected: {'; '.join(edit_issues)}",
+                    "status": "error",
+                }
             applies, detail = check_patch_applies(self.workspace_root, resolved)
             if not applies:
-                raise ToolPolicyError(f"patch does not apply cleanly: {detail}")
+                return {
+                    "ok": False,
+                    "error": f"propose_patch rejected: patch does not apply cleanly: {detail}",
+                    "status": "error",
+                }
             return {"patch": resolved, "edits": edits, "files": sorted(changed)}
 
         if len(patch.encode("utf-8")) > self.max_patch_bytes:
             raise ToolPolicyError(f"patch exceeds max_patch_bytes={self.max_patch_bytes}")
         _, diff_issues = parse_unified_diff(patch)
         if diff_issues:
-            raise ToolPolicyError("; ".join(diff_issues))
+            return {
+                "ok": False,
+                "error": f"propose_patch rejected: {'; '.join(diff_issues)}",
+                "status": "error",
+            }
 
         paths: list[str] = []
         has_hunk = False
         for line in patch.splitlines():
             if line.startswith("diff --git "):
-                match = re.fullmatch(r"diff --git a/(.+) b/(.+)", line)
+                match = re.fullmatch(r"diff --git mechanical a/(.+) b/(.+)", line) or re.fullmatch(r"diff --git a/(.+) b/(.+)", line)
                 if not match:
-                    raise ToolPolicyError("patch has invalid diff header")
+                    return {
+                        "ok": False,
+                        "error": "propose_patch rejected: patch has invalid diff header",
+                        "status": "error",
+                    }
                 for raw_path in match.groups():
                     normalized = self._patch_path(raw_path, prefix=None)
                     if normalized is not None and normalized not in paths:
@@ -513,13 +531,22 @@ class BoundedRepositoryTools:
             elif line.startswith("@@ "):
                 has_hunk = True
         if not paths or not has_hunk:
-            raise ToolPolicyError("patch is not a unified diff")
+            return {
+                "ok": False,
+                "error": "propose_patch rejected: patch is not a unified diff",
+                "status": "error",
+            }
         if len(paths) > self.max_patch_files:
             raise ToolPolicyError(f"patch exceeds max_patch_files={self.max_patch_files}")
         applies, detail = check_patch_applies(self.workspace_root, patch)
         if not applies:
-            raise ToolPolicyError(f"patch does not apply cleanly: {detail}")
+            return {
+                "ok": False,
+                "error": f"propose_patch rejected: patch does not apply cleanly: {detail}",
+                "status": "error",
+            }
         return {"patch": patch, "files": sorted(paths)}
+
 
     def _patch_path(self, raw_path: str, *, prefix: str | None) -> str | None:
         del prefix

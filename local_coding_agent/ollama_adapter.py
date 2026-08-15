@@ -29,6 +29,14 @@ class ModelProfile:
     keep_alive: str = "10m"
     timeout_seconds: float = 30
     max_context_length: int | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    repeat_penalty: float | None = None
+    seed: int | None = None
+    stop: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.num_ctx <= 0:
@@ -88,21 +96,40 @@ class OllamaClient:
         self._transport = transport or UrllibTransport(profile.endpoint)
 
     def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "temperature": self.profile.temperature,
+            "num_ctx": self.profile.num_ctx,
+            "num_predict": self.profile.num_predict,
+        }
+        if self.profile.top_p is not None:
+            options["top_p"] = self.profile.top_p
+        if self.profile.top_k is not None:
+            options["top_k"] = self.profile.top_k
+        if self.profile.min_p is not None:
+            options["min_p"] = self.profile.min_p
+        if self.profile.presence_penalty is not None:
+            options["presence_penalty"] = self.profile.presence_penalty
+        if self.profile.frequency_penalty is not None:
+            options["frequency_penalty"] = self.profile.frequency_penalty
+        if self.profile.repeat_penalty is not None:
+            options["repeat_penalty"] = self.profile.repeat_penalty
+        if self.profile.seed is not None:
+            options["seed"] = self.profile.seed
+        if self.profile.stop is not None:
+            options["stop"] = list(self.profile.stop)
+
         payload: dict[str, Any] = {
             "model": self.profile.model,
             "messages": messages,
             "stream": False,
             "think": self.profile.think,
             "keep_alive": self.profile.keep_alive,
-            "options": {
-                "temperature": self.profile.temperature,
-                "num_ctx": self.profile.num_ctx,
-                "num_predict": self.profile.num_predict,
-            },
+            "options": options,
         }
         if tools is not None:
             payload["tools"] = tools
         return self._request_json("POST", "/api/chat", payload)
+
 
     def loaded_models(self) -> dict[str, Any]:
         return self._request_json("GET", "/api/ps")

@@ -128,5 +128,46 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(json_error.exception.kind, "invalid_json")
 
 
+    def test_chat_sends_sampling_options_when_configured(self):
+        profile = ModelProfile(
+            name="sampling-coder",
+            model="codex-qwen3-8b-q6k:latest",
+            temperature=0.7,
+            top_p=0.8,
+            top_k=40,
+            min_p=0.05,
+            presence_penalty=1.5,
+            frequency_penalty=0.5,
+            repeat_penalty=1.1,
+            seed=1234,
+            stop=("</s>", "###"),
+        )
+        transport = FakeTransport(
+            [
+                (
+                    200,
+                    json.dumps(
+                        {"message": {"role": "assistant", "content": "done"}},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                )
+            ]
+        )
+        client = OllamaClient(profile, transport=transport)
+        client.chat([{"role": "user", "content": "hi"}])
+
+        payload = json.loads(transport.requests[0]["body"].decode("utf-8"))
+        options = payload["options"]
+        self.assertEqual(options["temperature"], 0.7)
+        self.assertEqual(options["top_p"], 0.8)
+        self.assertEqual(options["top_k"], 40)
+        self.assertEqual(options["min_p"], 0.05)
+        self.assertEqual(options["presence_penalty"], 1.5)
+        self.assertEqual(options["frequency_penalty"], 0.5)
+        self.assertEqual(options["repeat_penalty"], 1.1)
+        self.assertEqual(options["seed"], 1234)
+        self.assertEqual(options["stop"], ["</s>", "###"])
+
+
 if __name__ == "__main__":
     unittest.main()

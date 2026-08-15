@@ -139,9 +139,6 @@ class RepositoryToolsTests(unittest.TestCase):
             tools.execute("propose_patch", {"patch": outside_patch})
 
     def test_propose_patch_rejects_malformed_corrupt_hunk(self):
-        # A hunk that declares more lines than it carries is a corrupt patch;
-        # the parser no longer flags the count mismatch itself, but git apply
-        # still rejects it, preserving the security intent.
         patch = (
             "diff --git a/src/allowed.py b/src/allowed.py\n"
             "--- a/src/allowed.py\n"
@@ -150,11 +147,11 @@ class RepositoryToolsTests(unittest.TestCase):
             "-VALUE = 42\n"
             "+VALUE = 43\n"
         )
-
-        with self.assertRaisesRegex(ToolPolicyError, "corrupt|does not apply"):
-            BoundedRepositoryTools(self.workspace, self.task).execute(
-                "propose_patch", {"patch": patch}
-            )
+        result = BoundedRepositoryTools(self.workspace, self.task).execute(
+            "propose_patch", {"patch": patch}
+        )
+        self.assertFalse(result.get("ok", True))
+        self.assertIn("error", result)
 
     def test_propose_patch_rejects_valid_diff_with_wrong_file_context(self):
         patch = (
@@ -165,11 +162,11 @@ class RepositoryToolsTests(unittest.TestCase):
             "-VALUE = 41\n"
             "+VALUE = 43\n"
         )
-
-        with self.assertRaisesRegex(ToolPolicyError, "does not apply"):
-            BoundedRepositoryTools(self.workspace, self.task).execute(
-                "propose_patch", {"patch": patch}
-            )
+        result = BoundedRepositoryTools(self.workspace, self.task).execute(
+            "propose_patch", {"patch": patch}
+        )
+        self.assertFalse(result.get("ok", True))
+        self.assertIn("does not apply", result["error"])
 
     def test_run_tests_executes_only_an_exactly_allowlisted_command(self):
         command = f'"{sys.executable}" -B -c "print(\'check ok\')"'
@@ -331,15 +328,17 @@ class RepositoryToolsTests(unittest.TestCase):
 
     def test_propose_patch_rejects_edits_with_bad_search(self):
         tools = BoundedRepositoryTools(self.workspace, self.task)
-        with self.assertRaisesRegex(ToolPolicyError, "not found"):
-            tools.execute(
-                "propose_patch",
-                {
-                    "edits": [
-                        {"file": "src/allowed.py", "search": "NOPE", "replace": "VALUE = 43"}
-                    ]
-                },
-            )
+        result = tools.execute(
+            "propose_patch",
+            {
+                "edits": [
+                    {"file": "src/allowed.py", "search": "NOPE", "replace": "VALUE = 43"}
+                ]
+            },
+        )
+        self.assertFalse(result.get("ok", True))
+        self.assertIn("not found", result["error"])
+
 
     def test_propose_patch_rejects_both_patch_and_edits(self):
         tools = BoundedRepositoryTools(self.workspace, self.task)

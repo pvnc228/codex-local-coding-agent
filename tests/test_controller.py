@@ -17,7 +17,7 @@ class FakeModel:
         self.requests = []
 
     def chat(self, messages, *, tools=None):
-        self.requests.append({"messages": messages, "tools": tools})
+        self.requests.append({"messages": list(messages), "tools": tools})
         return self.responses.pop(0)
 
 
@@ -1089,6 +1089,88 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["error"]["kind"], "cancelled")
         self.assertNotIn("escalation", result)
         self.assertEqual(model.requests, [])
+
+
+    def test_controller_provides_feedback_for_propose_patch_error_and_allows_correction(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="patch-feedback-correction",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            # Turn 1: model tries edits with non-matching search block
+            turn1_call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "function": {
+                                "name": "propose_patch",
+                                "arguments": {
+                                    "edits": [
+                                        {
+                                            "file": "src/value.py",
+                                            "search": "WRONG_SEARCH",
+                                            "replace": "VALUE = 2",
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ],
+                }
+            }
+            # Turn 2: model sees error in tool message and issues corrected edits
+            turn2_call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call-2",
+                            "function": {
+                                "name": "propose_patch",
+                                "arguments": {
+                                    "edits": [
+                                        {
+                                            "file": "src/value.py",
+                                            "search": "VALUE = 1",
+                                            "replace": "VALUE = 2",
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ],
+                }
+            }
+            # Turn 3: model finishes with candidate
+            turn3_call = {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "значение успешно обновлено",
+                            "checks": [],
+                            "risks": [],
+                        }
+                    ),
+                }
+            }
+            model = FakeModel([turn1_call, turn2_call, turn3_call])
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertIn("VALUE = 2", result["patch"])
+        # Verify turn 2 tool feedback contained the error detail
+        turn2_messages = model.requests[1]["messages"]
+        self.assertEqual(turn2_messages[-1]["role"], "tool")
+        self.assertIn("propose_patch rejected", turn2_messages[-1]["content"])
+        self.assertIn("not found", turn2_messages[-1]["content"])
 
 
 if __name__ == "__main__":
