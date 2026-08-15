@@ -229,3 +229,16 @@ Product race (`repeats=3`) на четырёх fixtures среди доступ�
 ### Вывод по малым моделям
 
 `qwen3-8b-q6k` — практичная замена 27B для коротких атомарных задач: 90/95% при вчетверо меньшем весе и полном размещении в 8 GB VRAM. Для моделей без native tool calling (`qwen2.5-coder`) дальнейшие усилия по подсказкам неэффективны — их путь либо `content`-JSON fallback, либо исключение из tool-loop кандидатов.
+
+## Throughput (TPS) рабочих профилей — 2026-08-15
+
+Замер на локальной машине (RTX 4060 8 GB VRAM, 31.9 GB RAM, Ollama 0.32.5), `num_ctx=8192`, `num_predict=256`, `think=false`, `temperature=0.7`. Первый замер включает загрузку модели; «тёплый» — повторный запрос при уже загруженной модели.
+
+| Profile | Размер | Generation (тёплый) | Prefill | Режим |
+| --- | ---: | ---: | ---: | --- |
+| `qwen3.8-27b-q4` | 17.1 GB | ~2.69 tok/s | ~7.0 tok/s | CPU-bound, частичный offload |
+| `qwen3-8b-q6k` | 6.7 GB | ~18.1 tok/s | ~172 tok/s | близко к полному GPU-offload |
+
+Методика: `eval_count / eval_duration` для generation, `prompt_eval_count / prompt_eval_duration` для prefill, из ответа `/api/chat` (без учёта `total_duration`/`load_duration`). Это разовый замер на одной машине, не воспроизводимый gate; для количественного сравнения скорости модели следует добавить TPS в artifact benchmark.
+
+Вывод: `qwen3-8b-q6k` в ~6.5 раз быстрее по generation при 90/95% качества — для очереди из коротких атомарных задач это предпочтительный профиль по latency; 27B остаётся reference по correctness (100%).
