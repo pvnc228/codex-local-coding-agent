@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Deque, Mapping
 
 from .service import DelegationRequest
+from .task_store import TaskRecord, TaskStore
+
 
 
 _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
@@ -118,6 +120,7 @@ class BoundedWorkerPool:
         max_queue: int = 16,
         max_completed_jobs: int = 256,
         execution_gate: SharedExecutionGate | None = None,
+        task_store: TaskStore | None = None,
     ) -> None:
         if max_workers <= 0:
             raise ValueError("max_workers must be positive")
@@ -134,8 +137,30 @@ class BoundedWorkerPool:
         self._max_workers = max_workers
         self._max_queue = max_queue
         self._execution_gate = execution_gate
+        self._task_store = task_store
         self._active_workers = 0
         self._stopping = False
+        if self._task_store is not None:
+            for record in self._task_store.list(limit=self._max_completed_jobs):
+                completed_evt = threading.Event()
+                completed_evt.set()
+                job = _Job(
+                    job_id=record.task_id,
+                    caller_id=record.caller_id,
+                    request_key=(record.caller_id, record.workspace_ref, record.request_id),
+                    fingerprint="",
+                    request=None,  # type: ignore[arg-type]
+                    state=record.state,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                    result=record.result,
+                    cancel_event=threading.Event(),
+                    execution_complete=threading.Event(),
+                    completed=completed_evt,
+                )
+                self._jobs[record.task_id] = job
+                self._idempotency[job.request_key] = job.job_id
+
         self._workers = [
             threading.Thread(
                 target=self._worker_loop,
@@ -146,6 +171,26 @@ class BoundedWorkerPool:
         ]
         for worker in self._workers:
             worker.start()
+
+    def _persist_job(self, job: _Job) -> None:
+        if self._task_store is None:
+            return
+        try:
+            record = TaskRecord(
+                task_id=job.job_id,
+                caller_id=job.caller_id,
+                request_id=job.request.request_id if job.request else job.job_id,
+                workspace_ref=job.request.workspace_ref if job.request else "",
+                model_profile=job.request.model_profile if job.request else "",
+                state=job.state,
+                created_at=job.created_at,
+                updated_at=job.updated_at,
+                result=job.result,
+                error=job.result.get("error") if isinstance(job.result, dict) else None,
+            )
+            self._task_store.save(record)
+        except Exception:
+            pass
 
     def submit(self, caller_id: str, request: DelegationRequest) -> dict[str, Any]:
         """Queue one proposal-only request or return a bounded policy failure."""
@@ -202,8 +247,10 @@ class BoundedWorkerPool:
             self._jobs[job.job_id] = job
             self._idempotency[request_key] = job.job_id
             self._queue.append(job.job_id)
+            self._persist_job(job)
             self._condition.notify()
             return self._snapshot(job)
+
 
     def get(self, caller_id: str, job_id: str) -> dict[str, Any]:
         """Return a caller-scoped job snapshot without waiting."""
@@ -275,6 +322,7 @@ class BoundedWorkerPool:
                 job.updated_at = _now_iso()
                 self._release_execution_lease(job)
                 self._complete_locked(job)
+                self._persist_job(job)
                 self._condition.notify_all()
                 return self._snapshot(job)
             if job.state == "working":
@@ -301,6 +349,7 @@ class BoundedWorkerPool:
                 job.state = "cancelled"
                 self._release_execution_lease(job)
                 self._complete_locked(job)
+                self._persist_job(job)
             for job in self._jobs.values():
                 if job.state == "working" and job.cancel_event is not None:
                     job.cancel_event.set()
@@ -330,34 +379,44 @@ class BoundedWorkerPool:
                 job.state = "working"
                 job.updated_at = _now_iso()
                 self._active_workers += 1
+                self._persist_job(job)
 
             try:
                 assert job.cancel_event is not None
                 assert job.execution_complete is not None
                 if self._execution_gate is not None and job.execution_lease is not None:
                     def delegate_and_wait():
+                        try:
+                            result = self._service.delegate(
+                                job.caller_id,
+                                job.request,
+                                cancel_event=job.cancel_event,
+                                completion_event=job.execution_complete,
+                            )
+                        finally:
+                            job.execution_complete.set()
+                        return result
+
+                    result = self._execution_gate.run_reserved(job.execution_lease, delegate_and_wait)
+                else:
+                    try:
                         result = self._service.delegate(
                             job.caller_id,
                             job.request,
                             cancel_event=job.cancel_event,
                             completion_event=job.execution_complete,
                         )
-                        job.execution_complete.wait()
-                        return result
-
-                    result = self._execution_gate.run_reserved(job.execution_lease, delegate_and_wait)
-                else:
-                    result = self._service.delegate(
-                        job.caller_id,
-                        job.request,
-                        cancel_event=job.cancel_event,
-                        completion_event=job.execution_complete,
-                    )
+                    finally:
+                        job.execution_complete.set()
                 if not isinstance(result, Mapping):
                     raise TypeError("service returned a non-object result")
                 result = dict(result)
             except Exception:  # noqa: BLE001 - worker boundary must terminate the job.
                 result = self._failure("worker_error", "delegation worker failed")
+            finally:
+                if job.execution_complete is not None:
+                    job.execution_complete.set()
+
 
             assert job.execution_complete is not None
             # A service may finish its public call before a cancellable model
@@ -376,7 +435,9 @@ class BoundedWorkerPool:
                     job.state = "failed" if result.get("status") == "failed" else "completed"
                 job.updated_at = _now_iso()
                 self._complete_locked(job)
+                self._persist_job(job)
                 self._condition.notify_all()
+
 
     def _complete_locked(self, job: _Job) -> None:
         assert job.completed is not None

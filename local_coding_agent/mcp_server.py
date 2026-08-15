@@ -165,7 +165,14 @@ if BaseModel is not None:
         return Elicit(message, ApplyConfirmation)
 
 
-def build_server(service: DelegationService, *, enable_tasks: bool = False, max_workers: int = 1, max_queue: int = 16):
+def build_server(
+    service: DelegationService,
+    *,
+    enable_tasks: bool = False,
+    max_workers: int = 1,
+    max_queue: int = 16,
+    task_store: Any | None = None,
+):
     """Build an official-SDK MCP server exposing proposal-only ``delegate_code``.
 
     Args:
@@ -175,6 +182,7 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
             proposal-only path.
         max_workers: Active sync/task worker slots.
         max_queue: Admission queue bound for sync/task work.
+        task_store: Optional durable TaskStore for task state persistence across restarts.
     """
 
     _require_mcp()
@@ -191,8 +199,10 @@ def build_server(service: DelegationService, *, enable_tasks: bool = False, max_
             max_workers=max_workers,
             max_queue=max_queue,
             execution_gate=runtime_gate,
+            task_store=task_store,
         )
         extensions.append(TasksExtension(pool, caller_id=_CALLER_ID))
+
 
     server = MCPServer(
         name=_SERVER_NAME,
