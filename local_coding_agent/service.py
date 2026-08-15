@@ -94,7 +94,7 @@ class DelegationService:
                 raise ValueError("workspace references must be non-empty strings")
             path = Path(raw_path).resolve()
             if not path.is_dir():
-                raise ValueError(f"registered workspace is not a directory: {reference!r}")
+                raise ValueError(f"registered workspace {reference!r} is not a directory: {path}")
             registered[reference] = path
         self._workspaces = registered
         self._apply_locks = {reference: RLock() for reference in registered}

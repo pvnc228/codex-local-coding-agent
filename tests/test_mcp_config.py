@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from local_coding_agent.mcp_config import (
     generate_mcp_config_dict,
@@ -114,7 +115,8 @@ class TestMcpConfig(unittest.TestCase):
             self.assertIn("cline", detected)
 
 
-    def test_integrate_auto_clients_writes_to_detected(self):
+    @mock.patch("local_coding_agent.mcp_config.detect_installed_clients", return_value=["cursor"])
+    def test_integrate_auto_clients_writes_to_detected(self, mock_detect):
         with tempfile.TemporaryDirectory() as tmpdir:
             ws = Path(tmpdir)
             cursor_dir = ws / ".cursor"
