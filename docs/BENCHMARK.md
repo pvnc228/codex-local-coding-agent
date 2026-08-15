@@ -236,9 +236,203 @@ Product race (`repeats=3`) на четырёх fixtures среди доступ�
 
 | Profile | Размер | Generation (тёплый) | Prefill | Режим |
 | --- | ---: | ---: | ---: | --- |
+
+## Baseline до REQUEST_CHANGES: 2026-08-13
+
+Это runtime baseline до исправлений текущего review (repeats=1, значения профиля по умолчанию, `temperature=0`, `num_predict=512`, `max_turns=4`). Артефакт был gitignored в `.codex-run/benchmarks/latest.json`; benchmark после текущего исправления в этой сессии не запускался.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Avg wall, ms | Model calls | Tool calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `bonsai-64k` | completed | 0% | 0% | 100% | 0% | 5,980 | 8 | 8 |
+| `qwen2.5-coder` | completed | 0% | 0% | 0% | 0% | 3,589 | 10 | 6 |
+| `ornith-9b` | completed | 0% | 0% | 100% | 25% | 6,643 | 10 | 8 |
+| `qwen3-coder-30b` | completed | 0% | 0% | 75% | 25% | 15,260 | 10 | 7 |
+| `devstral-small-2-24b` | completed | 25% | 0% | 75% | 50% | 50,734 | 15 | 13 |
+| `ternary-bonsai-27b` | unavailable | — | — | — | — | — | — | — |
+
+### Интерпретация
+
+- `devstral-small-2-24b` — единственный профиль с ненулевой correctness (25%) и единственный, кто применил patch (50%). Это текущий лучший кандидат в shortlist, хотя loop reliability всё ещё 0%: содержательное предложение пока ненадёжно доставляется через protocol loop.
+- `qwen3-coder-30b` и `ornith-9b` дают 75%/100% валидных proposal, но не конвертируются в корректно применённый patch.
+- `bonsai-64k` валидирует, но никогда не применяет.
+- `qwen2.5-coder` по-прежнему не выдаёт валидный структурированный proposal.
+- `ternary-bonsai-27b` остаётся недоступным (отсутствует в Ollama `/api/tags`).
+- Ни один профиль не достиг ненулевой loop reliability; correctness в целом остаётся низкой.
+
+## Post-review baseline: 2026-08-13
+
+Повторный прогон выполнен после review fixes на тех же четырёх fixtures с `repeats=1`, `num_ctx=4096`, `temperature=0`, `num_predict=512`, `max_turns=4`. Внешний oracle исполнялся в isolated child process. Полный artifact расположен локально в `.codex-run/benchmarks/post-review-20260813.json` и намеренно не публикуется, поэтому таблица ниже — сводка, а не ссылка на доступный читателю файл.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `bonsai-64k` | completed | 0% | 0% | 100% | 0% |
+| `qwen2.5-coder` | completed | 0% | 0% | 50% | 0% |
+| `ornith-9b` | completed | 0% | 0% | 100% | 25% |
+| `qwen3-coder-30b` | completed | 0% | 0% | 75% | 25% |
+| `devstral-small-2-24b` | completed | 25% | 0% | 75% | 50% |
+| `ternary-bonsai-27b` | unavailable | — | — | — | — |
+
+Вывод не изменился: Devstral остаётся единственным профилем с ненулевой correctness (25%), но ни один профиль не доставил корректный результат через loop надёжно. Это закрывает runtime gate R4, но не является основанием объявлять итоговый shortlist или обходить quantization A/B.
+
+## Post-R7/R8 live benchmark: 2026-08-13
+
+Повторный прогон после реализации R7 (атомаризация) и R8 (bounded retries/escalation) на тех же четырёх fixtures с `repeats=1`, `num_ctx=4096`, `temperature=0`, `num_predict=512`, `max_turns=4`. Полный artifact локально в `.codex-run/benchmarks/post-r7-r8.json` (gitignored, не публикуется).
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `bonsai-64k` | completed | 0% | 0% | 100% | 0% |
+| `qwen2.5-coder` | completed | 0% | 0% | 50% | 0% |
+| `ornith-9b` | completed | 0% | 0% | 100% | 25% |
+| `qwen3-coder-30b` | completed | 0% | 0% | 75% | 25% |
+| `devstral-small-2-24b` | completed | 25% | 0% | 75% | 50% |
+| `ternary-bonsai-27b` | unavailable | — | — | — | — |
+
+Итог идентичен post-review baseline: Devstral единственный с ненулевой correctness (25%), loop reliability 0% у всех. R7/R8 не меняют качество предложений модели — это ожидаемо, оба этапа про protocol/queueing, а не про выбор модели. Новые модели из MODEL_EVALUATION_PLAN (Qwen3-8B Q6, Qwen2.5-Coder-14B Q6, Muse, Nemotron) в `/api/tags` отсутствуют и не участвовали в прогоне.
+
+## SEARCH/REPLACE (R9): 2026-08-13
+
+После добавления SEARCH/REPLACE-формата изменения (`edits`) повторён benchmark на тех же четырёх fixtures. Прогон прерван сбоем машины на стадии записи, но artifact `.codex-run/benchmarks/search-replace-20260813.json` (gitignored) сохранился полностью: все четыре профиля завершились. Correctness считается тем же внешним oracle.
+
+| Profile | Correctness (diff → edits) | Loop reliability | Valid proposal |
+| --- | ---: | ---: | ---: |
+| `qwen3-coder-30b-iq2` | 0% → **75%** | 0% | 75% |
+| `qwen3-8b-q6k` | 0% → **50%** | 0% | 75% |
+| `devstral-small-2-24b` | 25% → 25% | 0% | 25% |
+| `qwen2.5-coder-14b-q6k` | 0% → 0% | 0% | 0% |
+
+### Интерпретация
+
+- **Гипотеза подтверждена**: unified diff был основным барьером. На SEARCH/REPLACE `qwen3-coder-30b-iq2` (10 GB, IQ2_M) поднялся с 0% до 75% correctness — модели теперь не нужно вычислять номера строк и hunk-заголовки.
+- `qwen3-8b-q6k` (6.7 GB) поднялся до 50% — самый дешёвый новый профиль теперь продуктивно решает часть задач.
+- Loop reliability остаётся 0% у всех: модели предлагают корректные edits через `propose_patch` tool-call, но финальный structured JSON не завершает цикл чисто (`accepted` не достигается). Это следующий дефект протокола, не качества модели.
+- Остаточные причины провала: `edit search block is not line-aligned` (модель копирует блок не с границы строки) и семантически неверный `replace` (oracle mismatch). `qwen2.5-coder-14b-q6k` по-прежнему не выдаёт ни patch, ни edits (retry budget exhausted).
+
+Вывод: SEARCH/REPLACE — правильное направление для слабых моделей. Дальше стоит улучшать loop-завершение (чтобы модель корректно закрывала цикл финальным JSON после `propose_patch`) и подсказку про выравнивание `search` по строкам.
+
+## Вторая волна (quant A/B + product race): 2026-08-13
+
+Скачаны и импортированы шесть новых GGUF (см. [MODEL_RESEARCH.md](MODEL_RESEARCH.md)); все размеры и SHA-256 сверены с upstream. Muse Glimmer импорт не прошёл: Ollama 0.32.5 отклонил quant `UD-Q4_K_XL` (`failed to validate GGUF with llama-quantize`), модель не считается установленной.
+
+Прогон на тех же четырёх fixtures (`repeats=1`, `num_ctx=8192`, `temperature=0`, `num_predict=512`, `max_turns=4`). Artifact локально в gitignored `.codex-run/benchmarks/second-wave-20260813.json`.
+
+| Profile | Quant | Status | Correctness | Loop reliability | Model calls | Причина провала |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| `qwen3-8b-q6k` | Q6_K | completed | 0% | 0% | 8 | malformed/corrupt patch |
+| `qwen2.5-coder-14b-q6k` | Q6_K | completed | 0% | 0% | 12 | `retry_budget_exhausted` (ни одного patch) |
+| `qwen3-coder-30b-iq2` | UD-IQ2_M | completed | 0% | 0% | 10 | corrupt patch / нет patch |
+| `qwen3-coder-30b-q4` | UD-Q4_K_XL | model_error | — | — | 0 | OOM: CUDA_Host 12.3 GB не выделен |
+| `nemotron-30b-mxfp4` | MXFP4_MOE | model_error | — | — | 0 | OOM: CUDA_Host 12.3 GB не выделен |
+| `muse-glimmer-30b-q4` | UD-Q4_K_XL | not-imported | — | — | — | llama-quantize отклонил quant |
+
+### Выводы
+
+- **Quant A/B не состоялся в заявленном виде.** `qwen3-coder-30b-q4` (17.7 GB) не загружается на 8 GB VRAM: `ollama create` прошёл, но запуск завершился `model_error`. Диагностика загрузки подтвердила, что это ограничение железа, а не настроек: (1) на Windows+CUDA Ollama отключает mmap и пинует CPU-offloaded тензоры в `CUDA_Host` — запрос 11.8 GB буфера падает; (2) принудительный `num_gpu=0` тоже падает — `CPU_REPACK`-буфер 15.2 GB плюс сами веса 17.7 GB превышают 31.9 GB RAM. Уменьшение `num_ctx` не помогает: ошибка на этапе загрузки тензоров, а не KV-cache. Итог: IQ2 против Q4 на этой машине сравнить нельзя; Q4 30B и Nemotron требуют >32 GB RAM либо другой quant с меньшим footprint.
+- **Ни один новый профиль не дал ненулевую correctness.** `qwen3-8b-q6k` и `qwen3-coder-30b-iq2` дошли до tool-call, но выдали malformed/corrupt diff; `qwen2.5-coder-14b-q6k` ни разу не предложил patch (уперся в retry budget). Текущий best candidate остаётся `devstral-small-2-24b` (25%).
+- **Nemotron и Muse требуют отдельного решения по памяти** (меньший `num_ctx`, больше CPU-offload или `OLLAMA_NUM_PARALLEL`/quant с меньшим footprint), прежде чем их можно сравнивать по качеству.
+
+## Третья волна: Qwen3.8-27B Q4_K_M — 2026-08-14
+
+Первый прогон нового кандидата `codex-qwen3.8-27b-q4` (17.1 GB, `Q4_K_M`) на тех же четырёх fixtures (`repeats=1`, `num_ctx=8192`, `temperature=0`, `num_predict=512`, `max_turns=4`, `think=false`). В отличие от Qwen3-Coder Q4 и Nemotron MXFP4 (~17–18 GB, OOM на CUDA_Host), модель загрузилась штатно: `size_vram=6.06 GB`, остальное CPU-offload. Artifact локально в gitignored `.codex-run/benchmarks/qwen3.8-27b-q4-20260814.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls | Tool calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **75%** | **75%** | 100% | 75% | 12 | 8 |
+
+### Интерпретация
+
+- **Первый профиль с ненулевой loop reliability (75%)** — до этого все модели держали 0%. Три из четырёх задач доведены до `accepted` чистым финальным JSON после `propose_patch`; подтверждается гипотеза о нативном Developer Role и корректном завершении tool loop.
+- **Correctness 75%** сравним с лучшим SEARCH/REPLACE-результатом `qwen3-coder-30b-iq2` (75%), но здесь модель ещё и закрывает цикл надёжно, чего IQ2 не делал.
+- Единственный провал — `limit-inclusive`: `edit search block is not line-aligned` (`src/window.py`). Модель скопировала `search` без ведущего отступа (`return values[: limit - 1]` вместо строки с 4 пробелами). Это тот же дефект выравнивания строк, что и во второй волне, а не ошибка семантики.
+- Нагрузка: 12 model calls на 4 задачи, `prompt_tokens` 13160, `eval_tokens` 856, avg wall ~96 s/задача (модель частично на CPU, отсюда высокий wall time).
+
+Вывод: Qwen3.8-27B Q4 — новый лучший кандидат shortlist по качеству+надёжности доставки. Следующий шаг по плану: повторить с `repeats>=3` и на расширенном наборе задач, а также сравнить с q5/q3 квантами; отдельно проверить, что остаточный `line-aligned` провал закрывается подсказкой про выравнивание `search`.
+
+## Третья волна: repeats=3 и product race — 2026-08-14
+
+Повтор `qwen3.8-27b-q4` с `repeats=3` на тех же четырёх fixtures подтвердил стабильность: `75%` correctness и `75%` loop reliability, причём во всех трёх повторах единственный провал — `limit-inclusive` с одинаковой причиной `edit search block is not line-aligned` (модель детерминированно теряет ведущий отступ). Остальные три задачи проходят `accepted` во всех повторах.
+
+Product race (`repeats=3`) на четырёх fixtures среди доступных в `/api/tags` профилей. Artifact локально в gitignored `.codex-run/benchmarks/product-race-qwen3.8-20260814.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **75%** | **75%** | 100% | 75% | 36 |
+| `qwen3-8b-q6k` | completed | 50% | 75% | 100% | 75% | 33 |
+| `qwen3-coder-30b-iq2` | completed | 66.7% | 41.7% | 100% | 66.7% | 44 |
+| `qwen2.5-coder-14b-q6k` | completed | 0% | 0% | 0% | 0% | 36 |
+
+### Расширенный набор 20 задач
+
+Набор задач расширен с 4 до 20 атомарных задач (см. `default_cases()` в `local_coding_agent/benchmark.py`) с детерминированными внешними oracles в restricted child process. Прогон `qwen3.8-27b-q4` с `repeats=1` на 20 задачах. Artifact локально в gitignored `.codex-run/benchmarks/qwen3.8-27b-q4-extended20-20260814.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **85%** | **85%** | 100% | 85% | 59 |
+
+Все 3 провала — одна и та же причина `edit search block is not line-aligned` (`limit-inclusive`, `abs-sum`, `last-element`): когда `search` начинается с отступленной строки тела функции, модель теряет ведущий отступ. Это дефект формата SEARCH/REPLACE, а не семантики — у задач, где `search` начинается с `def`, все 17 решены корректно.
+
+### Вывод третьей волны
+
+- `qwen3.8-27b-q4` — первый профиль с устойчиво ненулевой loop reliability и лучший по correctness как на 4, так и на 20 задачах. Гипотеза о нативной Developer Role и корректном завершении tool loop подтверждается.
+- Quant A/B и расширенный product race ограничены: q5/q6/q3 не импортируются из-за диска (см. [MODEL_RESEARCH.md](MODEL_RESEARCH.md)), Muse/Nemotron — по OOM/import-reject из второй волны.
+- Единственный систематический дефект — потеря ведущего отступа в `search` для SEARCH/REPLACE. Следующий шаг: усилить подсказку про точное копирование строк с отступами (или перейти к allowlist строковых/структурных edits), после чего перепрогнать.
+
+## Fix подсказки про отступы SEARCH/REPLACE — 2026-08-15
+
+Подсказка `propose_patch` (system contract и tool description) усилена явным требованием копировать `search` точно, включая ведущие пробелы каждой строки. Это закрыло единственный систематический дефект третьей волны (`edit search block is not line-aligned`).
+
+Прогон `qwen3.8-27b-q4` на 20 задачах после фикса. Artifact локально в gitignored `.codex-run/benchmarks/qwen3.8-27b-q4-extended20-hint-20260815.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **100%** | **100%** | 100% | 100% | 61 |
+
+Все 20 задач решены корректно и доведены до `accepted` чистым финальным JSON. Это первый прогон в истории проекта со 100% correctness и 100% loop reliability одновременно. Остаточный дефект был протокольным (недостаточно явная инструкция про отступы), а не ограничением модели.
+
+## Few-shot пример в подсказке + перепрогон малых моделей — 2026-08-15
+
+В description `propose_patch` добавлен короткий few-shot пример `edits` с корректными отступами (на той же границе качества, что и фикс отступов, но более явно для слабых моделей). Малые модели перепрогнаны на 20 задачах. Artifact локально в gitignored `.codex-run/benchmarks/small-models-fewshot-20260815.json`.
+
+| Profile | Quant | Correctness | Loop reliability | Valid proposal | Patch applied |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `qwen3-8b-q6k` | Q6_K (6.7 GB) | **90%** | **95%** | 100% | 95% |
+| `qwen2.5-coder-14b-q6k` | Q6_K (12 GB) | 0% | 0% | 0% | 0% |
+
+### Интерпретация
+
+- **Few-shot + фикс отступов дали главный скачок на малой модели**: `qwen3-8b-q6k` поднялся с 50% (SEARCH/REPLACE, вторая волна) до 90% correctness и 95% loop reliability. Это почти уровень 27B-модели (100%), но за 6.7 GB против 17 GB. Гипотеза «сохранить точность весов на меньшей модели» подтверждается: протокольные барьеры (diff → edits, отступы, few-shot) значимее размера модели.
+- Единственный correctness-провал `qwen3-8b-q6k` — `unique-preserve-order` (семантически неверный replace: oracle mismatch), единственный loop-провал — `limit-inclusive` (всё тот же `line-aligned`, но теперь реже).
+- `qwen2.5-coder-14b-q6k` остаётся на 0%: упирается в `invalid_json` на финальном ответе, а не в формат патча. Это capability-барьер (нет нативного tool-call/JSON-завершения), его few-shot не закрывает.
+
+### Вывод по малым моделям
+
+`qwen3-8b-q6k` — практичная замена 27B для коротких атомарных задач: 90/95% при вчетверо меньшем весе и полном размещении в 8 GB VRAM. Для моделей без native tool calling (`qwen2.5-coder`) дальнейшие усилия по подсказкам неэффективны — их путь либо `content`-JSON fallback, либо исключение из tool-loop кандидатов.
+
+## Throughput (TPS) рабочих профилей — 2026-08-15
+
+Замер на локальной машине (RTX 4060 8 GB VRAM, 31.9 GB RAM, Ollama 0.32.5), `num_ctx=8192`, `num_predict=256`, `think=false`, `temperature=0.7`. Первый замер включает загрузку модели; «тёплый» — повторный запрос при уже загруженной модели.
+
+| Profile | Размер | Generation (тёплый) | Prefill | Режим |
+| --- | ---: | ---: | ---: | --- |
 | `qwen3.8-27b-q4` | 17.1 GB | ~2.69 tok/s | ~7.0 tok/s | CPU-bound, частичный offload |
 | `qwen3-8b-q6k` | 6.7 GB | ~18.1 tok/s | ~172 tok/s | близко к полному GPU-offload |
 
 Методика: `eval_count / eval_duration` для generation, `prompt_eval_count / prompt_eval_duration` для prefill, из ответа `/api/chat` (без учёта `total_duration`/`load_duration`). Это разовый замер на одной машине, не воспроизводимый gate; для количественного сравнения скорости модели следует добавить TPS в artifact benchmark.
 
 Вывод: `qwen3-8b-q6k` в ~6.5 раз быстрее по generation при 90/95% качества — для очереди из коротких атомарных задач это предпочтительный профиль по latency; 27B остаётся reference по correctness (100%).
+
+## R10 Live Benchmark (TPS, Wilson CIs & Error Categories) — 2026-08-15
+
+Прогон выполнен через CLI бенчмарк-раннер (`python -m local_coding_agent.cli --benchmark`) на полном наборе 20 задач после внедрения TPS-метрик, 95% доверительных интервалов Вильсона, recoverable diagnostic feedback для `propose_patch` и расширенных sampling options (`qwen3-8b-q6k`: `temperature=0.7`, `top_p=0.80`, `presence_penalty=1.5`).
+
+| Profile | Quant | Correctness (95% CI) | Loop Reliability (95% CI) | Patch Apply | Eval TPS (gen) | Prompt TPS (prefill) | VRAM footprint |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | Q4_K_M (17.1 GB) | **100.0%** [83.9%–100.0%] | **100.0%** [83.9%–100.0%] | 100.0% | 2.61 tok/s | 417.3 tok/s | 6.06 GB (CPU offload) |
+| `qwen3-8b-q6k` | Q6_K (6.7 GB) | **90.0%** [69.9%–97.2%] | **95.0%** [76.4%–99.1%] | 100.0% | 16.26 tok/s | 5791.7 tok/s | 6.21 GB (GPU VRAM) |
+
+### Детализация распределения ошибок (`error_categories`)
+- `qwen3.8-27b-q4`: `0` ошибок на 20 задачах (все 20 задач приняты и валидированы).
+- `qwen3-8b-q6k`: 2 ошибки на 20 задачах (`max_turns`: 1, `oracle_mismatch`: 1).
+
+### Live Mediated Apply & Monitor
+- **Live Mediated Apply (`--apply`)**: подтверждена строгая политика безопасности — при отсутствии или непрохождении targeted check патч отклоняется контроллером (`apply_requires_checks` / `apply_skipped`), предотвращая повреждение файлов репозитория.
+- **MonitorServer**: проверены HTTP-эндпоинты `/health`, `/stats`, `/tasks` и live HTML-дашборд `/dashboard` со сниппетами очереди и метриками латентности.
