@@ -75,13 +75,13 @@ Why do small models (2B–4B) usually fail in typical agent setups? Because when
 ### 🏆 Multi-Module Macro-Benchmark (Real Architecture Refactor)
 Testing full multi-file implementation: Key-Value Storage + TTL Engine + Write-Ahead Log + Integration Test Suite on an NVIDIA RTX 4060 (8 GB VRAM):
 
-| Model Profile | Parameters / Quant | VRAM | Eval Speed | Subtasks Solved | Full Suite Passed | API Cost |
+| Model Profile | Parameters / Quant | VRAM | Eval Speed | Subtasks Solved | Full Suite Passed | Local Execution Cost |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`gemma4-e4b-q4`** | 4.5B (Q4_K_M) | **2.96 GB** | **54.9 tok/s** | **3 / 3 (100%)** | **PASSED (100%)** ✅ | **$0.00** *(Saved ~$0.08)* |
-| **`gemma4-e2b-q4`** | 2.5B (Q4_K_M) | **1.63 GB** | **84.2 tok/s** | **2 / 3 (66.7%)** | Mediated Rollback 🛡️ | **$0.00** *(Saved ~$0.06)* |
-| **`qwen3-8b-q6k`** | 8.0B (Q6_K) | **8.20 GB** | **85.0 tok/s** | **3 / 3 (100%)** | **PASSED (100%)** ✅ | **$0.00** *(Saved ~$0.10)* |
+| **`gemma4-e4b-q4`** | 4.5B (Q4_K_M) | **2.96 GB** | **54.9 tok/s** | **3 / 3 (100%)** | **PASSED (100%)** ✅ | **$0.00 (100% Free)** |
+| **`gemma4-e2b-q4`** | 2.5B (Q4_K_M) | **1.63 GB** | **84.2 tok/s** | **2 / 3 (66.7%)** | Mediated Rollback 🛡️ | **$0.00 (100% Free)** |
+| **`qwen3-8b-q6k`** | 8.0B (Q6_K) | **8.20 GB** | **85.0 tok/s** | **3 / 3 (100%)** | **PASSED (100%)** ✅ | **$0.00 (100% Free)** |
 
-*With Local Coding Agent, routine coding tasks run completely locally in seconds for zero API cost, saving 85–95% of your cloud token budget.*
+> 💡 **Token Savings:** Running these tasks locally saved ~15,000–22,000 cloud tokens per run. Routine coding work runs completely free on your local GPU.
 
 ---
 
