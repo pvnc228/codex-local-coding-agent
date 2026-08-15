@@ -87,6 +87,14 @@ def _fixture_builtins() -> dict[str, Any]:
             "tuple",
             "type",
             "ValueError",
+            "abs",
+            "all",
+            "any",
+            "max",
+            "min",
+            "reversed",
+            "sorted",
+            "zip",
             "__build_class__",
         )
     }

@@ -110,6 +110,7 @@ Runtime-результаты прогона — в [BENCHMARK.md](BENCHMARK.md) 
 
 Импорт в Ollama (`ollama create codex-qwen3.8-27b-q4 -f Q:\AI\Models\codex-local-coding-agent\_modelfiles\codex-qwen3.8-27b-q4.Modelfile`):
 - `codex-qwen3.8-27b-q4:latest` — импортирован.
+- `codex-qwen3.8-27b-q5:latest` — **не импортирован** (2026-08-14): `ollama create` падает на `llama-quantize` compatibility-конверсии с `not enough space on disk`. Ollama store на `D:` (49 GB free) не вмещает источник 19.8 GB плюс f16-промежуток ~55 GB для 27B. Это ограничение диска, а не model card; q5/q6/q3 требуют либо больший диск под Ollama store, либо отдельный GGUF без compatibility-конверсии.
 
 ## Gemma 4: незавершённая загрузка
 

@@ -210,6 +210,166 @@ def default_cases() -> tuple[BenchmarkCase, ...]:
             },
             oracle=_no_mutation_oracle,
         ),
+        _edit_case(
+            "count-positives",
+            "посчитать количество положительных элементов",
+            "count",
+            "def count_positives(values):\n    return len(values)\n",
+            "def count_positives(values):\n    return sum(1 for value in values if value > 0)\n",
+            "Считать нужно только элементы строго больше нуля.",
+            "счётчик учитывает только положительные элементы",
+            _count_positives_oracle,
+        ),
+        _edit_case(
+            "max-value",
+            "вернуть максимальное значение из списка",
+            "maxval",
+            "def max_value(values):\n    return values[0]\n",
+            "def max_value(values):\n    return max(values)\n",
+            "Функция должна возвращать наибольший элемент входного списка.",
+            "для [3,7,2,5] возвращается 7",
+            _max_value_oracle,
+        ),
+        _edit_case(
+            "abs-sum",
+            "вернуть сумму модулей элементов",
+            "abssum",
+            "def abs_sum(values):\n    return sum(values)\n",
+            "def abs_sum(values):\n    return sum(abs(value) for value in values)\n",
+            "Отрицательные числа должны входить в сумму как положительные.",
+            "для [-1,2,-3] возвращается 6",
+            _abs_sum_oracle,
+        ),
+        _edit_case(
+            "reverse-str",
+            "развернуть строку в обратном порядке",
+            "reverse",
+            "def reverse_str(value):\n    return value\n",
+            "def reverse_str(value):\n    return value[::-1]\n",
+            "Результат — та же строка в обратном порядке символов.",
+            "для 'мир' возвращается 'рим'",
+            _reverse_str_oracle,
+        ),
+        _edit_case(
+            "filter-evens",
+            "оставить только чётные элементы",
+            "evens",
+            "def evens(values):\n    return values\n",
+            "def evens(values):\n    return [value for value in values if value % 2 == 0]\n",
+            "Нужно вернуть новый список только с чётными числами.",
+            "для [1,2,3,4,6] возвращается [2,4,6]",
+            _filter_evens_oracle,
+        ),
+        _edit_case(
+            "count-words",
+            "посчитать слова в строке",
+            "words",
+            "def count_words(text):\n    return len(text)\n",
+            "def count_words(text):\n    return len(text.split())\n",
+            "Слова разделены пробелами; считать именно слова, а не символы.",
+            "для 'один два три' возвращается 3",
+            _count_words_oracle,
+        ),
+        _edit_case(
+            "dict-default",
+            "вернуть значение ключа или ноль",
+            "defval",
+            "def get_or_zero(mapping, key):\n    return mapping[key]\n",
+            "def get_or_zero(mapping, key):\n    return mapping.get(key, 0)\n",
+            "Отсутствующий ключ не должен выбрасывать ошибку.",
+            "для отсутствующего ключа возвращается 0",
+            _dict_default_oracle,
+        ),
+        _edit_case(
+            "strip-text",
+            "убрать пробелы по краям строки",
+            "strip",
+            "def normalize(text):\n    return text.replace(' ', '')\n",
+            "def normalize(text):\n    return text.strip()\n",
+            "Убирать пробелы нужно только по краям, а не внутри.",
+            "для '  hi  ' возвращается 'hi'",
+            _strip_text_oracle,
+        ),
+        _edit_case(
+            "join-words",
+            "склеить слова через пробел",
+            "join",
+            "def join_words(words):\n    return words\n",
+            "def join_words(words):\n    return ' '.join(words)\n",
+            "Результат — одна строка из слов, разделённых одиночным пробелом.",
+            "для ['a','b','c'] возвращается 'a b c'",
+            _join_words_oracle,
+        ),
+        _edit_case(
+            "last-element",
+            "вернуть последний элемент списка",
+            "last",
+            "def last(values):\n    return values[0]\n",
+            "def last(values):\n    return values[-1]\n",
+            "Нужен именно последний, а не первый элемент.",
+            "для [1,2,3] возвращается 3",
+            _last_element_oracle,
+        ),
+        _edit_case(
+            "sorted-copy",
+            "вернуть отсортированную копию без изменения входа",
+            "sortcopy",
+            "def sorted_copy(values):\n    values.sort()\n    return values\n",
+            "def sorted_copy(values):\n    return sorted(values)\n",
+            "Исходный список не должен изменяться.",
+            "вход [3,1,2] остаётся неизменным, результат [1,2,3]",
+            _sorted_copy_oracle,
+        ),
+        _edit_case(
+            "replace-dash",
+            "заменить дефисы на подчёркивания",
+            "replace",
+            "def replace_dash(text):\n    return text\n",
+            "def replace_dash(text):\n    return text.replace('-', '_')\n",
+            "Все символы '-' должны стать '_'.",
+            "для 'a-b-c' возвращается 'a_b_c'",
+            _replace_dash_oracle,
+        ),
+        _edit_case(
+            "starts-with",
+            "проверить начало строки",
+            "starts",
+            "def starts_with(text, prefix):\n    return prefix in text\n",
+            "def starts_with(text, prefix):\n    return text.startswith(prefix)\n",
+            "Совпадение должно быть именно в начале строки.",
+            "для 'hello','he' — True; для 'hello','xy' — False",
+            _starts_with_oracle,
+        ),
+        _edit_case(
+            "dot-product",
+            "посчитать скалярное произведение",
+            "dot",
+            "def dot(left, right):\n    return sum(left) * sum(right)\n",
+            "def dot(left, right):\n    return sum(a * b for a, b in zip(left, right))\n",
+            "Суммировать нужно попарные произведения элементов.",
+            "для [1,2,3] и [4,5,6] возвращается 32",
+            _dot_product_oracle,
+        ),
+        _edit_case(
+            "min-value",
+            "вернуть минимальное значение из списка",
+            "minval",
+            "def min_value(values):\n    return values[0]\n",
+            "def min_value(values):\n    return min(values)\n",
+            "Функция должна возвращать наименьший элемент входного списка.",
+            "для [3,7,2,5] возвращается 2",
+            _min_value_oracle,
+        ),
+        _edit_case(
+            "title-case",
+            "перевести каждое слово в регистр заголовка",
+            "title",
+            "def title_case(text):\n    return text.upper()\n",
+            "def title_case(text):\n    return text.title()\n",
+            "Первая буква каждого слова — заглавная, остальные — строчные.",
+            "для 'hello world' возвращается 'Hello World'",
+            _title_case_oracle,
+        ),
     )
 
 
@@ -241,6 +401,146 @@ def _no_mutation_oracle(workspace: Path) -> tuple[bool, str]:
     returned = append_flag(values, "b")
     if values != ["a"] or returned != ["a", "b"] or returned is values:
         return False, "external oracle mismatch: input list was mutated"
+    return True, ""
+
+
+def _edit_case(
+    case_id: str,
+    goal: str,
+    file_name: str,
+    buggy: str,
+    expected: str,
+    context: str,
+    acceptance: str,
+    oracle: Callable[[Path], tuple[bool, str]],
+) -> BenchmarkCase:
+    return BenchmarkCase(
+        id=case_id,
+        task=TaskEnvelope(
+            id=case_id,
+            goal=goal,
+            files=(f"src/{file_name}.py",),
+            context=context,
+            constraints=("сохранить имя функции", "не добавлять зависимости"),
+            acceptance=(acceptance,),
+        ),
+        fixture={f"src/{file_name}.py": buggy},
+        expected_files={f"src/{file_name}.py": expected},
+        oracle=oracle,
+    )
+
+
+def _count_positives_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/count.py", "count_positives")
+    if fn([-1, 2, -3, 4, 0]) != 2:
+        return False, "external oracle mismatch: count_positives"
+    return True, ""
+
+
+def _max_value_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/maxval.py", "max_value")
+    if fn([3, 7, 2, 5]) != 7:
+        return False, "external oracle mismatch: max_value"
+    return True, ""
+
+
+def _abs_sum_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/abssum.py", "abs_sum")
+    if fn([-1, 2, -3]) != 6:
+        return False, "external oracle mismatch: abs_sum"
+    return True, ""
+
+
+def _reverse_str_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/reverse.py", "reverse_str")
+    if fn("мир") != "рим":
+        return False, "external oracle mismatch: reverse_str"
+    return True, ""
+
+
+def _filter_evens_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/evens.py", "evens")
+    if fn([1, 2, 3, 4, 6]) != [2, 4, 6]:
+        return False, "external oracle mismatch: evens"
+    return True, ""
+
+
+def _count_words_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/words.py", "count_words")
+    if fn("один два три") != 3:
+        return False, "external oracle mismatch: count_words"
+    return True, ""
+
+
+def _dict_default_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/defval.py", "get_or_zero")
+    if fn({"a": 1}, "b") != 0 or fn({"a": 5}, "a") != 5:
+        return False, "external oracle mismatch: get_or_zero"
+    return True, ""
+
+
+def _strip_text_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/strip.py", "normalize")
+    if fn("  hi  ") != "hi":
+        return False, "external oracle mismatch: normalize"
+    return True, ""
+
+
+def _join_words_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/join.py", "join_words")
+    if fn(["a", "b", "c"]) != "a b c":
+        return False, "external oracle mismatch: join_words"
+    return True, ""
+
+
+def _last_element_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/last.py", "last")
+    if fn([1, 2, 3]) != 3:
+        return False, "external oracle mismatch: last"
+    return True, ""
+
+
+def _sorted_copy_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/sortcopy.py", "sorted_copy")
+    values = [3, 1, 2]
+    returned = fn(values)
+    if returned != [1, 2, 3] or values != [3, 1, 2]:
+        return False, "external oracle mismatch: sorted_copy"
+    return True, ""
+
+
+def _replace_dash_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/replace.py", "replace_dash")
+    if fn("a-b-c") != "a_b_c":
+        return False, "external oracle mismatch: replace_dash"
+    return True, ""
+
+
+def _starts_with_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/starts.py", "starts_with")
+    if not fn("hello", "he") or fn("hello", "xy"):
+        return False, "external oracle mismatch: starts_with"
+    return True, ""
+
+
+def _dot_product_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/dot.py", "dot")
+    if fn([1, 2, 3], [4, 5, 6]) != 32:
+        return False, "external oracle mismatch: dot"
+    return True, ""
+
+
+def _min_value_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/minval.py", "min_value")
+    if fn([3, 7, 2, 5]) != 2:
+        return False, "external oracle mismatch: min_value"
+    return True, ""
+
+
+def _title_case_oracle(workspace: Path) -> tuple[bool, str]:
+    fn = _load_function(workspace / "src/title.py", "title_case")
+    if fn("hello world") != "Hello World":
+        return False, "external oracle mismatch: title_case"
     return True, ""
 
 

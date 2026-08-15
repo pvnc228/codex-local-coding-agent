@@ -40,7 +40,7 @@ class BenchmarkTests(unittest.TestCase):
     def test_default_cases_are_comparable_and_have_unique_ids(self):
         cases = default_cases()
 
-        self.assertGreaterEqual(len(cases), 3)
+        self.assertEqual(len(cases), 20)
         self.assertEqual(len({case.id for case in cases}), len(cases))
         for case in cases:
             self.assertIsInstance(case, BenchmarkCase)

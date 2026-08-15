@@ -152,3 +152,49 @@ Applicability run добавил `git apply --check` без записи в work
 - **Quant A/B не состоялся в заявленном виде.** `qwen3-coder-30b-q4` (17.7 GB) не загружается на 8 GB VRAM: `ollama create` прошёл, но запуск завершился `model_error`. Диагностика загрузки подтвердила, что это ограничение железа, а не настроек: (1) на Windows+CUDA Ollama отключает mmap и пинует CPU-offloaded тензоры в `CUDA_Host` — запрос 11.8 GB буфера падает; (2) принудительный `num_gpu=0` тоже падает — `CPU_REPACK`-буфер 15.2 GB плюс сами веса 17.7 GB превышают 31.9 GB RAM. Уменьшение `num_ctx` не помогает: ошибка на этапе загрузки тензоров, а не KV-cache. Итог: IQ2 против Q4 на этой машине сравнить нельзя; Q4 30B и Nemotron требуют >32 GB RAM либо другой quant с меньшим footprint.
 - **Ни один новый профиль не дал ненулевую correctness.** `qwen3-8b-q6k` и `qwen3-coder-30b-iq2` дошли до tool-call, но выдали malformed/corrupt diff; `qwen2.5-coder-14b-q6k` ни разу не предложил patch (уперся в retry budget). Текущий best candidate остаётся `devstral-small-2-24b` (25%).
 - **Nemotron и Muse требуют отдельного решения по памяти** (меньший `num_ctx`, больше CPU-offload или `OLLAMA_NUM_PARALLEL`/quant с меньшим footprint), прежде чем их можно сравнивать по качеству.
+
+## Третья волна: Qwen3.8-27B Q4_K_M — 2026-08-14
+
+Первый прогон нового кандидата `codex-qwen3.8-27b-q4` (17.1 GB, `Q4_K_M`) на тех же четырёх fixtures (`repeats=1`, `num_ctx=8192`, `temperature=0`, `num_predict=512`, `max_turns=4`, `think=false`). В отличие от Qwen3-Coder Q4 и Nemotron MXFP4 (~17–18 GB, OOM на CUDA_Host), модель загрузилась штатно: `size_vram=6.06 GB`, остальное CPU-offload. Artifact локально в gitignored `.codex-run/benchmarks/qwen3.8-27b-q4-20260814.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls | Tool calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **75%** | **75%** | 100% | 75% | 12 | 8 |
+
+### Интерпретация
+
+- **Первый профиль с ненулевой loop reliability (75%)** — до этого все модели держали 0%. Три из четырёх задач доведены до `accepted` чистым финальным JSON после `propose_patch`; подтверждается гипотеза о нативном Developer Role и корректном завершении tool loop.
+- **Correctness 75%** сравним с лучшим SEARCH/REPLACE-результатом `qwen3-coder-30b-iq2` (75%), но здесь модель ещё и закрывает цикл надёжно, чего IQ2 не делал.
+- Единственный провал — `limit-inclusive`: `edit search block is not line-aligned` (`src/window.py`). Модель скопировала `search` без ведущего отступа (`return values[: limit - 1]` вместо строки с 4 пробелами). Это тот же дефект выравнивания строк, что и во второй волне, а не ошибка семантики.
+- Нагрузка: 12 model calls на 4 задачи, `prompt_tokens` 13160, `eval_tokens` 856, avg wall ~96 s/задача (модель частично на CPU, отсюда высокий wall time).
+
+Вывод: Qwen3.8-27B Q4 — новый лучший кандидат shortlist по качеству+надёжности доставки. Следующий шаг по плану: повторить с `repeats>=3` и на расширенном наборе задач, а также сравнить с q5/q3 квантами; отдельно проверить, что остаточный `line-aligned` провал закрывается подсказкой про выравнивание `search`.
+
+## Третья волна: repeats=3 и product race — 2026-08-14
+
+Повтор `qwen3.8-27b-q4` с `repeats=3` на тех же четырёх fixtures подтвердил стабильность: `75%` correctness и `75%` loop reliability, причём во всех трёх повторах единственный провал — `limit-inclusive` с одинаковой причиной `edit search block is not line-aligned` (модель детерминированно теряет ведущий отступ). Остальные три задачи проходят `accepted` во всех повторах.
+
+Product race (`repeats=3`) на четырёх fixtures среди доступных в `/api/tags` профилей. Artifact локально в gitignored `.codex-run/benchmarks/product-race-qwen3.8-20260814.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **75%** | **75%** | 100% | 75% | 36 |
+| `qwen3-8b-q6k` | completed | 50% | 75% | 100% | 75% | 33 |
+| `qwen3-coder-30b-iq2` | completed | 66.7% | 41.7% | 100% | 66.7% | 44 |
+| `qwen2.5-coder-14b-q6k` | completed | 0% | 0% | 0% | 0% | 36 |
+
+### Расширенный набор 20 задач
+
+Набор задач расширен с 4 до 20 атомарных задач (см. `default_cases()` в `local_coding_agent/benchmark.py`) с детерминированными внешними oracles в restricted child process. Прогон `qwen3.8-27b-q4` с `repeats=1` на 20 задачах. Artifact локально в gitignored `.codex-run/benchmarks/qwen3.8-27b-q4-extended20-20260814.json`.
+
+| Profile | Status | Correctness | Loop reliability | Valid proposal | Patch applied | Model calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.8-27b-q4` | completed | **85%** | **85%** | 100% | 85% | 59 |
+
+Все 3 провала — одна и та же причина `edit search block is not line-aligned` (`limit-inclusive`, `abs-sum`, `last-element`): когда `search` начинается с отступленной строки тела функции, модель теряет ведущий отступ. Это дефект формата SEARCH/REPLACE, а не семантики — у задач, где `search` начинается с `def`, все 17 решены корректно.
+
+### Вывод третьей волны
+
+- `qwen3.8-27b-q4` — первый профиль с устойчиво ненулевой loop reliability и лучший по correctness как на 4, так и на 20 задачах. Гипотеза о нативной Developer Role и корректном завершении tool loop подтверждается.
+- Quant A/B и расширенный product race ограничены: q5/q6/q3 не импортируются из-за диска (см. [MODEL_RESEARCH.md](MODEL_RESEARCH.md)), Muse/Nemotron — по OOM/import-reject из второй волны.
+- Единственный систематический дефект — потеря ведущего отступа в `search` для SEARCH/REPLACE. Следующий шаг: усилить подсказку про точное копирование строк с отступами (или перейти к allowlist строковых/структурных edits), после чего перепрогнать.
