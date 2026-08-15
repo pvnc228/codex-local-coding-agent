@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from threading import Event, Thread
+
 from typing import Any, Protocol
 
 from .atomizer import TaskBudget, preflight
@@ -270,11 +271,12 @@ class Controller:
                     try:
                         response = future.result(timeout=0.05)
                         break
-                    except TimeoutError:
+                    except (TimeoutError, FuturesTimeoutError):
                         if active_cancel is not None and active_cancel.is_set():
                             # ponytail: the abandoned chat thread keeps running
                             # until its own ~30s HTTP timeout.
                             return self._failure("failed", "cancelled", "task was cancelled", audit)
+
             except Exception as error:  # model boundary: normalize executor failures
                 return self._failure("failed", "model_error", str(error), audit)
             audit.append({"event": "model_response", "turn": turn})

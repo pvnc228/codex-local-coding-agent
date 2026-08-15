@@ -27,9 +27,16 @@ class TaskEnvelope:
         for raw_path in self.files:
             if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
                 raise ValueError("task files must contain valid relative paths")
+            if (
+                raw_path.startswith("/")
+                or raw_path.startswith("\\")
+                or (len(raw_path) >= 2 and raw_path[1] == ":" and raw_path[0].isalpha())
+            ):
+                raise ValueError(f"task file must be relative and inside workspace: {raw_path!r}")
             path = Path(raw_path)
             if path.is_absolute() or path.drive or path.root or ".." in path.parts:
                 raise ValueError(f"task file must be relative and inside workspace: {raw_path!r}")
+
         # A frozen dataclass does not make an incoming list immutable.  Keep the
         # envelope stable after validation so service-level fingerprints and the
         # controller always observe the same allowlist and checks.
