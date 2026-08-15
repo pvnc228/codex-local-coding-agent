@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-coding-agent"
-version = "0.3.0"
+version = "0.4.0"
 description = "Harness-agnostic controller delegating atomic coding tasks to local Ollama models via MCP and direct Python API."
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,8 +24,6 @@ classifiers = [
 [project.scripts]
 local-agent = "local_coding_agent.cli:main"
 local-coding-agent = "local_coding_agent.cli:main"
-codex-agent = "local_coding_agent.cli:main"
-codex-local-agent = "local_coding_agent.cli:main"
 
 [project.optional-dependencies]
 mcp = ["mcp==2.0.0"]

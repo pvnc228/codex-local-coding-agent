@@ -1,4 +1,4 @@
-"""Command-line entry point for codex-local-coding-agent."""
+"""Command-line entry point for local-coding-agent."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def load_task_file(path: str | Path) -> TaskEnvelope:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="codex-agent",
-        description="Codex Local Coding Agent: Bounded controller for atomic coding tasks.",
+        prog="local-agent",
+        description="Local Coding Agent: Bounded controller for atomic coding tasks.",
     )
 
     # Global options
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-output",
         type=Path,
-        default=Path(".codex-run") / "benchmarks" / "latest.json",
+        default=Path(".local-run") / "benchmarks" / "latest.json",
     )
     memory_group = parser.add_mutually_exclusive_group()
     memory_group.add_argument("--unload-model", metavar="MODEL", help="Unload one model from Ollama VRAM")
@@ -205,7 +205,7 @@ def handle_subcommand(args: argparse.Namespace) -> int:
 
         stats = DelegationStats()
         server = MonitorServer(host=args.host, port=args.port, stats=stats)
-        print(f"Starting Codex Monitor on {server.url}/dashboard (Press Ctrl+C to stop)...")
+        print(f"Starting Monitor on {server.url}/dashboard (Press Ctrl+C to stop)...")
         server.start()
         try:
             while True:
@@ -253,7 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "devstral-small-2-24b",
             ))
             artifact = {
-                "schema": "codex-local-coding-agent/benchmark-v1",
+                "schema": "local-coding-agent/benchmark-v1",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "repeats": args.benchmark_repeats,
                 "models": [],

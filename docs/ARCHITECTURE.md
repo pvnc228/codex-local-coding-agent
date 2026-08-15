@@ -124,3 +124,14 @@ max_context_length: 262144
 Ollama's `/api/ps` endpoint is used as the source of truth for active models and allocated VRAM (`size_vram`). `ModelMemoryManager` captures snapshots, unloads idle models, and evicts unprotected models to maintain memory budgets. Protected models can be specified via a `keep` allowlist.
 
 `ModelProfile.num_ctx` sets the context window for requests, while `max_context_length` enforces hardware and model limits.
+
+---
+
+## Pinpointed Prescriptions Engine (v0.4.0)
+
+Small local models (2B–4B) lack the deductive capacity to interpret generic error messages like "invalid JSON" or "validation rejected". The `local_coding_agent.prescriptions` engine provides deterministic, rule-based diagnostic translation that turns validator failures into laser-focused, unambiguous instructions:
+- **Schema Corrections**: Explicit directives for `checks: []` empty arrays and `risks: []` list types.
+- **SEARCH/REPLACE Diagnostics**: Actionable hints on whitespace indentation (`read_file`), line-alignment, and multi-match ambiguity.
+- **Tool Protocol Enforcement**: Automatic guidance on mutually exclusive fields (`edits` vs `patch`) and allowlist boundaries.
+- **Zero Distillation Guarantee**: Prescriptions are generated strictly by deterministic Python rules without leaking host LLM reasoning.
+

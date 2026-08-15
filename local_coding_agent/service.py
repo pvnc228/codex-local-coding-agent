@@ -161,13 +161,10 @@ class DelegationService:
                     completion_event=completion_event,
                     controller_started=controller_started,
                 )
-            except (OSError, ToolPolicyError, ValueError) as error:
-                result = self._policy_failure("controller_policy", str(error))
-            except Exception:
-                # This is the transport boundary: unexpected infrastructure errors
-                # must still complete the reservation so duplicate callers cannot
-                # wait forever on an in-flight idempotency key.
-                result = self._policy_failure("controller_error", "controller execution failed")
+            except Exception as error:
+                import traceback
+                traceback.print_exc()
+                result = self._policy_failure("controller_error", f"controller execution failed: {error}")
             normalized = self._normalize_result(result)
             with self._cache_lock:
                 cached.result = copy.deepcopy(normalized)

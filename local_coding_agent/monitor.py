@@ -129,7 +129,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
   <meta charset="UTF-8">
   <meta http-equiv="refresh" content="3">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Codex Local Agent Monitor</title>
+  <title>Local Coding Agent Monitor</title>
   <style>
     :root {{
       --bg: #0f172a;
@@ -217,7 +217,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 <body>
   <header>
     <div>
-      <h1>Codex Local Agent Monitor</h1>
+      <h1>Local Coding Agent Monitor</h1>
       <p class="card-sub">Ollama Autonomous Delegation Service &amp; Bounded Worker Pool</p>
     </div>
     <span class="status-badge">{pool_status}</span>
@@ -343,7 +343,7 @@ class MonitorServer:
             return
         self._thread = threading.Thread(
             target=self._httpd.serve_forever,
-            name="codex-monitor-http",
+            name="local-agent-monitor-http",
             daemon=True,
         )
         self._thread.start()

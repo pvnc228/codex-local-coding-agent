@@ -58,7 +58,7 @@ class CliTests(unittest.TestCase):
                 "--benchmark-timeout-seconds",
                 "120",
                 "--benchmark-output",
-                ".codex-run/bench.json",
+                ".local-run/bench.json",
             ]
         )
 
@@ -66,7 +66,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.benchmark_models, ["ornith-9b"])
         self.assertEqual(args.benchmark_repeats, 2)
         self.assertEqual(args.benchmark_timeout_seconds, 120)
-        self.assertEqual(str(args.benchmark_output), str(Path(".codex-run/bench.json")))
+        self.assertEqual(str(args.benchmark_output), str(Path(".local-run/bench.json")))
 
     def test_cli_exposes_apply_flag(self):
         args = build_parser().parse_args(["--task", "task.json", "--apply"])

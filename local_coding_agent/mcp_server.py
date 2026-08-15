@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover - pydantic comes with mcp
 
 _CALLER_ID = "mcp-stdio"
 _SERVER_NAME = "local-coding-agent"
-_SERVER_VERSION = "0.3.0"
+_SERVER_VERSION = "0.4.0"
 
 
 class _AsyncExecutionGate:
@@ -146,7 +146,9 @@ if BaseModel is not None:
 
         request_id = arguments.get("request_id", "unknown")
         workspace_ref = arguments.get("workspace_ref", "unknown")
-        service = ctx.mcp_server._codex_service
+        service = getattr(ctx.mcp_server, "_delegation_service", None)
+        if service is None:
+            service = getattr(ctx.mcp_server, "_codex_service", None)
         preview = _require_apply_preview(
             service.proposal_preview(_CALLER_ID, workspace_ref, request_id), request_id, workspace_ref
         )
@@ -214,6 +216,7 @@ def build_server(
         ),
         extensions=extensions or None,
     )
+    setattr(server, "_delegation_service", service)
     setattr(server, "_codex_service", service)
 
     @server.tool(

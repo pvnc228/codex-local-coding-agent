@@ -64,7 +64,7 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             self.assertIn("text/html", resp.headers.get("Content-Type"))
             html = resp.read().decode("utf-8")
-            self.assertIn("Codex Local Agent Monitor", html)
+            self.assertIn("Local Coding Agent Monitor", html)
             self.assertIn("Worker Capacity", html)
 
 

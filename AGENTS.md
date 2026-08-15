@@ -14,7 +14,7 @@
 - Русский JSON передаётся в UTF-8.
 - Commit, push и публикация не являются частью MVP.
 
-## Codex workflow
+## Development workflow
 
 Перед реализацией:
 

@@ -2,7 +2,7 @@
 
 ## Название
 
-Codex Local Coding Agent
+Local Coding Agent
 
 ## Проблема
 
@@ -61,6 +61,7 @@ acceptance:
 6. Tool-loop завершается по ограничению ходов или финальному ответу.
 7. Повторный одинаковый tool call останавливает цикл и переводит задачу в 'failed'.
 8. Все входы, calls, diff и checks журналируются.
+9. Ошибки схемы, синтаксиса и diff переводятся в детерминированные точечные предписания (Pinpointed Prescriptions Engine) для надежного самоисправления малых моделей.
 
 ## Текущая гипотеза
 
@@ -73,4 +74,5 @@ acceptance:
 - 'format: json' или JSON Schema;
 - один узкий tool за шаг;
 - короткий русский или английский system contract;
-- внешний diff validator и max-turn guard.
+- внешний diff validator и max-turn guard;
+- точечные детерминированные рецепты исправления ошибок (zero distillation).

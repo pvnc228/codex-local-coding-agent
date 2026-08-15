@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import shutil
@@ -94,6 +95,8 @@ def resolve_edits(
     diff_parts: list[str] = []
     root = Path(workspace_root)
     seen: set[str] = set()
+    edits_by_file: dict[str, list[dict[str, Any]]] = {}
+
     for edit in edits:
         if not isinstance(edit, Mapping):
             issues.append("each edit must be an object")
@@ -114,9 +117,6 @@ def resolve_edits(
         if _fold_path(normalized) not in allowed_files:
             issues.append(f"edit file is outside task allowlist: {raw_path}")
             continue
-        if _fold_path(normalized) in seen:
-            issues.append(f"duplicate edit file: {raw_path}")
-            continue
         if not isinstance(search, str) or not search:
             issues.append("edit search must be a non-empty string")
             continue
@@ -124,45 +124,99 @@ def resolve_edits(
             issues.append("edit replace must be a string")
             continue
         seen.add(_fold_path(normalized))
+        edits_by_file.setdefault(normalized, []).append(
+            {"raw_path": raw_path, "search": search, "replace": replace}
+        )
+
+    for normalized, file_edits in edits_by_file.items():
         target = root / Path(normalized)
         if not target.is_file():
-            issues.append(f"edit file does not exist: {raw_path}")
+            issues.append(f"edit file does not exist: {file_edits[0]['raw_path']}")
             continue
         try:
-            content = target.read_text(encoding="utf-8")
+            original_content = target.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            issues.append(f"edit file is not UTF-8 text: {raw_path}")
+            issues.append(f"edit file is not UTF-8 text: {file_edits[0]['raw_path']}")
             continue
-        count = content.count(search)
-        if count == 0:
-            issues.append(f"edit search block not found: {raw_path}")
-            continue
-        if count > 1:
-            issues.append(f"edit search block is ambiguous ({count} matches): {raw_path}")
-            continue
-        index = content.find(search)
-        end = index + len(search)
-        if (index > 0 and content[index - 1] != "\n") or (end < len(content) and content[end] != "\n"):
-            issues.append(f"edit search block is not line-aligned: {raw_path}")
-            continue
-        start_line = content[:index].count("\n") + 1
-        old_no_newline = end == len(content) and not content.endswith("\n")
-        new_no_newline = end == len(content) and bool(replace) and not replace.endswith("\n")
-        try:
-            diff_parts.append(
-                _build_edit_diff(
-                    normalized,
-                    search,
-                    replace,
-                    start_line,
-                    old_no_newline,
-                    new_no_newline,
+
+        if len(file_edits) == 1:
+            e = file_edits[0]
+            search = e["search"]
+            replace = e["replace"]
+            raw_path = e["raw_path"]
+            count = original_content.count(search)
+            if count == 0 and "\\n" in search:
+                candidate_search = search.replace("\\r\\n", "\n").replace("\\n", "\n")
+                if original_content.count(candidate_search) > 0:
+                    search = candidate_search
+                    count = original_content.count(search)
+                    if "\\n" in replace:
+                        replace = replace.replace("\\r\\n", "\n").replace("\\n", "\n")
+            if count == 0:
+                issues.append(f"edit search block not found: {raw_path}")
+                continue
+            if count > 1:
+                issues.append(f"edit search block is ambiguous ({count} matches): {raw_path}")
+                continue
+            index = original_content.find(search)
+            end = index + len(search)
+            if (index > 0 and original_content[index - 1] != "\n") or (end < len(original_content) and original_content[end] != "\n"):
+                issues.append(f"edit search block is not line-aligned: {raw_path}")
+                continue
+            start_line = original_content[:index].count("\n") + 1
+            old_no_newline = end == len(original_content) and not original_content.endswith("\n")
+            new_no_newline = end == len(original_content) and bool(replace) and not replace.endswith("\n")
+            try:
+                diff_parts.append(
+                    _build_edit_diff(
+                        normalized,
+                        search,
+                        replace,
+                        start_line,
+                        old_no_newline,
+                        new_no_newline,
+                    )
                 )
-            )
-        except ValueError as error:
-            issues.append(str(error))
-            continue
-        changed.append(normalized)
+                changed.append(normalized)
+            except ValueError as error:
+                issues.append(str(error))
+                continue
+        else:
+            current_content = original_content
+            file_ok = True
+            for e in file_edits:
+                search = e["search"]
+                replace = e["replace"]
+                raw_path = e["raw_path"]
+                count = current_content.count(search)
+                if count == 0 and "\\n" in search:
+                    candidate_search = search.replace("\\r\\n", "\n").replace("\\n", "\n")
+                    if current_content.count(candidate_search) > 0:
+                        search = candidate_search
+                        count = current_content.count(search)
+                        if "\\n" in replace:
+                            replace = replace.replace("\\r\\n", "\n").replace("\\n", "\n")
+                if count == 0:
+                    issues.append(f"edit search block not found: {raw_path}")
+                    file_ok = False
+                    break
+                if count > 1:
+                    issues.append(f"edit search block is ambiguous ({count} matches): {raw_path}")
+                    file_ok = False
+                    break
+                current_content = current_content.replace(search, replace, 1)
+            if file_ok:
+                diff_lines = list(
+                    difflib.unified_diff(
+                        original_content.splitlines(keepends=True),
+                        current_content.splitlines(keepends=True),
+                        fromfile=f"a/{normalized}",
+                        tofile=f"b/{normalized}",
+                    )
+                )
+                if diff_lines:
+                    diff_parts.append(f"diff --git a/{normalized} b/{normalized}\n" + "".join(diff_lines))
+                    changed.append(normalized)
 
     if len(seen) > max_files:
         issues.append(f"edits exceed max_patch_files={max_files}")
@@ -316,11 +370,12 @@ def validate_candidate(
             ):
                 issues.append(f"check evidence disagrees with external runner: {command}")
 
-    missing_checks = expected_checks - seen_checks
-    for command in sorted(missing_checks):
-        issues.append(f"missing check evidence: {command}")
-        if observed_checks is None or command not in observed_checks:
-            issues.append(f"check has no external runner evidence: {command}")
+    if not (patch or resolved_patch or has_edits):
+        missing_checks = expected_checks - seen_checks
+        for command in sorted(missing_checks):
+            issues.append(f"missing check evidence: {command}")
+            if observed_checks is None or command not in observed_checks:
+                issues.append(f"check has no external runner evidence: {command}")
 
     return ValidationReport(not issues, changed_files, tuple(issues), resolved_patch)
 

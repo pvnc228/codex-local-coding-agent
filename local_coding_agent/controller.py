@@ -9,6 +9,7 @@ from threading import Event, Thread
 from typing import Any, Protocol
 
 from .atomizer import TaskBudget, preflight
+from .prescriptions import json_syntax_prescription, prescribe_all, tool_policy_prescription
 from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
 from .task import TaskEnvelope
 from .validators import apply_patch, validate_candidate
@@ -252,6 +253,7 @@ class Controller:
         *,
         apply: bool = False,
     ) -> dict[str, Any]:
+        last_invalid_candidate: dict[str, Any] | None = None
         for turn in range(1, self.max_turns + 1):
             if active_cancel is not None and active_cancel.is_set():
                 return self._failure("failed", "cancelled", "task was cancelled", audit)
@@ -278,6 +280,8 @@ class Controller:
                             return self._failure("failed", "cancelled", "task was cancelled", audit)
 
             except Exception as error:  # model boundary: normalize executor failures
+                if last_invalid_candidate is not None:
+                    return last_invalid_candidate
                 return self._failure("failed", "model_error", str(error), audit)
             audit.append({"event": "model_response", "turn": turn})
             message = response.get("message") if isinstance(response, dict) else None
@@ -323,14 +327,23 @@ class Controller:
                         )
                         seen_calls[signature] = seen_calls.get(signature, 0) + 1
                         if seen_calls[signature] > self.max_same_call:
-                            return self._failure(
-                                "failed",
-                                "duplicate_tool_call",
-                                f"repeated tool call: {name}",
-                                audit,
-                            )
-                        audit.append({"event": "tool_call", "name": name, "arguments": arguments, "turn": turn})
-                        result = tools.execute(name, arguments)
+                            if last_patch:
+                                result = {
+                                    "ok": True,
+                                    "patch": last_patch[-1],
+                                    "message": f"{name} already executed with valid patch. Conclude now.",
+                                }
+                                audit.append({"event": "tool_call_skipped_duplicate", "name": name, "turn": turn})
+                            else:
+                                return self._failure(
+                                    "failed",
+                                    "duplicate_tool_call",
+                                    f"repeated tool call: {name}",
+                                    audit,
+                                )
+                        else:
+                            audit.append({"event": "tool_call", "name": name, "arguments": arguments, "turn": turn})
+                            result = tools.execute(name, arguments)
                         if name == "read_file":
                             path = arguments.get("path")
                             if isinstance(path, str):
@@ -348,7 +361,7 @@ class Controller:
                                 patch = result.get("patch")
                                 if isinstance(patch, str):
                                     last_patch[:] = [patch]
-                        if name == "run_tests":
+                        if name == "run_tests" and "passed" in result:
                             observed_checks[arguments["command"]] = {
                                 "command": arguments["command"],
                                 "passed": result["passed"],
@@ -363,7 +376,19 @@ class Controller:
                             tool_message["tool_call_id"] = call_id
                         messages.append(tool_message)
                         audit.append({"event": "tool_result", "name": name, "turn": turn})
-                    except (ToolPolicyError, ValueError, TypeError, json.JSONDecodeError) as error:
+                    except ToolPolicyError as error:
+                        audit.append({"event": "tool_policy_error", "name": name, "error": str(error), "turn": turn})
+                        tool_payload = tool_policy_prescription(name, str(error))
+                        tool_message = {
+                            "role": "tool",
+                            "tool_name": name,
+                            "content": json.dumps(tool_payload, ensure_ascii=False),
+                        }
+                        if call_id is not None:
+                            tool_message["tool_call_id"] = call_id
+                        messages.append(tool_message)
+                        audit.append({"event": "tool_result", "name": name, "turn": turn})
+                    except (ValueError, TypeError, json.JSONDecodeError) as error:
                         return self._failure("failed", "policy", str(error), audit)
                     except ToolCancelled:
                         return self._failure("failed", "cancelled", "task was cancelled", audit)
@@ -377,7 +402,10 @@ class Controller:
                     retries += 1
                     attempts.append({"attempt": retries, "reason": "invalid_json"})
                     messages.append(message)
-                    messages.append({"role": "user", "content": "Предыдущий ответ невалиден. Верни только JSON-объект без markdown."})
+                    messages.append({
+                        "role": "user",
+                        "content": json_syntax_prescription(str(error)),
+                    })
                     audit.append({"event": "retry", "reason": "invalid_json"})
                     continue
                 attempts.append({"attempt": retries + 1, "reason": "invalid_json"})
@@ -399,16 +427,19 @@ class Controller:
                 "validation",
             ):
                 result.pop(controller_field, None)
-            # A patch already accepted by propose_patch (validated + git-checked at
-            # tool time) is the source of truth. Weak models often fail to repeat
-            # it in the final JSON; reuse it instead of discarding valid work.
+            if "status" not in result:
+                result["status"] = "candidate"
+            if "summary" not in result:
+                result["summary"] = "Task completed"
+            if "risks" not in result:
+                result["risks"] = []
             if not result.get("patch") and not result.get("edits") and last_patch:
                 result["patch"] = last_patch[-1]
                 audit.append({"event": "patch_reused_from_tool_proposal"})
             result["checks"] = [
                 dict(observed_checks[command])
                 for command in task.checks
-                if command in observed_checks
+                if command in observed_checks and observed_checks[command].get("passed") is True
             ]
             report = validate_candidate(
                 result,
@@ -426,6 +457,36 @@ class Controller:
             if report.resolved_patch:
                 result["patch"] = report.resolved_patch
                 result.pop("edits", None)
+
+            if not report.valid:
+                last_invalid_candidate = dict(result)
+                last_invalid_candidate["status"] = "rejected"
+                last_invalid_candidate["audit"] = audit
+                if turn < self.max_turns and retries < self.max_retries:
+                    retries += 1
+                    prescription = prescribe_all(list(report.issues))
+                    feedback_msg = {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "error": "CANDIDATE_VALIDATION_FAILED",
+                                "issues": list(report.issues),
+                                "instruction": f"ОШИБКА ВАЛИДАЦИИ: {prescription} Исправь эти поля и верни скорректированный JSON-объект.",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                    messages.append(message)
+                    messages.append(feedback_msg)
+                    audit.append({
+                        "event": "templated_feedback",
+                        "reason": "candidate_validation_failed",
+                        "issues": list(report.issues),
+                        "prescription": prescription,
+                        "turn": turn,
+                    })
+                    continue
+
             result["status"] = "accepted" if report.valid else "rejected"
             audit.append({"event": "candidate_validated", "valid": report.valid})
             if report.valid and apply:
@@ -517,6 +578,36 @@ class Controller:
                 self._add_risk(result, "validation", "; ".join(report.issues))
             result["audit"] = audit
             return result
+
+        if last_patch:
+            candidate: dict[str, Any] = {
+                "status": "candidate",
+                "summary": "Propose patch completed before max turns",
+                "patch": last_patch[-1],
+                "checks": [
+                    dict(observed_checks[command])
+                    for command in task.checks
+                    if command in observed_checks and observed_checks[command].get("passed") is True
+                ],
+                "risks": [],
+            }
+            report = validate_candidate(
+                candidate,
+                task,
+                max_patch_bytes=self.max_patch_bytes,
+                max_patch_files=self.max_patch_files,
+                observed_checks=observed_checks,
+                workspace_root=self.workspace_root,
+            )
+            candidate["validation"] = {
+                "valid": report.valid,
+                "changed_files": list(report.changed_files),
+                "issues": list(report.issues),
+            }
+            candidate["status"] = "accepted" if report.valid else "rejected"
+            candidate["audit"] = audit
+            audit.append({"event": "candidate_salvaged_from_last_patch", "valid": report.valid})
+            return candidate
 
         if attempts:
             return self._escalation(
@@ -630,7 +721,23 @@ class Controller:
     def _parse_final_result(content: Any) -> dict[str, Any]:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("final model response has no JSON content")
-        result = json.loads(content)
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+        try:
+            result = json.loads(cleaned)
+        except json.JSONDecodeError:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                result = json.loads(cleaned[start : end + 1])
+            else:
+                raise
         if not isinstance(result, dict):
             raise ValueError("final model response must be a JSON object")
         return result

@@ -164,7 +164,7 @@ class BoundedWorkerPool:
         self._workers = [
             threading.Thread(
                 target=self._worker_loop,
-                name=f"codex-worker-{index}",
+                name=f"local-agent-worker-{index}",
                 daemon=True,
             )
             for index in range(max_workers)

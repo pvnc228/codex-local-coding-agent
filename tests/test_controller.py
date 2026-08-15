@@ -1173,6 +1173,123 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("propose_patch rejected", turn2_messages[-1]["content"])
         self.assertIn("not found", turn2_messages[-1]["content"])
 
+    def test_controller_provides_templated_tool_feedback_on_tool_policy_violation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="policy-feedback",
+                goal="исправить значение",
+                files=("src/value.py",),
+            )
+            # Turn 1: model provides both patch and edits (ToolPolicyError)
+            turn1_call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call-policy-1",
+                            "function": {
+                                "name": "propose_patch",
+                                "arguments": {
+                                    "patch": "diff --git a/src/value.py b/src/value.py\n",
+                                    "edits": [{"file": "src/value.py", "search": "VALUE = 1", "replace": "VALUE = 2"}],
+                                },
+                            },
+                        }
+                    ],
+                }
+            }
+            # Turn 2: model fixes arguments to only edits
+            turn2_call = {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call-policy-2",
+                            "function": {
+                                "name": "propose_patch",
+                                "arguments": {
+                                    "edits": [{"file": "src/value.py", "search": "VALUE = 1", "replace": "VALUE = 2"}],
+                                },
+                            },
+                        }
+                    ],
+                }
+            }
+            # Turn 3: model finalizes candidate
+            turn3_call = {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {"status": "candidate", "summary": "исправлено", "checks": [], "risks": []}
+                    ),
+                }
+            }
+            model = FakeModel([turn1_call, turn2_call, turn3_call])
+            result = Controller(model, workspace).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertIn("VALUE = 2", result["patch"])
+        # Verify turn 2 tool feedback contained policy violation details in same chat
+        turn2_messages = model.requests[1]["messages"]
+        self.assertEqual(turn2_messages[-1]["role"], "tool")
+        self.assertIn("ERR_DUAL_FORMAT", turn2_messages[-1]["content"])
+        self.assertIn("not both", turn2_messages[-1]["content"])
+
+    def test_controller_provides_templated_candidate_feedback_when_patch_invalid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="candidate-feedback",
+                goal="исправить значение",
+                files=("src/value.py",),
+            )
+            # Turn 1: model returns candidate with invalid hunk line
+            turn1_candidate = {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "плохой патч",
+                            "patch": "diff --git a/src/value.py b/src/value.py\n--- a/src/value.py\n+++ b/src/value.py\n@@ -1,99 +1,99 @@\n-VALUE = 1\n+VALUE = 2\n",
+                            "checks": [],
+                            "risks": [],
+                        }
+                    ),
+                }
+            }
+            # Turn 2: model corrects candidate using edits
+            turn2_candidate = {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "status": "candidate",
+                            "summary": "исправленный патч",
+                            "edits": [{"file": "src/value.py", "search": "VALUE = 1", "replace": "VALUE = 2"}],
+                            "checks": [],
+                            "risks": [],
+                        }
+                    ),
+                }
+            }
+            model = FakeModel([turn1_candidate, turn2_candidate])
+            result = Controller(model, workspace, max_retries=1).run(task)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertIn("VALUE = 2", result["patch"])
+        # Verify turn 2 prompt contained validation feedback in single contiguous context
+        turn2_messages = model.requests[1]["messages"]
+        self.assertEqual(turn2_messages[-1]["role"], "user")
+        self.assertIn("CANDIDATE_VALIDATION_FAILED", turn2_messages[-1]["content"])
+        self.assertIn("patch", turn2_messages[-1]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

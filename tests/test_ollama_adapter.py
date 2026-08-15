@@ -131,7 +131,7 @@ class OllamaClientTests(unittest.TestCase):
     def test_chat_sends_sampling_options_when_configured(self):
         profile = ModelProfile(
             name="sampling-coder",
-            model="codex-qwen3-8b-q6k:latest",
+            model="local-qwen3-8b-q6k:latest",
             temperature=0.7,
             top_p=0.8,
             top_k=40,

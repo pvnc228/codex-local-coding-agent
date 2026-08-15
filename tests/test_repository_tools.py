@@ -201,7 +201,7 @@ class RepositoryToolsTests(unittest.TestCase):
         self.assertLessEqual(len(json.dumps(result, ensure_ascii=False).encode("utf-8")), 200)
 
     def test_run_tests_uses_sanitized_environment_and_reports_isolated_process(self):
-        command = f'"{sys.executable}" -B -c "import os; print(os.getenv(\'CODEX_ISOLATION_SENTINEL\', \'missing\'))"'
+        command = f'"{sys.executable}" -B -c "import os; print(os.getenv(\'AGENT_ISOLATION_SENTINEL\', \'missing\'))"'
         task = TaskEnvelope(
             id="isolated-check",
             goal="запустить изолированную проверку",
@@ -210,7 +210,7 @@ class RepositoryToolsTests(unittest.TestCase):
         )
         tools = BoundedRepositoryTools(self.workspace, task)
 
-        with patch.dict(os.environ, {"CODEX_ISOLATION_SENTINEL": "must-not-leak"}):
+        with patch.dict(os.environ, {"AGENT_ISOLATION_SENTINEL": "must-not-leak"}):
             result = tools.execute("run_tests", {"command": command})
 
         self.assertTrue(result["passed"])

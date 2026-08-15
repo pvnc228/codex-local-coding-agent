@@ -651,7 +651,7 @@ def run_case(
     """Run one model against a disposable fixture and judge its proposal externally."""
 
     instrumented = model if isinstance(model, InstrumentedModel) else InstrumentedModel(model)
-    with tempfile.TemporaryDirectory(prefix="codex-local-benchmark-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="local-benchmark-") as temp_dir:
         workspace = Path(temp_dir)
         for raw_path, content in case.fixture.items():
             target = workspace / raw_path
