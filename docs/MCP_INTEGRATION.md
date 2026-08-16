@@ -116,8 +116,17 @@ Configure in ChatGPT Developer Mode or `~/.codex/config.json`:
   "mcp": {
     "local-coding-agent": {
       "type": "local",
-      "command": "local-agent",
-      "args": ["serve-mcp", "--workspace", "."]
+      "command": [
+        "python",
+        "-m",
+        "local_coding_agent",
+        "serve-mcp",
+        "--workspace",
+        ".",
+        "--profile",
+        "qwen3-8b-q6k"
+      ],
+      "enabled": true
     }
   }
 }

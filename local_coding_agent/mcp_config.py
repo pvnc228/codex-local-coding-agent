@@ -110,11 +110,24 @@ def generate_mcp_config_dict(
     endpoint: str | None = None,
     command: str | None = None,
     server_name: str = "local-coding-agent",
+    client: str = "generic",
 ) -> dict[str, Any]:
     cmd = command or sys.executable
     args = ["-m", "local_coding_agent", "serve-mcp", "--workspace", str(Path(workspace).resolve()), "--profile", profile]
     if endpoint:
         args.extend(["--endpoint", endpoint])
+
+    client_norm = client.lower().strip()
+    if client_norm in ("opencode", "opencode-desktop", "opencode-cli"):
+        return {
+            "mcp": {
+                server_name: {
+                    "type": "local",
+                    "command": [cmd, *args],
+                    "enabled": True,
+                }
+            }
+        }
 
     return {
         "mcpServers": {
@@ -162,28 +175,44 @@ def integrate_mcp_config(
         }
 
     resolved_path = target_path if target_path is not None else get_client_config_path(client, workspace)
+    is_opencode = client_norm in ("opencode", "opencode-desktop", "opencode-cli") or resolved_path.name.startswith("opencode.")
+
     snippet = generate_mcp_config_dict(
         workspace=workspace,
         profile=profile,
         endpoint=endpoint,
         server_name=server_name,
+        client="opencode" if is_opencode else client_norm,
     )
 
-    merged_data: dict[str, Any] = {"mcpServers": {}}
+    merged_data: dict[str, Any] = {}
 
     if resolved_path.exists():
         try:
             raw = resolved_path.read_text(encoding="utf-8")
-            loaded = json.loads(raw)
+            cleaned_lines = []
+            for line in raw.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("//") or stripped.startswith("#"):
+                    continue
+                cleaned_lines.append(line)
+            loaded = json.loads("\n".join(cleaned_lines))
             if isinstance(loaded, dict):
                 merged_data = loaded
-                if "mcpServers" not in merged_data or not isinstance(merged_data["mcpServers"], dict):
-                    merged_data["mcpServers"] = {}
         except Exception:
-            merged_data = {"mcpServers": {}}
+            merged_data = {}
 
-    # Merge our server definition
-    merged_data["mcpServers"][server_name] = snippet["mcpServers"][server_name]
+    if is_opencode:
+        if "mcp" not in merged_data or not isinstance(merged_data["mcp"], dict):
+            merged_data["mcp"] = {}
+        # Clean up any errant mcpServers key in opencode config which violates opencode.json schema
+        if "mcpServers" in merged_data:
+            del merged_data["mcpServers"]
+        merged_data["mcp"][server_name] = snippet["mcp"][server_name]
+    else:
+        if "mcpServers" not in merged_data or not isinstance(merged_data["mcpServers"], dict):
+            merged_data["mcpServers"] = {}
+        merged_data["mcpServers"][server_name] = snippet["mcpServers"][server_name]
 
     if dry_run:
         return {

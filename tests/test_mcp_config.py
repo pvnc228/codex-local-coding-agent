@@ -133,6 +133,56 @@ class TestMcpConfig(unittest.TestCase):
             self.assertIn("local-coding-agent", saved["mcpServers"])
 
 
+    def test_generate_mcp_config_dict_opencode(self):
+        conf = generate_mcp_config_dict(
+            workspace="c:/workspace",
+            profile="qwen3-8b-q6k",
+            client="opencode",
+        )
+        self.assertIn("mcp", conf)
+        self.assertNotIn("mcpServers", conf)
+        self.assertIn("local-coding-agent", conf["mcp"])
+        server = conf["mcp"]["local-coding-agent"]
+        self.assertEqual(server["type"], "local")
+        self.assertIsInstance(server["command"], list)
+        self.assertIn("serve-mcp", server["command"])
+        self.assertIn("qwen3-8b-q6k", server["command"])
+        self.assertTrue(server.get("enabled", True))
+
+    def test_integrate_mcp_config_opencode_merges_mcp_and_cleans_mcpservers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = Path(tmpdir) / "opencode.jsonc"
+            initial_data = {
+                "$schema": "https://opencode.ai/config.json",
+                "plugin": ["@dietrichgebert/ponytail"],
+                "mcpServers": {
+                    "local-coding-agent": {
+                        "command": "python",
+                        "args": ["-m", "local_coding_agent"]
+                    }
+                }
+            }
+            cfg_file.write_text(json.dumps(initial_data), encoding="utf-8")
+
+            res = integrate_mcp_config(
+                client="opencode",
+                workspace=tmpdir,
+                profile="qwen3-8b-q6k",
+                target_path=cfg_file,
+                dry_run=False,
+            )
+            self.assertTrue(cfg_file.exists())
+            self.assertTrue(res["written"])
+
+            saved = json.loads(cfg_file.read_text(encoding="utf-8"))
+            self.assertIn("mcp", saved)
+            self.assertNotIn("mcpServers", saved)
+            self.assertIn("local-coding-agent", saved["mcp"])
+            self.assertEqual(saved["mcp"]["local-coding-agent"]["type"], "local")
+            self.assertIsInstance(saved["mcp"]["local-coding-agent"]["command"], list)
+            self.assertIn("serve-mcp", saved["mcp"]["local-coding-agent"]["command"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
