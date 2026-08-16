@@ -63,7 +63,7 @@ Why do small models (2B–4B) usually fail in typical agent setups? Because when
 | Traditional Agent (Fails) | Local Coding Agent v0.4.0 (Succeeds) |
 | :--- | :--- |
 | **Model Mistake:** Model places text into test array: `checks: ["modified file"]` | **Model Mistake:** Same syntax error |
-| ❌ **Agent Feedback:** `"Validation failed: response rejected. Try again."` | ✅ **Pinpointed Prescription:** `{"error": "ERR_CHECKS_TYPE", "hint": "Поле 'checks' должно быть пустым массивом []. Замени на 'checks': []"}` |
+| ❌ **Agent Feedback:** `"Validation failed: response rejected. Try again."` | ✅ **Pinpointed Prescription:** `{"error": "ERR_CHECKS_TYPE", "hint": "The 'checks' field must be an empty array []. Replace with 'checks': []"}` |
 | 📉 **Result:** 2B model panics, repeats the error, runs out of turns. | 📈 **Result:** Model replaces the single field in 1 turn and immediately passes! |
 
 > 🔒 **Zero Distillation Guarantee:** All prescriptions are computed strictly by deterministic Python rules. No host model reasoning or proprietary prompt logic is distilled into the local model.
