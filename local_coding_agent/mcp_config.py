@@ -4,9 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
+
+
+_CODEX_CLIENTS = frozenset(
+    {
+        "chatgpt",
+        "chatgpt-desktop",
+        "codex",
+        "codex-desktop",
+        "codex-cli",
+        "openai",
+    }
+)
 
 
 def get_client_config_path(client: str, workspace: str | Path = ".") -> Path:
@@ -44,11 +57,11 @@ def get_client_config_path(client: str, workspace: str | Path = ".") -> Path:
     if client_norm in ("opencode", "opencode-desktop", "opencode-cli"):
         return home / ".config" / "opencode" / "opencode.jsonc"
 
-    if client_norm in ("chatgpt", "chatgpt-desktop", "codex", "codex-cli", "openai"):
-        return home / ".codex" / "config.json"
+    if client_norm in _CODEX_CLIENTS:
+        return home / ".codex" / "config.toml"
 
     raise ValueError(
-        f"Unsupported MCP client: {client}. Supported: claude, cursor, windsurf, cline, antigravity, opencode, chatgpt, vscode"
+        f"Unsupported MCP client: {client}. Supported: claude, cursor, windsurf, cline, antigravity, opencode, codex, chatgpt, vscode"
     )
 
 
@@ -93,7 +106,7 @@ def detect_installed_clients(workspace: str | Path = ".") -> list[str]:
 
     try:
         if (home / ".codex").is_dir():
-            detected.append("chatgpt")
+            detected.append("codex")
     except Exception:
         pass
 
@@ -139,6 +152,59 @@ def generate_mcp_config_dict(
     }
 
 
+def _toml_key(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_table_name(server_name: str) -> str:
+    return f"mcp_servers.{_toml_key(server_name)}"
+
+
+def _render_codex_server_toml(server_name: str, server: dict[str, Any]) -> str:
+    args = ", ".join(json.dumps(str(arg), ensure_ascii=False) for arg in server["args"])
+    table = _toml_table_name(server_name)
+    return (
+        f"[{table}]\n"
+        f"command = {json.dumps(str(server['command']), ensure_ascii=False)}\n"
+        f"args = [{args}]\n"
+    )
+
+
+def _merge_codex_server_toml(existing: str, server_name: str, server: dict[str, Any]) -> str:
+    """Replace one Codex MCP table while preserving unrelated TOML settings."""
+    replacement = _render_codex_server_toml(server_name, server).rstrip()
+    text = existing.rstrip()
+    table = _toml_table_name(server_name)
+    section_pattern = re.compile(r"(?m)^\[([^\]\r\n]+)\][ \t]*$")
+    sections = list(section_pattern.finditer(text))
+    target_index = next(
+        (
+            index
+            for index, section in enumerate(sections)
+            if section.group(1).strip() == table
+        ),
+        None,
+    )
+
+    if target_index is None:
+        return f"{text}\n\n{replacement}\n" if text else f"{replacement}\n"
+
+    start = sections[target_index].start()
+    end = len(text)
+    for section in sections[target_index + 1 :]:
+        name = section.group(1).strip()
+        if not name.startswith(f"{table}."):
+            end = section.start()
+            break
+
+    prefix = text[:start].rstrip()
+    suffix = text[end:].lstrip()
+    parts = [part for part in (prefix, replacement, suffix) if part]
+    return "\n\n".join(parts) + "\n"
+
+
 def integrate_mcp_config(
     client: str,
     workspace: str | Path = ".",
@@ -176,6 +242,7 @@ def integrate_mcp_config(
 
     resolved_path = target_path if target_path is not None else get_client_config_path(client, workspace)
     is_opencode = client_norm in ("opencode", "opencode-desktop", "opencode-cli") or resolved_path.name.startswith("opencode.")
+    is_toml = resolved_path.suffix.lower() == ".toml"
 
     snippet = generate_mcp_config_dict(
         workspace=workspace,
@@ -184,6 +251,31 @@ def integrate_mcp_config(
         server_name=server_name,
         client="opencode" if is_opencode else client_norm,
     )
+
+    if is_toml:
+        server = snippet["mcpServers"][server_name]
+        existing = resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+        merged_text = _merge_codex_server_toml(existing, server_name, server)
+        if dry_run:
+            return {
+                "client": client,
+                "path": str(resolved_path),
+                "dry_run": True,
+                "written": False,
+                "config": merged_text,
+                "snippet": snippet,
+            }
+
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_path.write_text(merged_text, encoding="utf-8")
+        return {
+            "client": client,
+            "path": str(resolved_path),
+            "dry_run": False,
+            "written": True,
+            "config": merged_text,
+            "snippet": snippet,
+        }
 
     merged_data: dict[str, Any] = {}
 

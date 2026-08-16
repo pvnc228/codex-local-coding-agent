@@ -88,6 +88,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.workspace, "c:/code")
         self.assertTrue(args.dry_run)
 
+    def test_cli_subcommand_codex_mcp(self):
+        args = build_parser().parse_args(["init-mcp", "--codex", "--workspace", "c:/code", "--dry-run"])
+        self.assertEqual(args.client, "codex")
+
     def test_cli_subcommand_test_run(self):
         args = build_parser().parse_args(["test-run", "--mock", "--profile", "qwen3-8b-q6k"])
         self.assertEqual(args.subcommand, "test-run")
@@ -132,4 +136,3 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

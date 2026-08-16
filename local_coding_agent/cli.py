@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_p = subparsers.add_parser("init-mcp", help="Generate or configure MCP client integration")
     mcp_p.add_argument(
         "--client",
-        choices=["claude", "cursor", "windsurf", "cline", "antigravity", "opencode", "chatgpt", "vscode", "auto", "all"],
+        choices=["claude", "cursor", "windsurf", "cline", "antigravity", "opencode", "codex", "chatgpt", "vscode", "auto", "all"],
         default="claude",
         help="Target MCP client (default: claude, or 'auto'/'all')",
     )
@@ -137,7 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_p.add_argument("--cline", action="store_const", const="cline", dest="client", help="Configure for Cline Desktop / Extension")
     mcp_p.add_argument("--antigravity", action="store_const", const="antigravity", dest="client", help="Configure for Antigravity Desktop & agy CLI")
     mcp_p.add_argument("--opencode", action="store_const", const="opencode", dest="client", help="Configure for OpenCode Desktop & CLI")
-    mcp_p.add_argument("--chatgpt", action="store_const", const="chatgpt", dest="client", help="Configure for ChatGPT Desktop & Codex CLI")
+    mcp_p.add_argument("--codex", action="store_const", const="codex", dest="client", help="Configure Codex Desktop & Codex CLI (~/.codex/config.toml)")
+    mcp_p.add_argument("--chatgpt", action="store_const", const="codex", dest="client", help="Legacy alias for --codex")
     mcp_p.add_argument("--vscode", action="store_const", const="cline", dest="client", help="Configure for VS Code / Cline")
     mcp_p.add_argument("--auto", action="store_const", const="auto", dest="client", help="Auto-detect IDEs in workspace and host environment")
     mcp_p.add_argument("--all", action="store_const", const="all", dest="client", help="Configure all detected IDE environments")
@@ -203,7 +204,8 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             if dry_run:
                 print(f"--- MCP Configuration Preview ({args.client}) ---")
                 print(f"Target Path: {res['path']}")
-                print(json.dumps(res["config"], indent=2, ensure_ascii=False))
+                config = res["config"]
+                print(config if isinstance(config, str) else json.dumps(config, indent=2, ensure_ascii=False))
                 print("\nUse --write to automatically merge this config into the file.")
             else:
                 print(f"[OK] Successfully integrated MCP server into: {res['path']}")

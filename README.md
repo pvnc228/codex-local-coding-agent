@@ -89,7 +89,7 @@ Testing full multi-file implementation: Key-Value Storage + TTL Engine + Write-A
 
 ### 🤖 Auto-Setup via Your Coding Assistant
 
-If you are already in an AI coding assistant (**Cursor, Windsurf, Claude Code, Cline, Antigravity, OpenCode**), just paste this one prompt:
+If you are already in an AI coding assistant (**Cursor, Windsurf, Claude Code, Cline, Antigravity, OpenCode, Codex**), just paste this one prompt:
 
 ```text
 Install and configure https://github.com/pvnc228/local-coding-agent:
@@ -138,6 +138,7 @@ local-agent init-mcp --claude --write       # Claude Desktop & Claude Code
 local-agent init-mcp --cline --write        # Cline & Roo Code
 local-agent init-mcp --antigravity --write  # Google Antigravity & agy CLI
 local-agent init-mcp --opencode --write     # OpenCode Studio & CLI
+local-agent init-mcp --codex --write        # Codex Desktop & Codex CLI
 ```
 
 #### 4. Run End-to-End Verification

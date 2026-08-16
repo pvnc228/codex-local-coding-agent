@@ -56,7 +56,11 @@ class TestMcpConfig(unittest.TestCase):
     def test_get_client_config_path_chatgpt(self):
         path = get_client_config_path("chatgpt")
         self.assertIsInstance(path, Path)
-        self.assertTrue(str(path).endswith("config.json") or str(path).endswith("mcp.json"))
+        self.assertTrue(str(path).endswith("config.toml"))
+
+    def test_get_client_config_path_codex_is_toml(self):
+        path = get_client_config_path("codex")
+        self.assertTrue(str(path).endswith(".codex\\config.toml"))
 
 
     def test_integrate_mcp_config_dry_run(self):
@@ -101,6 +105,49 @@ class TestMcpConfig(unittest.TestCase):
             saved = json.loads(cfg_file.read_text(encoding="utf-8"))
             self.assertIn("existing-server", saved["mcpServers"])
             self.assertIn("local-coding-agent", saved["mcpServers"])
+
+    def test_integrate_codex_config_writes_idempotent_toml_and_preserves_existing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = Path(tmpdir) / "config.toml"
+            cfg_file.write_text(
+                "[mcp_servers.other]\ncommand = 'node'\n\n"
+                "[mcp_servers.local-coding-agent]\ncommand = 'old-python'\nargs = []\n",
+                encoding="utf-8",
+            )
+
+            first = integrate_mcp_config(
+                client="codex",
+                workspace=tmpdir,
+                profile="qwen3-8b-q6k",
+                target_path=cfg_file,
+                dry_run=False,
+            )
+            second = integrate_mcp_config(
+                client="codex",
+                workspace=tmpdir,
+                profile="qwen3-8b-q6k",
+                target_path=cfg_file,
+                dry_run=False,
+            )
+            saved = cfg_file.read_text(encoding="utf-8")
+
+            self.assertTrue(first["written"])
+            self.assertTrue(second["written"])
+            self.assertIn("[mcp_servers.other]", saved)
+            self.assertIn("[mcp_servers.local-coding-agent]", saved)
+            self.assertNotIn("old-python", saved)
+            self.assertEqual(saved.count("[mcp_servers.local-coding-agent]"), 1)
+            self.assertIn("serve-mcp", saved)
+            self.assertNotIn('"mcpServers"', saved)
+
+    def test_auto_detects_codex_client_for_toml_config(self):
+        from local_coding_agent.mcp_config import detect_installed_clients
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            (home / ".codex").mkdir()
+            with mock.patch("local_coding_agent.mcp_config.Path.home", return_value=home):
+                self.assertIn("codex", detect_installed_clients(workspace=home))
 
     def test_auto_detect_clients_with_workspace_cursor_and_vscode(self):
         from local_coding_agent.mcp_config import detect_installed_clients
@@ -185,4 +232,3 @@ class TestMcpConfig(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

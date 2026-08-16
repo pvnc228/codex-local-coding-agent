@@ -85,18 +85,23 @@ When the MCP client announces the `io.modelcontextprotocol/tasks` capability:
 }
 ```
 
-### ChatGPT Desktop & Codex CLI
-Configure in ChatGPT Developer Mode or `~/.codex/config.json`:
-```json
-{
-  "mcpServers": {
-    "local-coding-agent": {
-      "command": "python",
-      "args": ["-m", "local_coding_agent", "serve-mcp", "--workspace", "."]
-    }
-  }
-}
+### Codex Desktop & Codex CLI (`~/.codex/config.toml`)
+Register the server with the dedicated Codex TOML writer:
+```bash
+local-agent init-mcp --codex --write
 ```
+
+The resulting entry uses Codex's native schema and preserves unrelated settings:
+```toml
+[mcp_servers.local-coding-agent]
+command = "python"
+args = ["-m", "local_coding_agent", "serve-mcp", "--workspace", "."]
+```
+
+`--chatgpt` remains available as a legacy alias for `--codex`.
+
+### ChatGPT Developer Mode
+Configure the MCP server through ChatGPT's Developer Mode UI. Codex Desktop and Codex CLI use `~/.codex/config.toml` as shown above.
 
 ### Google Antigravity Desktop & agy CLI (`~/.gemini/config/mcp_config.json`)
 ```json
@@ -175,4 +180,3 @@ Configure in ChatGPT Developer Mode or `~/.codex/config.json`:
   }
 }
 ```
-
