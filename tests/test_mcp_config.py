@@ -60,7 +60,7 @@ class TestMcpConfig(unittest.TestCase):
 
     def test_get_client_config_path_codex_is_toml(self):
         path = get_client_config_path("codex")
-        self.assertTrue(str(path).endswith(".codex\\config.toml"))
+        self.assertEqual(path, Path.home() / ".codex" / "config.toml")
 
 
     def test_integrate_mcp_config_dry_run(self):
