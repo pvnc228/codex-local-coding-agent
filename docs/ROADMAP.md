@@ -69,6 +69,25 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - **Targeted Prescriptions (Dynamic Remediation)**: Context-aware single-turn retry prompts (e.g. precise line-alignment guides) preserving proposal-only invariants.
 - **Teaser Prototype in Main**: Built-in `ling-3.0-tiny-q6k` support with sub-line edit auto-expansion and tolerant candidate ingestion (achieving **95% Correctness / 80% Loop Reliability at 119 tok/s** on RTX 4060).
 
+### R14 — Dynamic Context Compaction & Harness State Machine (Planned)
+- **Agentic Harness vs Conversational Chat**: Transition controller loop from passive chat history accumulation to active agentic state management.
+- **Tool Output Trimming & Eviction**: Automatic summarization/pruning of historical `read_file` and `search_text` results older than 1 turn to prevent context blowup and attention degradation on 3B–14B models.
+- **Diff Residue Elimination**: Purge multi-turn failed diff attempts from active context, replacing them with a minimal task envelope + active pinpointed prescription.
+
+### R15 — Multi-Dimensional Capability Ladder & Intelligence Benchmark (Planned)
+- **Taxonomy of Difficulty Tiers**: Progressive test suite from Tier 0 (Syntax/Formatting/Typos) -> Tier 1 (Atomic Pure Functions) -> Tier 2 (Single-File Multi-Hunk Refactor) -> Tier 3 (Cross-File Invariants) -> Tier 4 (Algorithmic & Strict Constraints).
+- **Adaptive Early-Exit Benchmark Ladder**: Dynamic step-up evaluation that calculates the model's reliability ceiling without wasting compute on out-of-reach tiers.
+- **Task Decomposition & Granularity Tolerance**: Quantitative evaluation of maximum digestible chunk size (`atomic_hunk`, `function_level`, `file_level`, `multi_file_batch`).
+- **Polyglot Evaluation Matrix**: Multi-language capability benchmarks across Python, TypeScript/JavaScript, Rust, and Go to establish per-language capability ratings.
+- **Tool Horizon & Turn Endurance**: Measurement of the model's degradation point (repetition, loop fatigue, schema drift, hallucination) across extended multi-turn tool loops.
+
+### R16 — MCP Capability Discovery, Smart Routing & Task Gatekeeper (Planned)
+- **Structured Capability Profile**: Standardized JSON capability vector (`overall_tier`, `confidence_95_ci`, `granularity_tolerance`, `turn_horizon`, `languages`, `tps_generation`).
+- **MCP Protocol Discovery & Introspection**: Expose model capabilities and routing advice via MCP tool definitions, MCP resource `model://profile`, and system prompt injection for calling host agents.
+- **Pre-Flight Complexity Gatekeeper**: Immediate controller-level rejection/warning before invoking LLM if submitted task exceeds model's verified tier or file bounds (`CAPABILITY_OVERLOAD`).
+- **Decomposition Guidance for Host Agents**: Actionable error envelopes instructing host agents (Codex/Claude) how to decompose rejected tasks into digestible chunks for the active local model.
+- **CLI Intelligence Inspector**: `local-agent doctor --rank` and `local-agent benchmark --ladder` reporting model intelligence tier, supported languages, and routing sweet spot.
+
 ---
 
 ## Beyond Current Scope (Future Exploration)
@@ -77,6 +96,7 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - Round-robin GPU queue scheduling across competing model profiles.
 - Distributed worker clusters with remote Ollama instances.
 - Native `llama-server` / OpenAI-compatible backend adapter (direct execution of non-standard GGUF architectures such as BailingMoE/KDA/MLA bypassing Ollama wrapper).
+
 
 
 

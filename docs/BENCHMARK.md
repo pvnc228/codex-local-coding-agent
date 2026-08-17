@@ -48,3 +48,22 @@ With indentation-preserving prompt guidance and few-shot formatting examples, `q
 - **8 GB VRAM**: Single worker running `qwen3-8b-q6k`.
 - **16–24 GB VRAM**: Single worker running `qwen3.8-27b-q4` or two parallel workers on `qwen3-8b-q6k`.
 - **32 GB+ VRAM**: Multiple parallel workers managed by `BoundedWorkerPool`.
+
+---
+
+## Capability Ladder & Intelligence Tiers (Planned R15)
+
+To support automated routing decisions by calling host agents (e.g. Codex, Claude, Cursor), the benchmark is evolving into an adaptive multi-tier ladder:
+
+- **Tier 0 (Syntax & Formatting)**: Indentation, constant renaming, and docstring formatting.
+- **Tier 1 (Atomic Pure Functions)**: Single-function logic fixes, boundary checks, off-by-one errors.
+- **Tier 2 (Single-File Refactorer)**: Multi-hunk edits within a single file up to 300 lines.
+- **Tier 3 (Cross-File Coordinator)**: Synchronized 2-file changes maintaining shared public contracts.
+- **Tier 4 (Algorithmic Specialist)**: Complex algorithmic edge cases with strict execution invariants.
+
+Models are evaluated along four distinct capability dimensions:
+1. **Granularity Tolerance**: Maximum digestible task scope (`atomic_hunk` vs `function` vs `file` vs `multi_file`).
+2. **Polyglot Matrix**: Language-specific tier ratings (Python, TypeScript, Rust, Go).
+3. **Turn Endurance / Tool Horizon**: Degradation threshold across extended multi-turn tool loops.
+4. **Self-Healing Index**: Success rate in correcting proposal errors via pinpointed prescriptions.
+
