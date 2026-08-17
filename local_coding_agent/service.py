@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping
 
 from .atomizer import TaskBudget, preflight
 from .controller import Controller, ModelClient, run_post_apply_checks
-from .ollama_adapter import ModelProfile, OllamaClient
+from .ollama_adapter import ModelProfile, build_client
 from .profiles import get_profile
 from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
 from .task import TaskEnvelope
@@ -77,7 +77,7 @@ class DelegationService:
         self,
         workspaces: Mapping[str, str | Path],
         *,
-        model_factory: Callable[[ModelProfile], ModelClient] = OllamaClient,
+        model_factory: Callable[[ModelProfile], ModelClient] = build_client,
         max_turns: int = 4,
         max_cached_results: int = 256,
         preflight_budget: TaskBudget = TaskBudget(),

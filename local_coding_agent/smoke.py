@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .controller import Controller
-from .ollama_adapter import OllamaClient
+from .ollama_adapter import build_client
 from .profiles import ModelProfile, get_profile
 from .task import TaskEnvelope
 
@@ -157,7 +157,7 @@ def run_smoke_test(
                 print("[INFO] Step 3: Using scripted mock model runner.")
         else:
             try:
-                real_client = OllamaClient(profile)
+                real_client = build_client(profile)
                 real_client.available_models()
                 client = real_client
                 if verbose:

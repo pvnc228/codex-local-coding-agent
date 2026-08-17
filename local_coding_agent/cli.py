@@ -15,7 +15,7 @@ from .controller import Controller
 from .doctor import diagnose_environment
 from .mcp_config import integrate_mcp_config
 from .memory import ModelMemoryManager
-from .ollama_adapter import OllamaClient, OllamaError
+from .ollama_adapter import OllamaError, build_client
 from .profiles import get_profile, list_profiles
 from .smoke import run_smoke_test
 from .task import TaskEnvelope
@@ -266,7 +266,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.num_ctx is not None:
             overrides["num_ctx"] = args.num_ctx
         profile = get_profile(args.profile, **overrides)
-        client = OllamaClient(profile)
+        client = build_client(profile)
         if args.benchmark:
             if args.task is not None or getattr(args, "task_file", None) is not None:
                 raise ValueError("--benchmark cannot be combined with --task or --task-file")
@@ -296,7 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     **overrides,
                     timeout_seconds=args.benchmark_timeout_seconds,
                 )
-                benchmark_client = OllamaClient(benchmark_profile)
+                benchmark_client = build_client(benchmark_profile)
                 try:
                     available = benchmark_client.available_models()
                     available_names = {

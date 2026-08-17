@@ -22,6 +22,7 @@ class ModelProfile:
     name: str
     model: str
     endpoint: str = "http://127.0.0.1:11434"
+    provider: str = "ollama"
     think: bool = False
     temperature: float = 0
     num_ctx: int = 4096
@@ -41,6 +42,8 @@ class ModelProfile:
     def __post_init__(self) -> None:
         if self.num_ctx <= 0:
             raise ValueError("num_ctx must be positive")
+        if self.provider not in ("ollama", "openai"):
+            raise ValueError(f"unsupported provider {self.provider!r}; expected 'ollama' or 'openai'")
         if self.max_context_length is not None:
             if self.max_context_length <= 0:
                 raise ValueError("max_context_length must be positive")
@@ -177,3 +180,177 @@ class OllamaClient:
             return raw_body.decode("utf-8", errors="replace").strip()[:500]
         detail = payload.get("error") if isinstance(payload, dict) else None
         return detail if isinstance(detail, str) else ""
+
+
+class OpenAICompatibleClient:
+    """Adapter for OpenAI-compatible backends (e.g. llama-server `/v1`).
+
+    The controller speaks a neutral message/tool vocabulary (the same one
+    ``OllamaClient`` produces). This adapter maps it onto the OpenAI chat
+    completions wire format and normalizes the response back so callers see no
+    difference. Tool calls arrive as JSON strings in the OpenAI payload and are
+    parsed to objects for the controller.
+    """
+
+    def __init__(self, profile: ModelProfile, *, transport: Transport | None = None) -> None:
+        self.profile = profile
+        self._transport = transport or UrllibTransport(profile.endpoint)
+
+    def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        openai_messages: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content", "")
+            converted: dict[str, Any] = {"role": role, "content": content or ""}
+            if "tool_calls" in message:
+                converted["tool_calls"] = message["tool_calls"]
+            if role == "tool":
+                converted["tool_call_id"] = message.get("tool_call_id") or "call_0"
+            if "name" in message:
+                converted["name"] = message["name"]
+            openai_messages.append(converted)
+
+        payload: dict[str, Any] = {
+            "model": self.profile.model,
+            "messages": openai_messages,
+            "temperature": self.profile.temperature,
+            "max_tokens": self.profile.num_predict,
+            "chat_template_kwargs": {"thinking_option": "off", "enable_thinking": False},
+        }
+        if self.profile.top_p is not None:
+            payload["top_p"] = self.profile.top_p
+        if self.profile.seed is not None:
+            payload["seed"] = self.profile.seed
+        if self.profile.stop:
+            payload["stop"] = list(self.profile.stop)
+        if tools is not None:
+            payload["tools"] = tools
+
+        decoded = self._request_json("POST", "/v1/chat/completions", payload)
+        choice = _first_choice(decoded)
+        message = choice.get("message") if isinstance(choice, dict) else None
+        content = (message or {}).get("content") or ""
+        raw_calls = (message or {}).get("tool_calls") or []
+        tool_calls = [_normalize_tool_call(call) for call in raw_calls if isinstance(call, dict)]
+
+        usage = decoded.get("usage") if isinstance(decoded.get("usage"), dict) else {}
+        timings = decoded.get("timings") if isinstance(decoded.get("timings"), dict) else {}
+        prompt_ms = _as_float(timings.get("prompt_ms", 0))
+        predicted_ms = _as_float(timings.get("predicted_ms", 0))
+        return {
+            "message": {"role": "assistant", "content": content, "tool_calls": tool_calls},
+            "prompt_eval_count": _as_int(usage.get("prompt_tokens", 0)),
+            "eval_count": _as_int(usage.get("completion_tokens", 0)),
+            "prompt_eval_duration": _as_nanos_ms(timings.get("prompt_ms", 0)),
+            "eval_duration": _as_nanos_ms(timings.get("predicted_ms", 0)),
+            "total_duration": _as_nanos_ms(prompt_ms + predicted_ms),
+            "load_duration": 0,
+        }
+
+    def available_models(self) -> dict[str, Any]:
+        decoded = self._request_json("GET", "/v1/models", None)
+        data = decoded.get("data") if isinstance(decoded, dict) else None
+        models = []
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and isinstance(item.get("id"), str):
+                    models.append({"name": item["id"]})
+        return {"models": models}
+
+    def loaded_models(self) -> dict[str, Any]:
+        raise OllamaError(
+            "the openai provider does not expose loaded-model/VRAM introspection",
+            kind="unsupported",
+        )
+
+    def unload_model(self, model: str | None = None) -> dict[str, Any]:
+        raise OllamaError(
+            "the openai provider does not support unloading models",
+            kind="unsupported",
+        )
+
+    def _request_json(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = None if payload is None else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = {} if body is None else {"Content-Type": "application/json; charset=utf-8"}
+        status, raw_body = self._transport.request(
+            method,
+            path,
+            body,
+            headers,
+            self.profile.timeout_seconds,
+        )
+        if status < 200 or status >= 300:
+            detail = _openai_error_detail(raw_body)
+            suffix = f": {detail}" if detail else ""
+            raise OllamaError(f"backend HTTP {status}{suffix}", kind="http")
+        try:
+            decoded = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise OllamaError("backend returned invalid JSON", kind="invalid_json") from error
+        if not isinstance(decoded, dict):
+            raise OllamaError("backend returned a non-object JSON value", kind="invalid_json")
+        return decoded
+
+
+def _openai_error_detail(raw_body: bytes) -> str:
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw_body.decode("utf-8", errors="replace").strip()[:500]
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    if isinstance(error, str):
+        return error
+    if isinstance(error, dict) and isinstance(error.get("message"), str):
+        return error["message"]
+    return ""
+
+
+def _first_choice(decoded: dict[str, Any]) -> dict[str, Any]:
+    choices = decoded.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise OllamaError("backend returned no choices", kind="invalid_json")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise OllamaError("backend returned an invalid choice", kind="invalid_json")
+    return first
+
+
+def _normalize_tool_call(call: dict[str, Any]) -> dict[str, Any]:
+    function = call.get("function")
+    if isinstance(function, dict) and isinstance(function.get("arguments"), str):
+        try:
+            function = dict(function)
+            function["arguments"] = json.loads(function["arguments"])
+        except json.JSONDecodeError:
+            pass
+    return {**call, "function": function}
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _as_nanos_ms(value: Any) -> int:
+    try:
+        return int(_as_float(value) * 1_000_000)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def build_client(profile: ModelProfile, *, transport: Transport | None = None) -> OllamaClient | OpenAICompatibleClient:
+    """Return the transport matching the profile's declared provider."""
+    if profile.provider == "openai":
+        return OpenAICompatibleClient(profile, transport=transport)
+    return OllamaClient(profile, transport=transport)

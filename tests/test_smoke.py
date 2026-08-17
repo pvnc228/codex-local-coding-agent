@@ -16,10 +16,10 @@ class TestSmoke(unittest.TestCase):
         self.assertTrue(result["tps"] > 0)
 
     def test_run_smoke_real_client_fallback_to_mock_when_no_ollama(self):
-        with patch("local_coding_agent.smoke.OllamaClient") as mock_client_cls:
+        with patch("local_coding_agent.smoke.build_client") as mock_client_factory:
             instance = MagicMock()
             instance.available_models.side_effect = Exception("Ollama offline")
-            mock_client_cls.return_value = instance
+            mock_client_factory.return_value = instance
 
             result = run_smoke_test(use_mock=False, fallback_to_mock=True, verbose=False)
             self.assertTrue(result["success"])

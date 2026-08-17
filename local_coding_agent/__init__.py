@@ -9,7 +9,13 @@ from .mcp_config import generate_mcp_config_dict, get_client_config_path, integr
 from .mcp_server import build_server
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
 from .monitor import MonitorServer
-from .ollama_adapter import ModelProfile, OllamaClient, OllamaError
+from .ollama_adapter import (
+    ModelProfile,
+    OllamaClient,
+    OllamaError,
+    OpenAICompatibleClient,
+    build_client,
+)
 from .service import DelegationRequest, DelegationService
 from .smoke import run_smoke_test
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
@@ -52,6 +58,8 @@ __all__ = [
     "ModelProfile",
     "OllamaClient",
     "OllamaError",
+    "OpenAICompatibleClient",
+    "build_client",
     "build_server",
     "TaskEnvelope",
     "ValidationReport",

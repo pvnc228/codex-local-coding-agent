@@ -204,6 +204,7 @@ _PROFILES = {
         name="ling-3.0-tiny-q6k",
         model="ling-3.0-tiny-q6k",
         endpoint="http://127.0.0.1:8080",
+        provider="openai",
         think=False,
         temperature=0,
         num_ctx=8192,
