@@ -185,6 +185,21 @@ class SearchReplaceResolutionTests(unittest.TestCase):
         self.assertFalse(report.valid)
         self.assertTrue(any("workspace" in issue for issue in report.issues))
 
+    def test_resolve_edits_auto_aligns_unique_subline_search(self):
+        patch, changed, issues = resolve_edits(
+            self.workspace,
+            [{"file": "src/allowed.py", "search": "sorted(set(values))", "replace": "list(dict.fromkeys(values))"}],
+            allowed_files={"src/allowed.py"},
+            max_files=2,
+            max_patch_bytes=32000,
+        )
+
+        self.assertEqual(issues, [])
+        self.assertEqual(changed, ("src/allowed.py",))
+        self.assertIn("-    return sorted(set(values))", patch)
+        self.assertIn("+    return list(dict.fromkeys(values))", patch)
+
 
 if __name__ == "__main__":
     unittest.main()
+

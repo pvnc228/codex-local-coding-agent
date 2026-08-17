@@ -1312,8 +1312,43 @@ class ControllerTests(unittest.TestCase):
             self.assertIn("exit_code", checks[0])
             self.assertEqual(checks[0]["exit_code"], 0)
 
+    def test_controller_normalizes_redundant_patch_when_edits_provided(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            target = workspace / "src" / "sample.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="redundant-test",
+                goal="fix x",
+                files=("src/sample.py",),
+            )
+            candidate = {
+                "status": "candidate",
+                "summary": "fixed",
+                "patch": "diff --git a/src/sample.py b/src/sample.py\n--- a/src/sample.py\n+++ b/src/sample.py\n@@ -1,1 +1,1 @@\n-x = 1\n+x = 2\n",
+                "edits": [
+                    {
+                        "file": "src/sample.py",
+                        "search": "x = 1",
+                        "replace": "x = 2",
+                    }
+                ],
+                "checks": [],
+                "risks": [],
+            }
+            model = FakeModel([{"message": {"content": json.dumps(candidate)}}])
+            result = Controller(model, workspace).run(task)
+
+
+            self.assertEqual(result["status"], "accepted")
+
+            self.assertTrue(result["validation"]["valid"])
+            self.assertIn("x = 2", result["patch"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

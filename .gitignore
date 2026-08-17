@@ -16,3 +16,5 @@ htmlcov/
 # Local run artifacts
 .codex-run/
 logs/
+scratch/
+

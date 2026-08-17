@@ -436,9 +436,15 @@ class Controller:
                 result["summary"] = "Task completed"
             if "risks" not in result:
                 result["risks"] = []
+
+            if result.get("edits") and result.get("patch"):
+                result.pop("patch", None)
+                audit.append({"event": "redundant_patch_normalized_to_edits"})
             if not result.get("patch") and not result.get("edits") and last_patch:
                 result["patch"] = last_patch[-1]
                 audit.append({"event": "patch_reused_from_tool_proposal"})
+
+
             result["checks"] = [
                 dict(observed_checks[command])
                 for command in task.checks

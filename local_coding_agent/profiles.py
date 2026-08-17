@@ -200,7 +200,20 @@ _PROFILES = {
         keep_alive="10m",
         max_context_length=131_072,
     ),
+    "ling-3.0-tiny-q6k": ModelProfile(
+        name="ling-3.0-tiny-q6k",
+        model="ling-3.0-tiny-q6k",
+        endpoint="http://127.0.0.1:8080",
+        think=False,
+        temperature=0,
+        num_ctx=8192,
+        num_predict=512,
+        keep_alive="10m",
+        max_context_length=262_144,
+        stop=("<|role_end|>", "<role>"),
+    ),
 }
+
 
 
 def list_profiles() -> tuple[str, ...]:

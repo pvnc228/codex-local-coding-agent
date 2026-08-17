@@ -15,7 +15,9 @@ class ModelProfileTests(unittest.TestCase):
                 "gemma4-e2b-q8",
                 "gemma4-e4b-q4",
                 "gemma4-e4b-q5",
+                "ling-3.0-tiny-q6k",
                 "nemotron-30b-mxfp4",
+
                 "ornith-9b",
                 "qwen2.5-1.5b",
                 "qwen2.5-coder",

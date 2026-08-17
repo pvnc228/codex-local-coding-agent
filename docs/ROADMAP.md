@@ -63,6 +63,12 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - Added open-source community standards: `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, and issue/PR templates.
 - Configured GitHub Actions matrix CI (`.github/workflows/ci.yml`) for automated testing on Linux, macOS, and Windows.
 
+### R13 — Adaptive Model Calibration & Dynamic Profiler (Planned)
+- **Automated Failure Taxonomy**: Automated post-benchmark categorization distinguishing *Capability Failures* (logic/reasoning) from *Contract Friction* (JSON schema, line alignment, field redundancy).
+- **Profile-Specific Prompt & Contract Synthesis**: Declarative adaptation per model family (custom stopping tokens, targeted system contracts, thinking-mode toggles).
+- **Targeted Prescriptions (Dynamic Remediation)**: Context-aware single-turn retry prompts (e.g. precise line-alignment guides) preserving proposal-only invariants.
+- **Teaser Prototype in Main**: Built-in `ling-3.0-tiny-q6k` support with sub-line edit auto-expansion and tolerant candidate ingestion (achieving **95% Correctness / 80% Loop Reliability at 119 tok/s** on RTX 4060).
+
 ---
 
 ## Beyond Current Scope (Future Exploration)
@@ -70,3 +76,7 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - `content`-JSON fallback for legacy models lacking native tool-calling capabilities.
 - Round-robin GPU queue scheduling across competing model profiles.
 - Distributed worker clusters with remote Ollama instances.
+- Native `llama-server` / OpenAI-compatible backend adapter (direct execution of non-standard GGUF architectures such as BailingMoE/KDA/MLA bypassing Ollama wrapper).
+
+
+

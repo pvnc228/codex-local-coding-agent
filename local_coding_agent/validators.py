@@ -161,8 +161,17 @@ def resolve_edits(
             index = original_content.find(search)
             end = index + len(search)
             if (index > 0 and original_content[index - 1] != "\n") or (end < len(original_content) and original_content[end] != "\n"):
-                issues.append(f"edit search block is not line-aligned: {raw_path}")
-                continue
+                line_start = original_content.rfind("\n", 0, index) + 1 if index > 0 else 0
+                line_end = original_content.find("\n", end)
+                if line_end == -1:
+                    line_end = len(original_content)
+                prefix = original_content[line_start:index]
+                suffix = original_content[end:line_end]
+                search = original_content[line_start:line_end]
+                replace = prefix + replace + suffix
+                index = line_start
+                end = line_end
+
             start_line = original_content[:index].count("\n") + 1
             old_no_newline = end == len(original_content) and not original_content.endswith("\n")
             new_no_newline = end == len(original_content) and bool(replace) and not replace.endswith("\n")
