@@ -1,6 +1,9 @@
 """Bounded controller components for delegating small coding tasks."""
 
+__version__ = "0.5.0"
+
 from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
+
 from .calibration import calibrate_for_model, calibrate_workers, model_vram_bytes
 from .controller import Controller
 from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_failure

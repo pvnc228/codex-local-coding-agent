@@ -135,3 +135,15 @@ Small local models (2B–4B) lack the deductive capacity to interpret generic er
 - **Tool Protocol Enforcement**: Automatic guidance on mutually exclusive fields (`edits` vs `patch`) and allowlist boundaries.
 - **Zero Distillation Guarantee**: Prescriptions are generated strictly by deterministic Python rules without leaking host LLM reasoning.
 
+---
+
+## CLI-First Principle & Agent-Agnostic Architecture
+
+To ensure the controller is usable by any AI agent ecosystem (Claude Code, Cursor, Windsurf, Roo Code, ChatGPT Codex, Antigravity, OpenCode) as well as terminal scripts and human developers, the architecture strictly enforces the **CLI-First Invariant**:
+
+1. **100% Feature Parity**: Every capability offered over MCP or internal Python APIs has a direct CLI subcommand counterpart (`delegate`, `decompose`, `profiles`, `memory`, `calibrate`, `benchmark`, `apply`, `init-skill`, `doctor`, `init-mcp`, `test-run`, `serve-mcp`, `monitor`).
+2. **Machine-Parseable JSON**: All subcommands support `--json` output with deterministic schemas and standard POSIX exit codes (0 for success, 1 for rejected/failure, 2 for input error).
+3. **Dedicated Agent Skill**: A structured, self-contained Agent Skill (`skills/local-coding-agent/SKILL.md`) is maintained in the repository and exportable across IDEs via `local-agent init-skill --write`.
+4. **Future-Proofing Rule**: No new feature or tool may be added to the controller without a corresponding CLI subcommand and automated test coverage.
+
+

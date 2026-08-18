@@ -62,6 +62,9 @@ acceptance:
 7. Повторный одинаковый tool call останавливает цикл и переводит задачу в 'failed'.
 8. Все входы, calls, diff и checks журналируются.
 9. Ошибки схемы, синтаксиса и diff переводятся в детерминированные точечные предписания (Pinpointed Prescriptions Engine) для надежного самоисправления малых моделей.
+10. 100% CLI Parity & Agent-Agnostic Architecture: любая функциональность системы полностью доступна и контролируема из консоли через подкоманды CLI (`delegate`, `decompose`, `profiles`, `memory`, `calibrate`, `benchmark`, `apply`, `init-skill`, `doctor`, `init-mcp`, `test-run`, `serve-mcp`, `monitor`) с поддержкой `--json` и снабжена Agent Skill.
+
+
 
 ## Текущая гипотеза
 

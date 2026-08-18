@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -141,8 +142,191 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.task_file, Path("my_task.json"))
         self.assertIsNone(args.task)
 
+    def test_cli_subcommand_delegate_parsing(self):
+        args = build_parser().parse_args(
+            ["delegate", "--task", "task.json", "--profile", "qwen3-8b-q6k", "--apply", "--json"]
+        )
+        self.assertEqual(args.subcommand, "delegate")
+        self.assertEqual(args.task, "task.json")
+        self.assertEqual(args.profile, "qwen3-8b-q6k")
+        self.assertTrue(args.apply)
+        self.assertTrue(args.json)
+
+    def test_cli_subcommand_decompose_parsing(self):
+        args = build_parser().parse_args(
+            [
+                "decompose",
+                "--task",
+                '{"id": "wide", "goal": "split", "files": ["a.py", "b.py"]}',
+                "--strategy",
+                "per_file",
+                "--budget-files",
+                "1",
+                "--json",
+            ]
+        )
+        self.assertEqual(args.subcommand, "decompose")
+        self.assertEqual(args.strategy, "per_file")
+        self.assertEqual(args.budget_files, 1)
+        self.assertTrue(args.json)
+
+    def test_cli_subcommand_profiles_parsing(self):
+        args = build_parser().parse_args(["profiles", "get", "qwen2.5-coder", "--json"])
+        self.assertEqual(args.subcommand, "profiles")
+        self.assertEqual(args.profile_action, "get")
+        self.assertEqual(args.name, "qwen2.5-coder")
+        self.assertTrue(args.json)
+
+    def test_cli_subcommand_memory_parsing(self):
+        args = build_parser().parse_args(
+            ["memory", "enforce", "--limit", "8000000000", "--keep", "qwen3-8b-q6k:latest", "--json"]
+        )
+        self.assertEqual(args.subcommand, "memory")
+        self.assertEqual(args.memory_action, "enforce")
+        self.assertEqual(args.limit, 8_000_000_000)
+        self.assertEqual(args.keep, ["qwen3-8b-q6k:latest"])
+        self.assertTrue(args.json)
+
+    def test_cli_subcommand_calibrate_parsing(self):
+        args = build_parser().parse_args(
+            ["calibrate", "--vram-bytes", "16000000000", "--profile", "qwen2.5-coder", "--json"]
+        )
+        self.assertEqual(args.subcommand, "calibrate")
+        self.assertEqual(args.vram_bytes, 16_000_000_000)
+        self.assertEqual(args.profile, "qwen2.5-coder")
+        self.assertTrue(args.json)
+
+    def test_cli_subcommand_benchmark_parsing(self):
+        args = build_parser().parse_args(
+            ["benchmark", "--model", "ornith-9b", "--repeats", "3", "--output", "out.json"]
+        )
+        self.assertEqual(args.subcommand, "benchmark")
+        self.assertEqual(args.benchmark_models, ["ornith-9b"])
+        self.assertEqual(args.benchmark_repeats, 3)
+
+    def test_cli_subcommand_apply_parsing(self):
+        args = build_parser().parse_args(
+            ["apply", "--patch-file", "patch.diff", "--workspace", ".", "--check", "pytest tests/"]
+        )
+        self.assertEqual(args.subcommand, "apply")
+        self.assertEqual(args.patch_file, Path("patch.diff"))
+        self.assertEqual(args.workspace, Path("."))
+        self.assertEqual(args.checks, ["pytest tests/"])
+
+    def test_cli_subcommand_init_skill_parsing(self):
+        args = build_parser().parse_args(
+            ["init-skill", "--client", "codex", "--write", "--json"]
+        )
+        self.assertEqual(args.subcommand, "init-skill")
+        self.assertEqual(args.client, "codex")
+        self.assertTrue(args.write)
+        self.assertTrue(args.json)
+
+    def test_handle_subcommand_decompose_execution(self):
+        from local_coding_agent.cli import handle_subcommand
+
+        args = build_parser().parse_args(
+            [
+                "decompose",
+                "--task",
+                json.dumps(
+                    {
+                        "id": "split-task",
+                        "goal": "decompose this task",
+                        "files": ["f1.py", "f2.py", "f3.py", "f4.py", "f5.py", "f6.py"],
+                        "checks": [],
+                    }
+                ),
+                "--strategy",
+                "by_files",
+                "--budget-files",
+                "3",
+                "--json",
+            ]
+        )
+        code = handle_subcommand(args)
+        self.assertEqual(code, 0)
+
+    def test_handle_subcommand_profiles_list_and_get(self):
+        from local_coding_agent.cli import handle_subcommand
+
+        # list
+        args_list = build_parser().parse_args(["profiles", "list", "--json"])
+        code_list = handle_subcommand(args_list)
+        self.assertEqual(code_list, 0)
+
+        # get
+        args_get = build_parser().parse_args(["profiles", "get", "qwen2.5-coder", "--json"])
+        code_get = handle_subcommand(args_get)
+        self.assertEqual(code_get, 0)
+
+    def test_handle_subcommand_init_skill_print_and_write(self):
+        from local_coding_agent.cli import handle_subcommand
+
+        # print
+        args_print = build_parser().parse_args(["init-skill", "--print"])
+        code_print = handle_subcommand(args_print)
+        self.assertEqual(code_print, 0)
+
+        # write to temp target
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_file = Path(temp_dir) / "skills" / "local-coding-agent" / "SKILL.md"
+            args_write = build_parser().parse_args(
+                ["init-skill", "--target-dir", str(target_file), "--write", "--json"]
+            )
+            code_write = handle_subcommand(args_write)
+            self.assertEqual(code_write, 0)
+            self.assertTrue(target_file.is_file())
+            content = target_file.read_text(encoding="utf-8")
+            self.assertIn("Local Coding Agent — AI Agent Delegation Skill", content)
+
+    def test_handle_subcommand_apply_execution(self):
+        from local_coding_agent.cli import handle_subcommand
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ws = Path(temp_dir)
+            # init git repo in temp_dir
+            subprocess.run(["git", "init"], cwd=ws, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=ws, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=ws, check=True, capture_output=True)
+
+            file_a = ws / "hello.py"
+            file_a.write_text("def hello():\n    return 'old'\n", encoding="utf-8")
+            subprocess.run(["git", "add", "hello.py"], cwd=ws, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=ws, check=True, capture_output=True)
+
+            patch_content = (
+                "--- a/hello.py\n"
+                "+++ b/hello.py\n"
+                "@@ -1,2 +1,2 @@\n"
+                " def hello():\n"
+                "-    return 'old'\n"
+                "+    return 'new'\n"
+            )
+            patch_file = ws / "patch.diff"
+            patch_file.write_text(patch_content, encoding="utf-8")
+
+            # test successful apply with check
+            args = build_parser().parse_args(
+                [
+                    "apply",
+                    "--patch-file",
+                    str(patch_file),
+                    "--workspace",
+                    str(ws),
+                    "--check",
+                    f'python -c "import hello; assert hello.hello() == \'new\'"',
+                    "--json",
+                ]
+            )
+            code = handle_subcommand(args)
+            self.assertEqual(code, 0)
+            self.assertIn("return 'new'", file_a.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

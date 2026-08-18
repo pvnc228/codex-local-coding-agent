@@ -76,3 +76,15 @@ class TaskEnvelope:
             checks=strings("checks"),
             acceptance=strings("acceptance"),
         )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "goal": self.goal,
+            "files": list(self.files),
+            "context": self.context,
+            "constraints": list(self.constraints),
+            "checks": list(self.checks),
+            "acceptance": list(self.acceptance),
+        }
+
