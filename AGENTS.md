@@ -15,7 +15,7 @@
 - **CLI-First Parity**: Любая функциональность системы обязана быть доступна через консольный CLI (`python -m local_coding_agent <subcommand>`) со структурированным выводом (`--json`), кодами возврата (`0`/`1`) и `--help`.
 - **Agent-Agnostic Interface**: Поддержка любого AI-агента как через MCP протокол (`delegate_code`, `apply_proposal`), так и через Agent Skill (`skills/local-coding-agent/SKILL.md`) или прямой терминал.
 - **Skill & Config Sync**: При любых изменениях контрактов TaskEnvelope или сабкоманд обновлять как `skills/local-coding-agent/SKILL.md`, так и `_EMBEDDED_SKILL_MD` в `local_coding_agent/skill_config.py`.
-- **100% Dogfooding First**: Разработка и рефакторинг сервиса обязаны использовать сам сервис (`delegate` / `apply`) на локальных моделях (`Ling-3.0-tiny`, `qwen3-8b`, etc.), подтверждая реальную применимость продукта на боевых задачах.
+- **Dogfooding on Demand**: Разработка и рефакторинг сервиса могут использовать сам сервис (`delegate` / `apply`) на локальных моделях (`Ling-3.0-tiny`, `qwen3-8b`, etc.) при явном запросе пользователя.
 - **Release & Versioning Sync**: При повышении версии синхронно обновлять 5 мест: `pyproject.toml` (`version`), `local_coding_agent/__init__.py` (`__version__`), `local_coding_agent/mcp_server.py` (`_SERVER_VERSION`), `README.md` (версионный бейдж) и `CHANGELOG.md` (Keep a Changelog + Field Insights).
 - **Git Tag Release Trigger**: Пайплайн GitHub Actions (`.github/workflows/release.yml`) создаёт релизы ТОЛЬКО по пушу аннотированного тега `vX.Y.Z` (`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`). Описание релиза на GitHub при необходимости дополняется через `gh release edit vX.Y.Z --notes-file ...`.
 - **Cross-Platform Resilience**: Консольный вывод и обработка путей обязаны корректно работать на Windows (`cp1252`, CRLF, `pathlib.Path.as_posix()`), Linux и macOS.
@@ -28,7 +28,8 @@
 2. Проверить текущую модель через Ollama / OpenAI API (`doctor`);
 3. Определить минимальный публичный seam;
 4. Добавить тест, который показывает требуемое поведение (TDD);
-5. Только затем менять реализацию (делегируя атомарные правки через локальный сервис).
+5. Только затем менять реализацию (делегируя атомарные правки через локальный сервис при явном запросе пользователя на dogfooding).
+
 
 После реализации:
 
