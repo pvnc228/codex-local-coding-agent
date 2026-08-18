@@ -361,12 +361,91 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("eval_tokens_per_second", summary)
         self.assertIn("prompt_tokens_per_second", summary)
         self.assertIn("error_categories", summary)
+        self.assertIn("failure_taxonomy", summary)
         self.assertIn("correctness_ci_95", summary)
         self.assertIn("tool_loop_reliability_ci_95", summary)
         self.assertIn("patch_apply_ci_95", summary)
         self.assertEqual(len(summary["correctness_ci_95"]), 2)
         self.assertIsInstance(summary["error_categories"], dict)
+        self.assertIsInstance(summary["failure_taxonomy"], dict)
+
+    def test_categorize_failure_taxonomy_separates_friction_from_capability(self):
+        from local_coding_agent.benchmark import BenchmarkCaseResult, categorize_failure_taxonomy
+
+        results = [
+            BenchmarkCaseResult(
+                case_id="c1",
+                status="rejected",
+                correct=False,
+                loop_reliable=False,
+                model_calls=1,
+                tool_calls=0,
+                patch_applied=False,
+                validation_valid=False,
+                wall_time_ms=10.0,
+                eval_count=10,
+                prompt_tokens=10,
+                total_duration_ns=100,
+                load_duration_ns=0,
+                prompt_eval_duration_ns=50,
+                eval_duration_ns=50,
+                patch_source="none",
+                patch_error="search block not found in src/a.py",
+                result={},
+            ),
+            BenchmarkCaseResult(
+                case_id="c2",
+                status="accepted",
+                correct=False,
+                loop_reliable=True,
+                model_calls=1,
+                tool_calls=0,
+                patch_applied=True,
+                validation_valid=True,
+                wall_time_ms=10.0,
+                eval_count=10,
+                prompt_tokens=10,
+                total_duration_ns=100,
+                load_duration_ns=0,
+                prompt_eval_duration_ns=50,
+                eval_duration_ns=50,
+                patch_source="accepted_result",
+                patch_error="oracle mismatch: VALUE was 3 instead of 2",
+                result={},
+            ),
+            BenchmarkCaseResult(
+                case_id="c3",
+                status="rejected",
+                correct=False,
+                loop_reliable=False,
+                model_calls=1,
+                tool_calls=0,
+                patch_applied=False,
+                validation_valid=False,
+                wall_time_ms=10.0,
+                eval_count=10,
+                prompt_tokens=10,
+                total_duration_ns=100,
+                load_duration_ns=0,
+                prompt_eval_duration_ns=50,
+                eval_duration_ns=50,
+                patch_source="none",
+                patch_error="search is not line-aligned",
+                result={"error": {"kind": "invalid_json"}},
+            ),
+        ]
+
+        taxonomy = categorize_failure_taxonomy(results)
+        self.assertEqual(taxonomy["total_failures"], 3)
+        self.assertEqual(taxonomy["contract_friction_count"], 2)
+        self.assertEqual(taxonomy["capability_failure_count"], 1)
+        self.assertAlmostEqual(taxonomy["friction_ratio"], 0.67, places=2)
+        self.assertAlmostEqual(taxonomy["capability_ratio"], 0.33, places=2)
+        self.assertIn("search_not_found", taxonomy["contract_friction"])
+        self.assertIn("search_not_line_aligned", taxonomy["contract_friction"])
+        self.assertIn("oracle_mismatch", taxonomy["capability_failures"])
 
 
 if __name__ == "__main__":
     unittest.main()
+

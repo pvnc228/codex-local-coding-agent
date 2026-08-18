@@ -71,6 +71,9 @@ class ModelProfileTests(unittest.TestCase):
         self.assertEqual(custom.min_p, 0.05)
         self.assertEqual(custom.seed, 42)
 
+    def test_profile_system_contract_can_be_customized(self):
+        profile = get_profile("qwen2.5-coder", system_contract="Custom system contract")
+        self.assertEqual(profile.system_contract, "Custom system contract")
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,7 @@ class ModelProfile:
     repeat_penalty: float | None = None
     seed: int | None = None
     stop: tuple[str, ...] | None = None
+    system_contract: str | None = None
 
     def __post_init__(self) -> None:
         if self.num_ctx <= 0:

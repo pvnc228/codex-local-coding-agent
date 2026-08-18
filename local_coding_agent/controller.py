@@ -136,6 +136,7 @@ class Controller:
         max_retries: int = 1,
         preflight_budget: TaskBudget = TaskBudget(),
         cancel_event: Event | None = None,
+        system_contract: str | None = None,
     ) -> None:
         if max_turns <= 0 or max_same_call <= 0 or max_retries < 0:
             raise ValueError("controller limits are invalid")
@@ -155,6 +156,7 @@ class Controller:
         self.max_retries = max_retries
         self.preflight_budget = preflight_budget
         self.cancel_event = cancel_event
+        self.system_contract = system_contract or SYSTEM_CONTRACT
 
     def run(
         self,
@@ -257,6 +259,8 @@ class Controller:
         for turn in range(1, self.max_turns + 1):
             if active_cancel is not None and active_cancel.is_set():
                 return self._failure("failed", "cancelled", "task was cancelled", audit)
+            if self._messages_size(messages) > self.max_context_bytes:
+                messages = self._compact_messages(messages, audit=audit)
             if self._messages_size(messages) > self.max_context_bytes:
                 return self._failure(
                     "failed",
@@ -485,7 +489,17 @@ class Controller:
                             ensure_ascii=False,
                         ),
                     }
-                    messages.append(message)
+                    cleaned_assistant_message = dict(message)
+                    try:
+                        raw_content = message.get("content")
+                        if isinstance(raw_content, str) and raw_content.strip():
+                            parsed_c = json.loads(raw_content)
+                            if isinstance(parsed_c, dict) and parsed_c.get("patch"):
+                                parsed_c["patch"] = "<invalid_patch_omitted>"
+                                cleaned_assistant_message["content"] = json.dumps(parsed_c, ensure_ascii=False)
+                    except (json.JSONDecodeError, TypeError, KeyError, AttributeError):
+                        pass
+                    messages.append(cleaned_assistant_message)
                     messages.append(feedback_msg)
                     audit.append({
                         "event": "templated_feedback",
@@ -655,6 +669,48 @@ class Controller:
     def _messages_size(self, messages) -> int:
         return len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
 
+    def _compact_messages(
+        self, messages: list[dict[str, Any]], *, audit: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Compact messages by evicting historical tool-call exchanges older than 1 turn."""
+        current_messages = list(messages)
+        while self._messages_size(current_messages) > self.max_context_bytes:
+            blocks = self._find_tool_exchange_blocks(current_messages)
+            if len(blocks) <= 1:
+                break
+            start, end = blocks[0]
+            dropped = current_messages[start:end]
+            tool_names = [m.get("tool_name") for m in dropped if m.get("role") == "tool"]
+            del current_messages[start:end]
+            audit.append({
+                "event": "context_compacted",
+                "dropped_messages_count": len(dropped),
+                "dropped_tool_names": tool_names,
+            })
+        return current_messages
+
+    @staticmethod
+    def _find_tool_exchange_blocks(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
+        """Find atomic ranges [start, end) of assistant(tool_calls) and their corresponding tool results.
+
+        Preserves messages[0] (system) and messages[1] (initial task envelope).
+        """
+        blocks: list[tuple[int, int]] = []
+        i = 2
+        n = len(messages)
+        while i < n:
+            msg = messages[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                start = i
+                j = i + 1
+                while j < n and messages[j].get("role") == "tool":
+                    j += 1
+                blocks.append((start, j))
+                i = j
+            else:
+                i += 1
+        return blocks
+
     def _initial_messages(self, task: TaskEnvelope) -> list[dict[str, Any]]:
         payload = {
             "id": task.id,
@@ -676,7 +732,7 @@ class Controller:
         if len(content.encode("utf-8")) > self.max_context_bytes:
             raise ValueError(f"task context exceeds max_context_bytes={self.max_context_bytes}")
         return [
-            {"role": "system", "content": SYSTEM_CONTRACT},
+            {"role": "system", "content": self.system_contract},
             {"role": "user", "content": content},
         ]
 

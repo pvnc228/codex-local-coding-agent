@@ -1342,13 +1342,121 @@ class ControllerTests(unittest.TestCase):
 
 
             self.assertEqual(result["status"], "accepted")
-
             self.assertTrue(result["validation"]["valid"])
             self.assertIn("x = 2", result["patch"])
 
+    def test_controller_uses_custom_system_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(id="custom-contract", goal="тест", files=("allowed.py",))
+            model = FakeModel([{"message": {"role": "assistant", "content": json.dumps({"status": "candidate", "summary": "ok", "patch": "", "checks": [], "risks": []})}}])
+            custom_contract = "Custom system prompt for model."
+            Controller(model, workspace, system_contract=custom_contract).run(task)
+
+            first_request_messages = model.requests[0]["messages"]
+            self.assertEqual(first_request_messages[0]["role"], "system")
+            self.assertEqual(first_request_messages[0]["content"], custom_contract)
+
+    def test_context_compaction_evicts_oldest_tool_call_pair_when_context_budget_exceeded(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(id="compact-test", goal="тест компактификации", files=("allowed.py",))
+
+            model = FakeModel([
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": {"path": "allowed.py"},
+                                },
+                            }
+                        ],
+                    }
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call-2",
+                                "function": {
+                                    "name": "propose_patch",
+                                    "arguments": {
+                                        "edits": [{"file": "allowed.py", "search": "VALUE = 1", "replace": "VALUE = 2"}]
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                },
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps({
+                            "status": "candidate",
+                            "summary": "done",
+                            "edits": [{"file": "allowed.py", "search": "VALUE = 1", "replace": "VALUE = 2"}],
+                            "checks": [],
+                            "risks": [],
+                        }),
+                    }
+                },
+            ])
+            controller = Controller(model, workspace, max_turns=4, max_context_bytes=2500)
+            result = controller.run(task)
+
+            self.assertEqual(result["status"], "accepted")
+            compaction_events = [e for e in result["audit"] if e.get("event") == "context_compacted"]
+            self.assertGreaterEqual(len(compaction_events), 1)
+
+            for req in model.requests:
+                msgs = req["messages"]
+                for i, m in enumerate(msgs):
+                    if m["role"] == "tool":
+                        self.assertGreater(i, 0)
+                        prev_idx = i - 1
+                        while prev_idx >= 0 and msgs[prev_idx]["role"] == "tool":
+                            prev_idx -= 1
+                        self.assertEqual(msgs[prev_idx]["role"], "assistant")
+                        self.assertTrue(bool(msgs[prev_idx].get("tool_calls")))
+
+    def test_diff_residue_elimination_on_validation_retry(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(id="residue-test", goal="тест остатка", files=("allowed.py",))
+
+            invalid_candidate = {
+                "status": "candidate",
+                "summary": "invalid diff",
+                "patch": "diff --git a/allowed.py b/allowed.py\ncorrupt hunk header\n" + ("x" * 500),
+                "checks": [],
+                "risks": [],
+            }
+            valid_candidate = {
+                "status": "candidate",
+                "summary": "fixed",
+                "edits": [{"file": "allowed.py", "search": "VALUE = 1", "replace": "VALUE = 2"}],
+                "checks": [],
+                "risks": [],
+            }
+            model = FakeModel([
+                {"message": {"role": "assistant", "content": json.dumps(invalid_candidate)}},
+                {"message": {"role": "assistant", "content": json.dumps(valid_candidate)}},
+            ])
+            controller = Controller(model, workspace, max_turns=4, max_retries=1)
+            result = controller.run(task)
+
+            self.assertEqual(result["status"], "accepted")
+            second_request_messages = model.requests[1]["messages"]
+            prompt_text = json.dumps(second_request_messages)
+            self.assertNotIn("x" * 500, prompt_text)
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

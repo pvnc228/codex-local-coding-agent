@@ -521,6 +521,41 @@ class DelegationServiceApplyTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(result["error"]["kind"] == "stale_workspace" for result in results))
 
+    def test_service_forwards_profile_system_contract_to_controller(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 1\n", encoding="utf-8")
+            recorded_messages = []
+
+            class RecordingModel:
+                def chat(self, messages, *, tools=None):
+                    recorded_messages.extend(messages)
+                    return {"message": {"role": "assistant", "content": json.dumps({"status": "candidate", "summary": "done", "patch": "", "checks": [], "risks": []})}}
+
+            service = DelegationService(
+                {"fixture": workspace},
+                model_factory=lambda profile: RecordingModel(),
+            )
+            with patch("local_coding_agent.service.get_profile") as mock_get_profile:
+                from local_coding_agent.ollama_adapter import ModelProfile
+                mock_get_profile.return_value = ModelProfile(
+                    name="custom-p",
+                    model="custom-m",
+                    system_contract="Specialized System Contract",
+                )
+                service.delegate(
+                    "caller-a",
+                    DelegationRequest(
+                        request_id="req-custom-contract",
+                        workspace_ref="fixture",
+                        model_profile="custom-p",
+                        task=TaskEnvelope(id="task-1", goal="goal", files=("allowed.py",)),
+                    ),
+                )
+
+            self.assertEqual(recorded_messages[0]["role"], "system")
+            self.assertEqual(recorded_messages[0]["content"], "Specialized System Contract")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -209,6 +209,7 @@ class DelegationService:
             max_turns=self._max_turns,
             max_files=self._preflight_budget.max_files,
             preflight_budget=self._preflight_budget,
+            system_contract=profile.system_contract,
         ).run(
             request.task,
             cancel_event=cancel_event,

@@ -759,6 +759,7 @@ def summarize_results(model_name: str, results: Sequence[BenchmarkCaseResult]) -
         "patch_apply_percent": _percent(patch_applied_count, total),
         "patch_apply_ci_95": _wilson_score_interval(patch_applied_count, total),
         "error_categories": _categorize_errors(results),
+        "failure_taxonomy": categorize_failure_taxonomy(results),
         "average_wall_time_ms": round(mean(result.wall_time_ms for result in results), 3),
         "median_wall_time_ms": round(median(result.wall_time_ms for result in results), 3),
         "model_calls": sum(result.model_calls for result in results),
@@ -937,3 +938,59 @@ def _categorize_errors(results: Sequence[BenchmarkCaseResult]) -> dict[str, int]
             cat = "other"
         categories[cat] = categories.get(cat, 0) + 1
     return dict(sorted(categories.items()))
+
+
+CONTRACT_FRICTION_CATEGORIES: frozenset[str] = frozenset({
+    "search_not_line_aligned",
+    "search_not_found",
+    "search_ambiguous",
+    "git_apply_failed",
+    "patch_not_applied",
+    "invalid_json",
+    "invalid_response",
+    "duplicate_tool_call",
+    "preflight_rejected",
+    "context_limit",
+    "policy",
+})
+
+CAPABILITY_FAILURE_CATEGORIES: frozenset[str] = frozenset({
+    "oracle_mismatch",
+    "test_check_failed",
+    "check_failed",
+    "model_error",
+    "timeout",
+    "cancelled",
+})
+
+
+def categorize_failure_taxonomy(results: Sequence[BenchmarkCaseResult]) -> dict[str, Any]:
+    categories = _categorize_errors(results)
+    contract_friction: dict[str, int] = {}
+    capability_failures: dict[str, int] = {}
+    other: dict[str, int] = {}
+
+    for cat, count in categories.items():
+        if cat in CONTRACT_FRICTION_CATEGORIES:
+            contract_friction[cat] = count
+        elif cat in CAPABILITY_FAILURE_CATEGORIES:
+            capability_failures[cat] = count
+        else:
+            other[cat] = count
+
+    friction_count = sum(contract_friction.values())
+    capability_count = sum(capability_failures.values())
+    other_count = sum(other.values())
+    total_failures = friction_count + capability_count + other_count
+
+    return {
+        "total_failures": total_failures,
+        "contract_friction_count": friction_count,
+        "capability_failure_count": capability_count,
+        "friction_ratio": round(friction_count / total_failures, 2) if total_failures else 0.0,
+        "capability_ratio": round(capability_count / total_failures, 2) if total_failures else 0.0,
+        "contract_friction": dict(sorted(contract_friction.items())),
+        "capability_failures": dict(sorted(capability_failures.items())),
+        "other": dict(sorted(other.items())),
+    }
+
