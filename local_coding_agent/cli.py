@@ -45,16 +45,19 @@ def load_task_input(
                 return TaskEnvelope.from_mapping(parsed)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"malformed inline task JSON: {exc}") from exc
-        path = Path(task_value)
-        if path.is_file():
-            return load_task_file(path)
+        try:
+            path = Path(task_value)
+            if path.is_file():
+                return load_task_file(path)
+        except (OSError, ValueError):
+            pass
         try:
             parsed = json.loads(val_str)
             if isinstance(parsed, dict):
                 return TaskEnvelope.from_mapping(parsed)
         except Exception:
             pass
-        return load_task_file(path)
+        return load_task_file(task_value)
     raise ValueError("--task or --task-file is required")
 
 

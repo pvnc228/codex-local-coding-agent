@@ -197,9 +197,26 @@ class SearchReplaceResolutionTests(unittest.TestCase):
         self.assertEqual(issues, [])
         self.assertEqual(changed, ("src/allowed.py",))
         self.assertIn("-    return sorted(set(values))", patch)
-        self.assertIn("+    return list(dict.fromkeys(values))", patch)
+    def test_resolve_edits_preserves_single_line_when_search_has_newline(self):
+        target = self.workspace / "src" / "allowed.py"
+        target.write_text("line1\nline2\nline3\n", encoding="utf-8")
+        patch, changed, issues = resolve_edits(
+            self.workspace,
+            [{"file": "src/allowed.py", "search": "line1\n", "replace": "line1_updated\n"}],
+            allowed_files={"src/allowed.py"},
+            max_files=2,
+            max_patch_bytes=32000,
+        )
+
+        self.assertEqual(issues, [])
+        self.assertEqual(changed, ("src/allowed.py",))
+        self.assertIn("@@ -1,1 +1,1 @@", patch)
+        self.assertIn("-line1", patch)
+        self.assertIn("+line1_updated", patch)
+        self.assertNotIn("line2", patch)
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

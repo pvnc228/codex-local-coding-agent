@@ -294,6 +294,29 @@ class BoundedWorkerPoolTests(unittest.TestCase):
         finally:
             pool.shutdown()
 
+    def test_task_store_recovery_preserves_idempotency_without_conflict(self):
+        from local_coding_agent.task_store import JsonFileTaskStore
+        with tempfile.TemporaryDirectory() as store_dir:
+            store = JsonFileTaskStore(store_dir)
+            service = RecordingService()
+            pool1 = BoundedWorkerPool(service, max_workers=1, max_queue=1, task_store=store)
+            request = self._request("persist-test")
+            job1 = pool1.submit("caller-store", request)
+            self.assertEqual(pool1.wait("caller-store", job1["job_id"], timeout=1)["status"], "completed")
+            pool1.shutdown()
+
+            # Now create a new pool sharing the same store
+            pool2 = BoundedWorkerPool(service, max_workers=1, max_queue=1, task_store=store)
+            try:
+                # Re-submitting the exact same request must return snapshot, not idempotency_conflict
+                re_submitted = pool2.submit("caller-store", request)
+                self.assertEqual(re_submitted["status"], "completed")
+                self.assertEqual(re_submitted["job_id"], job1["job_id"])
+            finally:
+                pool2.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

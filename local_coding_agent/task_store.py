@@ -24,6 +24,7 @@ class TaskRecord:
     updated_at: str
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
+    fingerprint: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -41,6 +42,7 @@ class TaskRecord:
             updated_at=str(data.get("updated_at", "")),
             result=dict(data["result"]) if isinstance(data.get("result"), Mapping) else None,
             error=dict(data["error"]) if isinstance(data.get("error"), Mapping) else None,
+            fingerprint=str(data.get("fingerprint", "")),
         )
 
 
@@ -92,6 +94,7 @@ class JsonFileTaskStore:
                             updated_at=record.updated_at,
                             result=record.result,
                             error={"kind": "process_interrupted", "message": "task was interrupted by server restart"},
+                            fingerprint=record.fingerprint,
                         )
                         self._write_file(record)
                     self._cache[record.task_id] = record

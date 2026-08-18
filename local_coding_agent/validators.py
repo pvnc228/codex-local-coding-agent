@@ -160,7 +160,14 @@ def resolve_edits(
                 continue
             index = original_content.find(search)
             end = index + len(search)
-            if (index > 0 and original_content[index - 1] != "\n") or (end < len(original_content) and original_content[end] != "\n"):
+            is_start_aligned = index == 0 or original_content[index - 1] == "\n"
+            is_end_aligned = (
+                end == len(original_content)
+                or search.endswith("\n")
+                or original_content[end] == "\n"
+                or (original_content[end] == "\r" and end + 1 < len(original_content) and original_content[end + 1] == "\n")
+            )
+            if not (is_start_aligned and is_end_aligned):
                 line_start = original_content.rfind("\n", 0, index) + 1 if index > 0 else 0
                 line_end = original_content.find("\n", end)
                 if line_end == -1:

@@ -128,6 +128,14 @@ class CliTests(unittest.TestCase):
             self.assertEqual(task.id, "from-file")
             self.assertEqual(task.files, ("b.py",))
 
+    def test_load_task_input_multiline_inline_json(self):
+        from local_coding_agent.cli import load_task_input
+
+        inline = '{\n  "id": "multiline-1",\n  "goal": "test multiline",\n  "files": ["a.py"]\n}'
+        task = load_task_input(task_value=inline)
+        self.assertEqual(task.id, "multiline-1")
+        self.assertEqual(task.goal, "test multiline")
+
     def test_cli_parser_accepts_task_file(self):
         args = build_parser().parse_args(["--task-file", "my_task.json"])
         self.assertEqual(args.task_file, Path("my_task.json"))
@@ -136,3 +144,5 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

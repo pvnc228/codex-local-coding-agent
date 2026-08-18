@@ -154,22 +154,27 @@ class DelegationService:
                 assert cached.result is not None
                 return copy.deepcopy(cached.result)
 
+            result: dict[str, Any] | None = None
             try:
-                result = self._execute(
-                    request,
-                    cancel_event=cancel_event,
-                    completion_event=completion_event,
-                    controller_started=controller_started,
-                )
-            except Exception as error:
-                import traceback
-                traceback.print_exc()
-                result = self._policy_failure("controller_error", f"controller execution failed: {error}")
-            normalized = self._normalize_result(result)
-            with self._cache_lock:
-                cached.result = copy.deepcopy(normalized)
-                cached.completed.set()
-                self._evict_completed_results()
+                try:
+                    result = self._execute(
+                        request,
+                        cancel_event=cancel_event,
+                        completion_event=completion_event,
+                        controller_started=controller_started,
+                    )
+                except Exception as error:
+                    import traceback
+                    traceback.print_exc()
+                    result = self._policy_failure("controller_error", f"controller execution failed: {error}")
+            finally:
+                if result is None:
+                    result = self._policy_failure("interrupted", "controller execution interrupted")
+                normalized = self._normalize_result(result)
+                with self._cache_lock:
+                    cached.result = copy.deepcopy(normalized)
+                    cached.completed.set()
+                    self._evict_completed_results()
             return copy.deepcopy(normalized)
         finally:
             if completion_event is not None and not controller_started.is_set():

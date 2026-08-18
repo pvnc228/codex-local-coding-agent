@@ -148,7 +148,7 @@ class BoundedWorkerPool:
                     job_id=record.task_id,
                     caller_id=record.caller_id,
                     request_key=(record.caller_id, record.workspace_ref, record.request_id),
-                    fingerprint="",
+                    fingerprint=record.fingerprint,
                     request=None,  # type: ignore[arg-type]
                     state=record.state,
                     created_at=record.created_at,
@@ -187,6 +187,7 @@ class BoundedWorkerPool:
                 updated_at=job.updated_at,
                 result=job.result,
                 error=job.result.get("error") if isinstance(job.result, dict) else None,
+                fingerprint=job.fingerprint,
             )
             self._task_store.save(record)
         except Exception:
@@ -207,7 +208,7 @@ class BoundedWorkerPool:
             if existing_id is not None:
                 existing = self._jobs.get(existing_id)
                 if existing is not None:
-                    if existing.fingerprint != fingerprint:
+                    if existing.fingerprint and existing.fingerprint != fingerprint:
                         return self._failure(
                             "idempotency_conflict",
                             "request_id was already used with a different request payload",
