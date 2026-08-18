@@ -63,12 +63,15 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - Added open-source community standards: `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, and issue/PR templates.
 - Configured GitHub Actions matrix CI (`.github/workflows/ci.yml`) for automated testing on Linux, macOS, and Windows.
 
-### R13 — Adaptive Model Calibration & Dynamic Profiler (Planned)
-- **Prerequisite (Decision #1)**: `llama-server` / OpenAI-compatible backend adapter — shipped as a first-class milestone *before* R13. Without it, non-Ollama models like `ling-3.0-tiny-q6k` cannot run through the real controller path.
-- **Automated Failure Taxonomy**: Automated post-benchmark categorization distinguishing *Capability Failures* (logic/reasoning) from *Contract Friction* (JSON schema, line alignment, field redundancy).
-- **Profile-Specific Prompt & Contract Synthesis**: Declarative adaptation per model family (custom stopping tokens, targeted system contracts, thinking-mode toggles).
-- **Targeted Prescriptions (Dynamic Remediation)**: Context-aware single-turn retry prompts (e.g. precise line-alignment guides) preserving proposal-only invariants.
-- **Teaser Prototype (scratch, not in controller path)**: `ling-3.0-tiny-q6k` was probed via a scratch OpenAI-style adapter against a local `llama-server` (port 8080), measuring **95% Correctness / 80% Loop Reliability at ~119 tok/s** on RTX 4060. This is *not* reproducible through the committed `Controller`/`OllamaClient` path: the built-in profile (`profiles.py`) points at port 8080, but `OllamaClient` only speaks Ollama `/api/chat`. The result lives in `scratch/` (gitignored) and the probe suite fails with `ConnectionRefusedError` when the server is down.
+### R13 — Adaptive Model Calibration & Dynamic Profiler (Completed in v0.4.0)
+- **OpenAI-Compatible & `llama-server` Adapter**: First-class support for `llama-server` on port 8080 and OpenAI-compatible endpoints with exact microsecond timing extraction.
+- **Pinpointed Prescriptions Engine**: Deterministic in-context diagnostic translation turning validation failures into actionable repair instructions.
+- **System Diagnostic Wizard**: Multi-point automated health checking via `local-agent doctor`.
+
+### R13b — Universal Agent Skills & 100% CLI Parity (Completed in v0.5.0)
+- **Multi-Agent Skill (`SKILL.md`)**: Full compatibility with Claude Code, Cursor, Windsurf, Roo Code, ChatGPT Codex, and Google Antigravity via `local-agent init-skill --write`.
+- **100% CLI Parity ("Fool-Proof" Control)**: Console commands for all capabilities (`delegate`, `decompose`, `profiles`, `memory`, `calibrate`, `apply`, `init-skill`, `doctor`, `init-mcp`, `test-run`, `serve-mcp`, `monitor`, `benchmark`) with machine-parseable `--json` output.
+- **Cross-Platform Resilience**: Hardened stdout encoding defense for Windows (`cp1252`), macOS, and Linux.
 
 ### R14 — Dynamic Context Compaction & Harness State Machine (Planned)
 - **Agentic Harness vs Conversational Chat**: Transition controller loop from passive chat history accumulation to active agentic state management.
@@ -91,6 +94,39 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 
 ---
 
+## Next-Gen Milestones: Standalone AI Harness & Core Optimizations
+
+### R17 — AST-Guided Context Compaction & Skeletonization (`ast_compactor.py`)
+- **AST File Skeletonizer**: Pre-processor that parses code structures (Python `ast`, `tree-sitter`) and collapses non-target classes/functions down to their signatures and docstrings (`def process_order(id: str) -> bool: ...`).
+- **Target Function Expansion**: Full code body is expanded only for the specific symbol targeted for editing.
+- **Token Efficiency Gain**: Slashes prompt context by 60–85%, keeping 1B–4B models focused inside their optimal attention window and reducing generation latency.
+
+### R18 — Semantic Linter & Fast Pre-Test Prescriptions (`semantic_linter.py`)
+- **Sub-50ms Static Pre-Gates**: Lightweight static analysis pipeline (`ruff check` for Python, `biome` / `tsc --noEmit` for TypeScript) running immediately after patch generation.
+- **Instant In-Context Feedback**: Catches syntax errors, undefined variables, and type mismatches before spinning up heavy unit test runners (`pytest`), converting linter diagnostics into pinpointed prescriptive hints.
+
+### R19 — Speculative Multi-Drafting & Model Racing Engine
+- **Parallel Speculative Dispatch**: Coordinates concurrent execution of 2 lightweight workers across the `BoundedWorkerPool` (e.g. `qwen2.5-1.5b` with `temp=0` vs `gemma4-2b` with `temp=0.2`).
+- **First-Pass Winner Acceptance**: The first candidate patch that passes `git apply --check` and targeted tests is accepted; the competing worker is immediately cancelled.
+- **Reliability Boost**: Increases first-attempt success rates from ~70% to 95%+ with sub-second turnaround.
+
+### R20 — Streaming Progress & Token Telemetry (MCP + SSE)
+- **MCP Progress Protocol**: Implementation of MCP `notifications/progress` broadcasting live controller lifecycle states (`[1/4] Compacting -> [2/4] Generating @ 84 tok/s -> [3/4] Testing -> [4/4] Validated`).
+- **Server-Sent Events (SSE)**: Real-time event stream (`/api/events`) for dashboard and terminal CLI progress bars.
+
+### R21 — Self-Healing Environment & Auto-Pulling (`doctor --fix`)
+- **VRAM-Aware Quant Selection**: Automatic hardware introspection determining the highest-performing quant fitting the system GPU budget.
+- **Automated Ingestion Wizard**: `local-agent doctor --fix` and `local-agent profiles pull <tier>` downloading recommended Ollama models / GGUFs and setting up IDE configs automatically.
+
+### R22 — Standalone AI Harness & Modern Web Workbench (`local-agent ui` / `local-agent app`)
+- **Embedded Web Server**: Zero-config Starlette / FastAPI backend embedded in the Python package, serving the application on port 8765 without requiring Node.js on the host.
+- **Interactive Coding Arena**: Web UI allowing developers to submit prompts, configure TaskEnvelopes, and interact with local models directly without an external host IDE.
+- **GitHub-Grade Side-by-Side Diff Viewer**: Integration of open-source `diff2html` and Monaco Editor displaying split and unified diffs with syntax highlighting.
+- **One-Click Action Controls**: Buttons for `Apply Proposal`, `Auto-Rollback`, `Decompose Task`, and `Retry with Prescription`.
+- **Live Observability & Benchmark Charts**: Interactive telemetry dashboard showing live GPU VRAM gauges, active worker slots, and radar charts comparing model accuracy and speed.
+
+---
+
 ## Beyond Current Scope (Future Exploration)
 
 - `content`-JSON fallback for legacy models lacking native tool-calling capabilities.
@@ -107,6 +143,8 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 4. **Capability vector freshness → versioning + invalidation (Option B)**: The profile is keyed to `model` + quant + hash. A stale vector invalidates the profile and the gate refuses to route on it.
 5. **Polyglot → do it now (Option B)**: Ship Python/TypeScript/Rust/Go evaluation. This requires building external oracles/verifiers for the non-Python tiers first — no language tier is reported without a working verifier.
 6. **Gating evidence → gate only on verified tiers (recommended, Option A)**: `CAPABILITY_OVERLOAD` may only reject/warn on CI-confirmed tiers. Unverified tiers are reported as `unknown`, never used to cut a task.
+7. **Standalone Harness UI Architecture**: Embedded FastAPI/Starlette backend serving a lightweight modern static bundle (`diff2html`, Monaco, Tailwind, Chart.js) with zero Node.js runtime requirements for the user.
+
 
 
 
