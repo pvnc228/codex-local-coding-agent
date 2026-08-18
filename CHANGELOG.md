@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.1] - 2026-08-18
+
+### 🛡️ Resilience & Validation
+- **Zero-Context Unified Diff Support**:
+  - Added `--unidiff-zero` flag to `_run_git_apply` in `local_coding_agent.validators`.
+  - Enables seamless `git apply` execution for compact atomic diffs generated without standard 3-line context windows.
+- **Workflow & Invariants Synchronization**:
+  - Updated `AGENTS.md` automated agent setup instructions and core invariant guidelines.
+- **Repository Hygiene**:
+  - Ignored experimental and scratch benchmarking run directories (`tests_experiment/`, `.local-run/`).
+
+---
+
 ## [0.5.0] - 2026-08-18
 
 ### 🚀 Headline Features

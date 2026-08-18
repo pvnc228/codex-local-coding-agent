@@ -1,6 +1,6 @@
 """Bounded controller components for delegating small coding tasks."""
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
 

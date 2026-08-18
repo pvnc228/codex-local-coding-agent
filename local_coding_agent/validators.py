@@ -446,7 +446,7 @@ def _run_git_apply(
     root = Path(workspace_root).resolve()
     if not root.is_dir():
         return False, f"workspace directory does not exist: {root}"
-    command = [executable, "apply", "--whitespace=nowarn"]
+    command = [executable, "apply", "--unidiff-zero", "--whitespace=nowarn"]
     if check:
         command.append("--check")
     if reverse:
