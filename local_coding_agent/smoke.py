@@ -218,15 +218,16 @@ def run_smoke_test(
             })
             if verbose:
                 print(f"[FAIL] Step 5: Patch validation skipped or failed (Status: {status}). Generation speed: {tps} tokens/sec.")
-            print("")
-            print("-" * 60)
-            print("  Smoke Test Summary")
-            print("-" * 60)
-            print(f"  Result Status : {status.upper() if status else 'UNKNOWN'}")
-            print(f"  Total Time    : {round(time.perf_counter() - start_total, 2)}s")
-            print(f"  Eval TPS      : {tps} tok/s")
-            print(f"  Monitor UI    : http://127.0.0.1:8765/dashboard")
-            print("=" * 60)
+                print("")
+                print("-" * 60)
+                print("  Smoke Test Summary")
+                print("-" * 60)
+                print(f"  Result Status : {status.upper() if status else 'UNKNOWN'}")
+                print(f"  Total Time    : {round(time.perf_counter() - start_total, 2)}s")
+                print(f"  Eval TPS      : {tps} tok/s")
+                print(f"  Monitor UI    : http://127.0.0.1:8765/dashboard")
+                print("=" * 60)
+
 
         return {
             "success": success,

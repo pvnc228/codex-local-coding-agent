@@ -75,14 +75,15 @@ The controller is runtime-agnostic and natively supports two local inference bac
 
 | Model Tier / Class | Memory / VRAM | Example Profiles / Runtimes | When to Choose |
 |---|---|---|---|
-| **Ultra-Lightweight (1B–3B)** | 2–4 GB VRAM / CPU | `qwen2.5-1.5b`, `gemma4-e2b-q4`, `ling-3.0-tiny-q6k` (llama-server) | Trivial fixes, single-line edits, docstrings, type annotations, ultra-fast response (<2s). |
-| **Standard Workhorse (7B–14B)** | 6–12 GB VRAM | `qwen2.5-coder`, `qwen3-8b-q6k`, `qwen2.5-coder-7b-q4` | **Default choice.** Standard functions, bug fixes, localized refactoring, unit test generation. |
-| **Advanced Reasoning (24B–32B)** | 16–24 GB VRAM | `devstral-small-2-24b`, `qwen3.8-27b-q4`, `qwen3-coder-30b` | Complex algorithms, subtle edge cases, multi-step logic, difficult refactors. |
+| **Ultra-Lightweight (1B-3B)** | 2-4 GB VRAM / CPU | `qwen2.5-1.5b`, `gemma4-e2b-q4`, `ling-3.0-tiny-q6k` (llama-server) | Trivial fixes, single-line edits, docstrings, type annotations, ultra-fast response (<2s). |
+| **Standard Workhorse (7B-14B)** | 6-12 GB VRAM | `qwen2.5-coder`, `qwen3-8b-q6k`, `qwen2.5-coder-7b-q4` | **Default choice.** Standard functions, bug fixes, localized refactoring, unit test generation. |
+| **Advanced Reasoning (24B-32B)** | 16-24 GB VRAM | `devstral-small-2-24b`, `qwen3.8-27b-q4`, `qwen3-coder-30b` | Complex algorithms, subtle edge cases, multi-step logic, difficult refactors. |
 | **llama-server / Custom OpenAI** | Any GGUF / GPU | `ling-3.0-tiny-q6k` (llama-server:8080), custom vLLM | Standalone `llama-server` instances or custom OpenAI-compatible proxies. |
 
 - **Dynamic Discovery**: Run `local-agent profiles list --check-ollama --json` or `local-agent doctor --json` to inspect installed models on the host machine.
 - **Targeting llama-server**: Specify `--endpoint http://127.0.0.1:8080` or use an OpenAI-provider profile.
 - **Default Profile**: If unspecified, use `qwen2.5-coder` or the MCP server default profile.
+
 
 ---
 

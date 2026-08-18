@@ -498,8 +498,18 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             print_content=args.print_content,
         )
         if args.print_content:
-            print(res.get("content", ""))
+            content = res.get("content", "")
+            try:
+                print(content)
+            except UnicodeEncodeError:
+                if hasattr(sys.stdout, "buffer"):
+                    sys.stdout.buffer.write(content.encode("utf-8", errors="replace"))
+                    sys.stdout.buffer.write(b"\n")
+                    sys.stdout.buffer.flush()
+                else:
+                    print(content.encode("ascii", errors="replace").decode("ascii"))
             return 0
+
         if args.json:
             print(json.dumps(res, indent=2, ensure_ascii=False))
         else:
