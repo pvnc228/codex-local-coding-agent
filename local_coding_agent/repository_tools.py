@@ -131,8 +131,9 @@ class BoundedRepositoryTools:
         max_tool_result_bytes: int = 32_000,
         max_files: int = 5,
         max_matches: int = 100,
-        max_patch_bytes: int = 32_000,
+        max_patch_bytes: int = 128_000,
         max_patch_files: int = 2,
+
         test_timeout_seconds: float = 60,
         cancel_event: Event | None = None,
     ) -> None:

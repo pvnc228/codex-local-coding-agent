@@ -323,9 +323,17 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("return 'new'", file_a.read_text(encoding="utf-8"))
 
+    def test_cli_subcommand_benchmark_ladder(self):
+        args = build_parser().parse_args(["benchmark", "--model", "ling-3.0-tiny-q6k", "--ladder", "--json"])
+        self.assertEqual(args.subcommand, "benchmark")
+        self.assertEqual(args.benchmark_models, ["ling-3.0-tiny-q6k"])
+        self.assertTrue(args.ladder)
+        self.assertTrue(args.json)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

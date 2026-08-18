@@ -128,12 +128,14 @@ class Controller:
         *,
         max_turns: int = 4,
         max_same_call: int = 1,
-        max_tool_result_bytes: int = 32_000,
+        max_tool_result_bytes: int = 64_000,
         max_files: int = 5,
-        max_patch_bytes: int = 32_000,
+        max_patch_bytes: int = 128_000,
         max_patch_files: int = 2,
-        max_context_bytes: int = 32_000,
+        max_context_bytes: int = 128_000,
+
         max_retries: int = 1,
+
         preflight_budget: TaskBudget = TaskBudget(),
         cancel_event: Event | None = None,
         system_contract: str | None = None,

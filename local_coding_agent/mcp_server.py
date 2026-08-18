@@ -220,6 +220,41 @@ def build_server(
     setattr(server, "_delegation_service", service)
     setattr(server, "_codex_service", service)
 
+    @server.resource(
+        "model://profile",
+        name="Model Profiles & Capabilities",
+        description="Catalog of model profiles, context limits, and verified intelligence ladder tiers",
+        mime_type="application/json",
+    )
+    async def get_model_profiles() -> str:
+        from pathlib import Path
+        from .profiles import list_profiles, get_profile
+        items = []
+        for name in list_profiles():
+            p = get_profile(name)
+            items.append({
+                "name": p.name,
+                "model": p.model,
+                "provider": getattr(p, "provider", "ollama"),
+                "num_ctx": p.num_ctx,
+                "num_predict": p.num_predict,
+                "max_context_length": p.max_context_length,
+                "think": p.think,
+            })
+        latest_bench: dict[str, Any] | None = None
+        bench_path = Path(".local-run/benchmarks/latest.json")
+        if bench_path.is_file():
+            try:
+                latest_bench = json.loads(bench_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return _json({
+            "profiles": items,
+            "default_profile": "qwen3-8b-q6k",
+            "latest_benchmark": latest_bench,
+        })
+
+
     @server.tool(
         name="delegate_code",
         description=(

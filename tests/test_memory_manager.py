@@ -89,6 +89,24 @@ class MemoryManagerTests(unittest.TestCase):
         self.assertEqual(set(client.unloaded), {"one", "two"})
         self.assertEqual(snapshot.total_vram_bytes, 0)
 
+    def test_snapshot_handles_unsupported_memory_client_gracefully(self):
+        from local_coding_agent.ollama_adapter import OllamaError
+
+        class UnsupportedMemoryClient:
+            def loaded_models(self):
+                raise OllamaError("unsupported", kind="unsupported")
+
+            def unload_model(self, model=None):
+                raise OllamaError("unsupported", kind="unsupported")
+
+        client = UnsupportedMemoryClient()
+        snapshot = ModelMemoryManager(client).snapshot()
+        self.assertFalse(snapshot.is_supported)
+        self.assertEqual(snapshot.total_vram_bytes, 0)
+        self.assertEqual(snapshot.models, ())
+        self.assertEqual(snapshot.as_dict()["supported"], False)
+
 
 if __name__ == "__main__":
     unittest.main()
+

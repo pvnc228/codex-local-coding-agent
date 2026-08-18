@@ -207,6 +207,27 @@ build_server(service).run(transport="stdio")
         self.assertTrue(second.is_error)
         self.assertEqual(second.structured_content["error"]["kind"], "queue_overload")
 
+    def test_model_profile_mcp_resource(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            server = build_server(self._service(Path(temp_dir)))
+
+            async def run():
+                from mcp.client import Client
+
+                async with Client(server) as client:
+                    resources = await client.list_resources()
+                    uris = [str(res.uri) for res in resources.resources]
+                    content = await client.read_resource("model://profile")
+                    return uris, content
+
+            uris, content = asyncio.run(run())
+
+        self.assertIn("model://profile", uris)
+        self.assertTrue(len(content.contents) > 0)
+        parsed = json.loads(content.contents[0].text)
+        self.assertIn("profiles", parsed)
+
 
 if __name__ == "__main__":
     unittest.main()
+

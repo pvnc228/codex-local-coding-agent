@@ -43,6 +43,7 @@ class LoadedModel:
 @dataclass(frozen=True)
 class MemorySnapshot:
     models: tuple[LoadedModel, ...]
+    is_supported: bool = True
 
     @property
     def total_vram_bytes(self) -> int:
@@ -50,6 +51,7 @@ class MemorySnapshot:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "supported": self.is_supported,
             "total_vram_bytes": self.total_vram_bytes,
             "models": [
                 {
@@ -68,7 +70,10 @@ class ModelMemoryManager:
         self.client = client
 
     def snapshot(self) -> MemorySnapshot:
-        payload = self.client.loaded_models()
+        try:
+            payload = self.client.loaded_models()
+        except Exception:
+            return MemorySnapshot(models=(), is_supported=False)
         raw_models = payload.get("models") if isinstance(payload, dict) else None
         if raw_models is None:
             raw_models = []

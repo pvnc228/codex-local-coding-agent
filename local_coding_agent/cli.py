@@ -192,8 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
     bench_p.add_argument("--timeout-seconds", type=float, default=300, dest="benchmark_timeout_seconds", help="Timeout per model run")
     bench_p.add_argument("--output", type=Path, default=Path(".local-run") / "benchmarks" / "latest.json", dest="benchmark_output", help="Output artifact path")
     bench_p.add_argument("--max-turns", type=int, default=4, help="Max turns per task")
-    bench_p.add_argument("--endpoint", help="Ollama endpoint override")
     bench_p.add_argument("--json", action="store_true", help="Output benchmark results in JSON format")
+    bench_p.add_argument("--ladder", action="store_true", help="Run adaptive capability ladder benchmark")
+
 
     # 7. apply
     app_p = subparsers.add_parser("apply", help="Safely apply patch to workspace with verification and auto-rollback")
@@ -654,12 +655,23 @@ def handle_subcommand(args: argparse.Namespace) -> int:
                 memory_before = memory.snapshot().as_dict()
                 if memory_before["models"]:
                     memory.unload_all()
-                run = run_benchmark(
-                    name,
-                    benchmark_client,
-                    repeats=args.benchmark_repeats,
-                    max_turns=args.max_turns,
-                )
+                if getattr(args, "ladder", False):
+                    from .capability import CapabilityLadder
+                    ladder = CapabilityLadder()
+                    ladder_vec = ladder.evaluate(name, benchmark_client, max_turns=args.max_turns)
+                    run = {
+                        "profile": benchmark_profile.__dict__,
+                        "status": "completed",
+                        "capability_ladder": ladder_vec.as_dict(),
+                    }
+                else:
+                    run = run_benchmark(
+                        name,
+                        benchmark_client,
+                        repeats=args.benchmark_repeats,
+                        max_turns=args.max_turns,
+                    )
+
                 run["profile"] = benchmark_profile.__dict__
                 run["status"] = "completed"
                 run["memory_before"] = memory_before
@@ -680,8 +692,25 @@ def handle_subcommand(args: argparse.Namespace) -> int:
                     }
                 )
         write_artifact(args.benchmark_output, artifact)
-        print(json.dumps(artifact, ensure_ascii=False, indent=2))
+        if getattr(args, "ladder", False) and not getattr(args, "json", False):
+            for m in artifact["models"]:
+                if m.get("status") == "completed" and "capability_ladder" in m:
+                    lad = m["capability_ladder"]
+                    print("\n" + "=" * 64)
+                    print(f"  Capability Ladder — {lad['model']}")
+                    print(f"  Overall Tier {lad['overall_tier']}: {lad['tier_label']}")
+                    print("=" * 64)
+                    print(f"  Granularity: {lad['granularity_tolerance']} | Gen Speed: {lad['tps_generation']} tok/s")
+                    print(f"  Confidence CI95: {lad['confidence_95_ci']} | Correctness: {lad['correctness_percent']}%")
+                    print("-" * 64)
+                    for t_idx, t_data in sorted(lad.get("tested_tiers", {}).items()):
+                        mark = "[PASS]" if t_data.get("status") == "passed" else "[FAIL]"
+                        print(f"  Tier {t_idx} ({t_data.get('label')}): {mark} {t_data.get('passed_cases')}/{t_data.get('total_cases')} ({t_data.get('score_percent')}%)")
+                    print("=" * 64 + "\n")
+        else:
+            print(json.dumps(artifact, ensure_ascii=False, indent=2))
         return 0 if artifact["models"] and all(item["status"] == "completed" for item in artifact["models"]) else 1
+
 
     return -1
 
