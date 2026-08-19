@@ -336,7 +336,10 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             if not llama_bin:
                 self._send_json({
                     "status": "failed",
-                    "error": "llama-server executable not found. Enter path (e.g. D:\\AI\\llama-server\\llama-server.exe) or add to PATH.",
+                    "error": (
+                        "llama-server executable not found in system PATH. "
+                        "Add your llama-server directory to PATH or set LLAMA_SERVER_PATH."
+                    ),
                 })
                 return
 
@@ -367,44 +370,23 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "failed", "error": f"Unknown backend: {backend}"})
 
     def _find_llama_server_bin(self, custom: str | None = None) -> str | None:
-        if custom and Path(custom).is_file():
-            return str(Path(custom).resolve())
+        if custom and custom.strip() and Path(custom.strip()).is_file():
+            return str(Path(custom.strip()).resolve())
 
         env_val = os.environ.get("LLAMA_SERVER_PATH")
-        if env_val and Path(env_val).is_file():
-            return str(Path(env_val).resolve())
+        if env_val and Path(env_val.strip()).is_file():
+            return str(Path(env_val.strip()).resolve())
 
-        in_path = shutil.which("llama-server") or shutil.which("server") or shutil.which("llama-server.exe")
-        if in_path:
-            return in_path
-
-        candidates = [
-            r"D:\AI\llama-server\llama-server.exe",
-            r"D:\llama.cpp\llama-server.exe",
-            r"D:\llama.cpp\build\bin\llama-server.exe",
-            r"D:\llama.cpp\build\bin\Release\llama-server.exe",
-            r"D:\llama-server\llama-server.exe",
-            r"D:\llama-server.exe",
-            r"C:\llama.cpp\llama-server.exe",
-            r"C:\llama.cpp\build\bin\Release\llama-server.exe",
-            r"C:\llama-server\llama-server.exe",
-        ]
-        for c in candidates:
-            if Path(c).is_file():
-                return c
-        return None
+        return shutil.which("llama-server") or shutil.which("llama-server.exe") or shutil.which("server")
 
     def _find_gguf_model(self, custom: str | None = None) -> str | None:
-        if custom and Path(custom).is_file():
-            return str(Path(custom).resolve())
+        if custom and custom.strip() and Path(custom.strip()).is_file():
+            return str(Path(custom.strip()).resolve())
 
-        candidates = [
-            r"D:\ui\ui\ComfyUI\models\lmstudio-community\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf",
-            r"D:\ui\ui\ComfyUI\models\DavidAU\Qwen3.5-9B-Claude-4.6-OS-Auto-Variable-HERETIC-UNCENSORED-THINKING-MAX-NEOCODE-Imatrix-GGUF\Qwen3.5-9B-Claude-4.6-OS-AV-H-UNCENSORED-THINK-D_AU-Q4_K_S-imat.gguf",
-        ]
-        for c in candidates:
-            if Path(c).is_file():
-                return c
+        env_model = os.environ.get("LLAMA_MODEL_PATH") or os.environ.get("GGUF_MODEL_PATH")
+        if env_model and Path(env_model.strip()).is_file():
+            return str(Path(env_model.strip()).resolve())
+
         return None
 
     def _handle_server_stop(self) -> None:

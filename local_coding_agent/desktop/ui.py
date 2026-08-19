@@ -509,12 +509,15 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           <!-- Llama-Server Executable & Model Paths -->
           <div class="space-y-1.5 pt-1.5 border-t border-[var(--border-main)] font-mono text-[10px]">
             <div>
-              <label class="text-zinc-400 block mb-0.5">Binary Executable Path (D: Drive / Custom)</label>
-              <input id="inputLlamaBin" type="text" value="D:\\AI\\llama-server\\llama-server.exe" class="w-full bg-[var(--bg-card)] border border-[var(--border-main)] rounded px-2 py-1 text-[10px] text-cyan-400 outline-none focus:border-cyan-500">
+              <label class="text-zinc-400 block mb-0.5">Custom Binary Path (optional if in PATH)</label>
+              <input id="inputLlamaBin" type="text" placeholder="e.g. C:\\llama.cpp\\llama-server.exe or leave blank" class="w-full bg-[var(--bg-card)] border border-[var(--border-main)] rounded px-2 py-1 text-[10px] text-cyan-400 placeholder-zinc-600 outline-none focus:border-cyan-500">
             </div>
             <div>
-              <label class="text-zinc-400 block mb-0.5">Default Model (.gguf Path)</label>
-              <input id="inputLlamaModel" type="text" value="D:\\ui\\ui\\ComfyUI\\models\\lmstudio-community\\Qwen3.5-9B-GGUF\\Qwen3.5-9B-Q4_K_M.gguf" class="w-full bg-[var(--bg-card)] border border-[var(--border-main)] rounded px-2 py-1 text-[10px] text-[var(--text-main)] outline-none focus:border-cyan-500">
+              <label class="text-zinc-400 block mb-0.5">GGUF Model Path (optional / LLAMA_MODEL_PATH)</label>
+              <input id="inputLlamaModel" type="text" placeholder="e.g. C:\\models\\qwen.gguf or leave blank" class="w-full bg-[var(--bg-card)] border border-[var(--border-main)] rounded px-2 py-1 text-[10px] text-[var(--text-main)] placeholder-zinc-600 outline-none focus:border-cyan-500">
+            </div>
+            <div class="text-[9px] text-zinc-500 font-sans">
+              💡 <span class="text-zinc-400">Tip:</span> Ensure <code class="font-mono text-zinc-300">llama-server</code> is in your system <code class="font-mono text-zinc-300">PATH</code> or specify the custom path above.
             </div>
           </div>
         </div>
