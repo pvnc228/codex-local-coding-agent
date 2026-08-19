@@ -146,6 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     del_p.add_argument("--endpoint", help="Override Ollama/OpenAI endpoint")
     del_p.add_argument("--max-turns", type=int, default=4, help="Maximum conversation turns")
     del_p.add_argument("--num-ctx", type=int, help="Override context window in tokens")
+    del_p.add_argument("--speculative-drafts", type=int, default=1, help="Number of concurrent speculative drafts to race")
     del_p.add_argument("--apply", action="store_true", help="Apply accepted patch directly with auto-rollback")
     del_p.add_argument("--json", action="store_true", help="Ensure JSON output")
 
@@ -289,19 +290,47 @@ def handle_subcommand(args: argparse.Namespace) -> int:
     sub = args.subcommand
     if sub in ("delegate", "run"):
         try:
-            overrides = {}
-            if args.endpoint:
-                overrides["endpoint"] = args.endpoint
-            if args.num_ctx is not None:
-                overrides["num_ctx"] = args.num_ctx
-            profile = get_profile(args.profile, **overrides)
-            client = build_client(profile)
             task = load_task_input(args.task, getattr(args, "task_file", None))
-            result = Controller(
-                client,
-                args.workspace,
-                max_turns=args.max_turns,
-            ).run(task, apply=args.apply)
+            if getattr(args, "speculative_drafts", 1) > 1:
+                from threading import Event
+                from .speculative_racing import SpeculativeRacer
+
+                def _make_runner(draft_idx: int):
+                    def _run(cancel_ev: Event) -> dict[str, Any]:
+                        overrides: dict[str, Any] = {}
+                        if args.endpoint:
+                            overrides["endpoint"] = args.endpoint
+                        if args.num_ctx is not None:
+                            overrides["num_ctx"] = args.num_ctx
+                        temp = 0.0 if draft_idx == 0 else min(0.15 * draft_idx, 0.7)
+                        overrides["temperature"] = temp
+                        prof = get_profile(args.profile, **overrides)
+                        cl = build_client(prof)
+                        return Controller(
+                            cl,
+                            args.workspace,
+                            max_turns=args.max_turns,
+                            cancel_event=cancel_ev,
+                        ).run(task, apply=args.apply)
+
+                    return _run
+
+                runners = [_make_runner(i) for i in range(args.speculative_drafts)]
+                racer = SpeculativeRacer()
+                result = racer.run(runners)
+            else:
+                overrides = {}
+                if args.endpoint:
+                    overrides["endpoint"] = args.endpoint
+                if args.num_ctx is not None:
+                    overrides["num_ctx"] = args.num_ctx
+                profile = get_profile(args.profile, **overrides)
+                client = build_client(profile)
+                result = Controller(
+                    client,
+                    args.workspace,
+                    max_turns=args.max_turns,
+                ).run(task, apply=args.apply)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError, OllamaError) as error:
             print(json.dumps({"status": "failed", "error": {"kind": "input", "message": str(error)}}, ensure_ascii=False, indent=2))
             return 2

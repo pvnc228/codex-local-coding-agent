@@ -365,9 +365,17 @@ class CliTests(unittest.TestCase):
             code = handle_subcommand(args)
             self.assertEqual(code, 0)
 
+    def test_cli_speculative_drafts_flag(self):
+        args = build_parser().parse_args(
+            ["delegate", "--task", "{}", "--speculative-drafts", "2"]
+        )
+        self.assertEqual(args.subcommand, "delegate")
+        self.assertEqual(args.speculative_drafts, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

@@ -35,6 +35,7 @@ from .semantic_linter import (
 )
 from .service import DelegationRequest, DelegationService
 from .smoke import run_smoke_test
+from .speculative_racing import SpeculativeRacer
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
 from .stdio import StdioDelegationAdapter
 from .task import TaskEnvelope
@@ -104,4 +105,5 @@ __all__ = [
     "LinterReport",
     "lint_source_code",
     "lint_patch_in_memory",
+    "SpeculativeRacer",
 ]
