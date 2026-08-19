@@ -38,8 +38,19 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             self._handle_stats()
         elif path == "/tasks":
             self._handle_tasks()
+        elif path in {"/api/events", "/events"}:
+            self._handle_events()
         else:
             self._send_response(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"404 Not Found\n")
+
+    def _handle_events(self) -> None:
+        events = self.monitor.get_recent_events()
+        payload = {
+            "uptime_seconds": round(time.monotonic() - self.monitor.started_at, 2),
+            "events": events,
+            "count": len(events),
+        }
+        self._send_json(payload)
 
     def _handle_health(self) -> None:
         payload = {
@@ -321,9 +332,25 @@ class MonitorServer:
         self.worker_pool = worker_pool
         self.stats = stats
         self.started_at = time.monotonic()
+        self._events: list[dict[str, Any]] = []
+        self._events_lock = threading.Lock()
+        self._max_events = 200
         self._httpd = ThreadingHTTPServer((host, port), MonitorRequestHandler)
         self._httpd.monitor_server = self  # type: ignore[attr-defined]
         self._thread: threading.Thread | None = None
+
+    def emit_event(self, event: dict[str, Any]) -> None:
+        """Emit a telemetry or lifecycle event."""
+        with self._events_lock:
+            event_with_ts = {"timestamp": time.time(), **event}
+            self._events.append(event_with_ts)
+            if len(self._events) > self._max_events:
+                self._events = self._events[-self._max_events :]
+
+    def get_recent_events(self) -> list[dict[str, Any]]:
+        """Return a copy of recent telemetry events."""
+        with self._events_lock:
+            return list(self._events)
 
     @property
     def server_address(self) -> tuple[str, int]:
