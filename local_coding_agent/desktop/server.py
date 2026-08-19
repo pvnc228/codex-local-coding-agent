@@ -486,11 +486,12 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         try:
             prof = resolve_model_profile(model_name)
             client = build_client(prof)
-            # Official Ollama native preload endpoint (warmup into VRAM with keep_alive)
             if prof.provider == "ollama" and hasattr(client, "_request_json"):
                 client._request_json("POST", "/api/generate", {"model": prof.model, "prompt": "", "keep_alive": "10m"})
-            else:
+            elif hasattr(client, "complete"):
                 client.complete("warmup", system="warmup", max_tokens=1)
+            elif hasattr(client, "chat"):
+                client.chat([{"role": "user", "content": "warmup"}])
             self._send_json({"status": "loaded", "model": model_name})
         except Exception as error:
             self._send_json({"status": "failed", "error": str(error)})
@@ -556,6 +557,66 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             checks = self._detect_test_checks(workspace)
 
         task_id = f"task-{int(time.time())}"
+
+        # Informational / Code Inquiry Handling (e.g. "read main.py and tell me what it does", "explain foo")
+        info_prefixes = ("read ", "explain ", "what ", "how ", "tell me ", "show ", "опиши ", "прочитай ", "что делает ", "как ", "покажи ")
+        if any(prompt.lower().startswith(p) for p in info_prefixes):
+            try:
+                profile = resolve_model_profile(profile_name)
+                client = build_client(profile)
+                target_file = files[0] if files else "src/main.py"
+                target_path = Path(workspace) / target_file
+                content_snippet = ""
+                if target_path.is_file():
+                    try:
+                        content_snippet = target_path.read_text(encoding="utf-8", errors="replace")[:6000]
+                    except Exception:
+                        pass
+
+                messages = [
+                    {"role": "system", "content": f"You are a helpful coding assistant. Workspace target file: {target_file}\nFile content:\n```\n{content_snippet}\n```"},
+                    {"role": "user", "content": prompt},
+                ]
+                resp = client.chat(messages)
+                msg_content = (resp.get("message") or {}).get("content") or "No response received."
+
+                session_record = {
+                    "id": task_id,
+                    "type": "user",
+                    "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
+                    "file": target_file,
+                    "patch": "",
+                    "checks": checks,
+                    "status": "Verified",
+                    "time": "Just now",
+                }
+                self.server_inst.save_session(session_record)
+
+                self._send_json({
+                    "status": "completed",
+                    "task_id": task_id,
+                    "prompt": prompt,
+                    "profile": profile_name,
+                    "file": target_file,
+                    "patch": "",
+                    "thinking": f"Read context from {target_file} and formulated code explanation.",
+                    "testResult": "READY",
+                    "checks": [],
+                    "message": msg_content,
+                })
+                return
+            except Exception as error:
+                err_msg = str(error)
+                if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg:
+                    is_llama = "8080" in err_msg or "ling" in profile_name
+                    server_name = "llama-server on port 8080" if is_llama else "Ollama on port 11434"
+                    prescript = f"Local backend server ({server_name}) is currently OFFLINE. Click 'Start {('llama-server' if is_llama else 'Ollama')}' or launch your local engine."
+                    self._send_json({"status": "failed", "error": prescript, "offline_server": "llama_server" if is_llama else "ollama"})
+                    return
+                else:
+                    self._send_json({"status": "failed", "error": err_msg})
+                    return
+
         task = TaskEnvelope(
             id=task_id,
             goal=prompt,

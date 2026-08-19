@@ -196,6 +196,15 @@ class OpenAICompatibleClient:
     def __init__(self, profile: ModelProfile, *, transport: Transport | None = None) -> None:
         self.profile = profile
         self._transport = transport or UrllibTransport(profile.endpoint)
+        self._active_model_name: str | None = None
+
+    def complete(self, prompt: str, *, system: str = "", max_tokens: int | None = None) -> dict[str, Any]:
+        """Convenience completion method for compatibility with controller / warmup callers."""
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        return self.chat(messages)
 
     def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         openai_messages: list[dict[str, Any]] = []
@@ -211,8 +220,9 @@ class OpenAICompatibleClient:
                 converted["name"] = message["name"]
             openai_messages.append(converted)
 
+        model_name = self._active_model_name or self.profile.model
         payload: dict[str, Any] = {
-            "model": self.profile.model,
+            "model": model_name,
             "messages": openai_messages,
             "temperature": self.profile.temperature,
             "max_tokens": self.profile.num_predict,
@@ -227,7 +237,25 @@ class OpenAICompatibleClient:
         if tools is not None:
             payload["tools"] = tools
 
-        decoded = self._request_json("POST", "/v1/chat/completions", payload)
+        try:
+            decoded = self._request_json("POST", "/v1/chat/completions", payload)
+        except OllamaError as err:
+            # If backend rejected specific model name, try auto-resolving to actively loaded llama-server model
+            if "not found" in str(err).lower() or "400" in str(err) or "404" in str(err):
+                try:
+                    avail = self.available_models()
+                    models_list = avail.get("models", [])
+                    if models_list and isinstance(models_list[0], dict) and models_list[0].get("name"):
+                        self._active_model_name = str(models_list[0]["name"])
+                        payload["model"] = self._active_model_name
+                        decoded = self._request_json("POST", "/v1/chat/completions", payload)
+                    else:
+                        raise
+                except Exception:
+                    raise err
+            else:
+                raise
+
         choice = _first_choice(decoded)
         message = choice.get("message") if isinstance(choice, dict) else None
         content = (message or {}).get("content") or ""
