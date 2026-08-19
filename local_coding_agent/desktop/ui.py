@@ -445,12 +445,14 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
 
       <div class="p-4 space-y-3.5 text-xs">
         <div class="space-y-1.5">
-          <label class="text-[11px] font-medium text-[var(--text-muted)]">Active Model Profile</label>
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-medium text-[var(--text-muted)]">Active Model Profile</label>
+            <button onclick="fetchAndPopulateModels()" class="text-[10px] text-cyan-500 hover:underline flex items-center gap-1">
+              <i data-lucide="refresh-cw" class="w-2.5 h-2.5"></i> Refresh List
+            </button>
+          </div>
           <select id="modalProfileSelect" onchange="changeProfile(this.value)" class="w-full bg-[var(--bg-app)] border border-[var(--border-main)] rounded px-2.5 py-2 text-xs text-[var(--text-main)] outline-none focus:border-cyan-500 font-mono">
-            <option value="qwen2.5-coder">Ollama: qwen2.5-coder (Default, 7B)</option>
-            <option value="ling-3.0-tiny-q6k">llama-server: ling-3.0-tiny-q6k (:8080)</option>
-            <option value="qwen3-8b-q6k">Ollama: qwen3-8b-q6k (Workhorse)</option>
-            <option value="devstral-small-2-24b">Ollama / OpenAI: devstral-small-2-24b</option>
+            <option value="qwen2.5-coder">Loading discovered models...</option>
           </select>
         </div>
 
@@ -585,11 +587,79 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       closeModals();
       const m = document.getElementById(modalId);
       if (m) m.classList.remove('hidden');
+      if (modalId === 'modelModal') {
+        fetchAndPopulateModels();
+      }
       safeCreateIcons();
     }
 
     function closeModals() {
       document.querySelectorAll('.modal-dialog').forEach(m => m.classList.add('hidden'));
+    }
+
+    async function fetchAndPopulateModels() {
+      try {
+        const res = await fetch('/api/models');
+        if (!res.ok) return;
+        const data = await res.json();
+        const select = document.getElementById('modalProfileSelect');
+        if (!select) return;
+
+        const currentVal = select.value || activeProfile;
+        select.innerHTML = '';
+
+        // 1. Ollama Installed Models
+        const ollamaModels = (data.backends && data.backends.ollama && data.backends.ollama.models) || [];
+        if (ollamaModels.length > 0) {
+          const optGroup = document.createElement('optgroup');
+          optGroup.label = '🦙 Ollama Discovered Models (Exact)';
+          ollamaModels.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = `Ollama: ${m}`;
+            optGroup.appendChild(opt);
+          });
+          select.appendChild(optGroup);
+        }
+
+        // 2. llama-server Models
+        const llamaModels = (data.backends && data.backends.llama_server && data.backends.llama_server.models) || [];
+        if (llamaModels.length > 0) {
+          const optGroup = document.createElement('optgroup');
+          optGroup.label = '⚡ llama-server Active Models (:8080)';
+          llamaModels.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = `llama-server: ${m}`;
+            optGroup.appendChild(opt);
+          });
+          select.appendChild(optGroup);
+        }
+
+        // 3. Predefined System Profiles
+        if (data.profiles && data.profiles.length > 0) {
+          const optGroup = document.createElement('optgroup');
+          optGroup.label = '🛠️ Configured System Profiles';
+          data.profiles.forEach(p => {
+            if (!ollamaModels.includes(p.name) && !llamaModels.includes(p.name)) {
+              const opt = document.createElement('option');
+              opt.value = p.name;
+              opt.textContent = `${p.provider === 'openai' ? 'llama-server' : 'Ollama'}: ${p.name}`;
+              optGroup.appendChild(opt);
+            }
+          });
+          select.appendChild(optGroup);
+        }
+
+        // Restore active selection or choose best default
+        if ([...select.options].some(o => o.value === currentVal)) {
+          select.value = currentVal;
+        } else if (select.options.length > 0) {
+          const bestDefault = ollamaModels.find(m => m.includes('qwen2.5-coder')) || ollamaModels[0] || select.options[0].value;
+          select.value = bestDefault;
+          changeProfile(bestDefault);
+        }
+      } catch (e) {}
     }
 
     function renderUnifiedDiff(rawDiff) {
@@ -1109,6 +1179,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
 
     // Startup
     loadSessions();
+    fetchAndPopulateModels();
     pollStatus();
     setInterval(pollStatus, 2500);
     safeCreateIcons();

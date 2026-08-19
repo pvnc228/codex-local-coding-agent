@@ -72,6 +72,85 @@ def get_nvidia_gpu_telemetry() -> dict[str, Any] | None:
     return None
 
 
+def get_live_system_path() -> str:
+    """Read fresh Windows User and System PATH from Registry so dynamically added paths work immediately."""
+    paths: list[str] = []
+    if os.name == "nt":
+        try:
+            import winreg
+            for root, subkey in [
+                (winreg.HKEY_CURRENT_USER, r"Environment"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+            ]:
+                try:
+                    with winreg.OpenKey(root, subkey) as key:
+                        val, _ = winreg.QueryValueEx(key, "Path")
+                        if val:
+                            paths.extend(val.split(";"))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    current_p = os.environ.get("PATH", "")
+    paths.extend(current_p.split(os.pathsep))
+    cleaned = [p.strip() for p in paths if p.strip() and Path(p.strip()).exists()]
+    return os.pathsep.join(list(dict.fromkeys(cleaned)))
+
+
+def discover_local_ollama_models() -> list[str]:
+    """Query live Ollama API and scan local disk manifests for installed models."""
+    models: list[str] = []
+    # 1. Probe live endpoint
+    try:
+        req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+        with urllib.request.urlopen(req, timeout=0.3) as resp:
+            if resp.status == 200:
+                tags_data = json.loads(resp.read().decode("utf-8"))
+                for m in tags_data.get("models", []):
+                    if isinstance(m, dict) and "name" in m:
+                        models.append(m["name"])
+                if models:
+                    return sorted(list(set(models)))
+    except Exception:
+        pass
+
+    # 2. Disk manifests inspection in ~/.ollama/models/manifests
+    manifest_root = Path.home() / ".ollama" / "models" / "manifests"
+    if manifest_root.exists():
+        try:
+            for reg in manifest_root.iterdir():
+                if reg.is_dir():
+                    for user_or_lib in reg.iterdir():
+                        if user_or_lib.is_dir():
+                            for model_dir in user_or_lib.iterdir():
+                                if model_dir.is_dir():
+                                    for tag_file in model_dir.iterdir():
+                                        if tag_file.is_file():
+                                            prefix = "" if user_or_lib.name == "library" else f"{user_or_lib.name}/"
+                                            models.append(f"{prefix}{model_dir.name}:{tag_file.name}")
+        except Exception:
+            pass
+
+    return sorted(list(set(models)))
+
+
+def resolve_model_profile(name: str) -> Any:
+    """Resolve a configured profile or dynamically create an Ollama/OpenAI profile for any installed model."""
+    try:
+        return get_profile(name)
+    except Exception:
+        from ..profiles import ModelProfile
+        is_llama = "ling" in name or "llama" in name or "8080" in name
+        return ModelProfile(
+            name=name,
+            model=name,
+            provider="openai" if is_llama else "ollama",
+            endpoint="http://127.0.0.1:8080/v1" if is_llama else "http://127.0.0.1:11434",
+            num_ctx=8192,
+        )
+
+
 class DesktopRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler serving the Desktop UI and REST endpoints."""
 
@@ -224,33 +303,22 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "num_ctx": prof.num_ctx,
             })
 
-        ollama_online = False
-        ollama_models: list[str] = []
-        try:
-            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
-            with urllib.request.urlopen(req, timeout=0.2) as resp:
-                if resp.status == 200:
-                    tags_data = json.loads(resp.read().decode("utf-8"))
-                    for m in tags_data.get("models", []):
-                        if isinstance(m, dict) and "name" in m:
-                            ollama_models.append(m["name"])
-                    ollama_online = True
-        except Exception:
-            pass
+        ollama_online = self._probe_port("http://127.0.0.1:11434/api/tags")
+        ollama_models = discover_local_ollama_models()
 
-        llama_online = False
+        llama_online = self._probe_port("http://127.0.0.1:8080/v1/models")
         llama_models: list[str] = []
-        try:
-            req = urllib.request.Request("http://127.0.0.1:8080/v1/models")
-            with urllib.request.urlopen(req, timeout=0.2) as resp:
-                if resp.status == 200:
-                    models_data = json.loads(resp.read().decode("utf-8"))
-                    for m in models_data.get("data", []):
-                        if isinstance(m, dict) and "id" in m:
-                            llama_models.append(m["id"])
-                    llama_online = True
-        except Exception:
-            pass
+        if llama_online:
+            try:
+                req = urllib.request.Request("http://127.0.0.1:8080/v1/models")
+                with urllib.request.urlopen(req, timeout=0.3) as resp:
+                    if resp.status == 200:
+                        models_data = json.loads(resp.read().decode("utf-8"))
+                        for m in models_data.get("data", []):
+                            if isinstance(m, dict) and "id" in m:
+                                llama_models.append(m["id"])
+            except Exception:
+                pass
 
         self._send_json({
             "profiles": profiles_data,
@@ -309,7 +377,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
         if backend == "ollama":
             # Search possible Windows locations for Ollama
-            ollama_bin = shutil.which("ollama")
+            live_path = get_live_system_path()
+            ollama_bin = shutil.which("ollama", path=live_path) or shutil.which("ollama.exe", path=live_path)
             if not ollama_bin:
                 appdata_ollama = Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"))
                 if appdata_ollama.exists():
@@ -377,7 +446,13 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         if env_val and Path(env_val.strip()).is_file():
             return str(Path(env_val.strip()).resolve())
 
-        return shutil.which("llama-server") or shutil.which("llama-server.exe") or shutil.which("server")
+        live_path = get_live_system_path()
+        return (
+            shutil.which("llama-server", path=live_path)
+            or shutil.which("llama-server.exe", path=live_path)
+            or shutil.which("server", path=live_path)
+            or shutil.which("server.exe", path=live_path)
+        )
 
     def _find_gguf_model(self, custom: str | None = None) -> str | None:
         if custom and custom.strip() and Path(custom.strip()).is_file():
@@ -409,7 +484,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         data = self._read_json_body()
         model_name = data.get("model") or self.server_inst.default_profile
         try:
-            prof = get_profile(model_name)
+            prof = resolve_model_profile(model_name)
             client = build_client(prof)
             # Official Ollama native preload endpoint (warmup into VRAM with keep_alive)
             if prof.provider == "ollama" and hasattr(client, "_request_json"):
@@ -427,7 +502,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "failed", "error": "model name required"})
             return
         try:
-            client = build_client(get_profile(self.server_inst.default_profile))
+            client = build_client(resolve_model_profile(self.server_inst.default_profile))
             manager = ModelMemoryManager(client)
             snap = manager.unload_model(model_name)
             self._send_json({"status": "unloaded", "model": model_name, "remaining": [m.name for m in snap.models]})
@@ -436,7 +511,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_model_unload_all(self) -> None:
         try:
-            client = build_client(get_profile(self.server_inst.default_profile))
+            client = build_client(resolve_model_profile(self.server_inst.default_profile))
             manager = ModelMemoryManager(client)
             snap = manager.unload_all()
             self._send_json({"status": "unloaded_all", "remaining_bytes": snap.total_vram_bytes})
@@ -452,6 +527,26 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
         if not prompt:
             self._send_json({"status": "failed", "error": "Prompt cannot be empty"})
+            return
+
+        # Friendly conversational greeting handling
+        greetings = {"hi", "hello", "hey", "привет", "здравствуйте", "yo", "sup", "help", "test"}
+        if prompt.lower().strip("!.,? ") in greetings:
+            self._send_json({
+                "status": "completed",
+                "task_id": f"greet-{int(time.time())}",
+                "prompt": prompt,
+                "profile": profile_name,
+                "file": "workspace",
+                "patch": "",
+                "thinking": "Conversational intent detected. Harness is ready for code instructions.",
+                "testResult": "READY",
+                "checks": [],
+                "message": (
+                    f"Hello! Connected to `{profile_name}`. "
+                    "Please give me a specific coding task, bug fix, or refactoring goal (e.g. 'Fix off-by-one in sliding window' or 'Write unit tests for tax logic')."
+                ),
+            })
             return
 
         workspace = self.server_inst.workspace
@@ -470,7 +565,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
         try:
             from ..controller import Controller
-            profile = get_profile(profile_name)
+            profile = resolve_model_profile(profile_name)
             client = build_client(profile)
             controller = Controller(client, workspace)
             result = controller.run(task, apply=False)
