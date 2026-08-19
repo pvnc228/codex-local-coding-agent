@@ -372,9 +372,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "delegate")
         self.assertEqual(args.speculative_drafts, 2)
 
+    def test_cli_doctor_fix_flag(self):
+        args = build_parser().parse_args(["doctor", "--fix", "--dry-run", "--json"])
+        self.assertEqual(args.subcommand, "doctor")
+        self.assertTrue(args.fix)
+        self.assertTrue(args.dry_run)
+        from local_coding_agent.cli import handle_subcommand
+
+        code = handle_subcommand(args)
+        self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

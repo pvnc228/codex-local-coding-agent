@@ -302,7 +302,6 @@ def diagnose_environment(endpoint: str = "http://127.0.0.1:11434") -> DoctorRepo
     # Model catalog & recommendations
     models_rec = recommend_models(installed_models)
 
-    # Health evaluation: Python ok, git ok, Ollama ok
     critical_failures = [c for c in checks if c.is_fail]
     healthy = len(critical_failures) == 0
 
@@ -316,3 +315,79 @@ def diagnose_environment(endpoint: str = "http://127.0.0.1:11434") -> DoctorRepo
             "executable": sys.executable,
         },
     )
+
+
+@dataclass
+class DoctorFixReport:
+    success: bool
+    actions: list[str] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "actions": self.actions,
+            "recommendations": self.recommendations,
+        }
+
+    def render_text(self) -> str:
+        lines = [
+            "=" * 60,
+            "  Local Coding Agent — System Remediation Wizard (--fix)",
+            "=" * 60,
+            "",
+            "Actions Taken / Configured:",
+        ]
+        if self.actions:
+            for act in self.actions:
+                lines.append(f"  [OK] {act}")
+        else:
+            lines.append("  (No actions needed)")
+
+        lines.extend([
+            "",
+            "-" * 60,
+            "  Recommended Model Pulls (Run in Terminal):",
+            "-" * 60,
+        ])
+        for rec in self.recommendations:
+            lines.append(f"  $ {rec}")
+        lines.append("")
+        return "\n".join(lines)
+
+
+def remediate_environment(
+    endpoint: str = "http://127.0.0.1:11434",
+    write: bool = True,
+) -> DoctorFixReport:
+    """Remediate environment by configuring MCP, exporting skills, and recommending models."""
+    from .mcp_config import integrate_mcp_config
+    from .skill_config import integrate_skill_config
+
+    actions: list[str] = []
+
+    # 1. MCP Configuration for detected IDEs
+    mcp_res = integrate_mcp_config(client="all", dry_run=not write)
+    for sub in mcp_res.get("results", []):
+        tag = "Applied MCP config" if write else "Previewed MCP config"
+        actions.append(f"{tag} for {sub.get('client')}: {sub.get('path')}")
+
+    # 2. Skill export for agents
+    skill_res = integrate_skill_config(client="auto", dry_run=not write)
+    for sub in skill_res.get("results", []):
+        tag = "Installed Agent Skill" if write else "Previewed Agent Skill"
+        actions.append(f"{tag} for {sub.get('client')}: {sub.get('path')}")
+
+    # 3. Model pull prescriptions
+    recommendations: list[str] = [
+        "ollama run hf.co/unsloth/Qwen3-8B-GGUF:Q6_K",
+        "ollama run hf.co/unsloth/Qwen3.8-27B-GGUF:Q4_K_M",
+        "ollama pull qwen2.5-coder:latest",
+    ]
+
+    return DoctorFixReport(
+        success=True,
+        actions=actions,
+        recommendations=recommendations,
+    )
+

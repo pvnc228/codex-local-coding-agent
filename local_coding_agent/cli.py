@@ -208,6 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
     # 8. doctor
     doc_p = subparsers.add_parser("doctor", help="Run system diagnostics and model recommendations")
     doc_p.add_argument("--endpoint", default="http://127.0.0.1:11434", help="Ollama endpoint to check")
+    doc_p.add_argument("--fix", action="store_true", help="Auto-remediate missing MCP configs, Agent Skills, and setup")
+    doc_p.add_argument("--dry-run", action="store_true", help="Preview remediation actions without writing")
     doc_p.add_argument("--json", action="store_true", help="Output diagnostic report in JSON format")
     doc_p.add_argument("--strict", action="store_true", help="Exit with code 1 if any check fails")
 
@@ -571,6 +573,17 @@ def handle_subcommand(args: argparse.Namespace) -> int:
         return 0
 
     if sub == "doctor":
+        if getattr(args, "fix", False):
+            from .doctor import remediate_environment
+
+            write = not getattr(args, "dry_run", False)
+            fix_rep = remediate_environment(endpoint=args.endpoint, write=write)
+            if args.json:
+                print(json.dumps(fix_rep.to_dict(), indent=2, ensure_ascii=False))
+            else:
+                print(fix_rep.render_text())
+            return 0 if fix_rep.success else 1
+
         report = diagnose_environment(endpoint=args.endpoint)
         if args.json:
             print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
