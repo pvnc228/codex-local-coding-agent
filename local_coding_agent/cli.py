@@ -275,6 +275,13 @@ def build_parser() -> argparse.ArgumentParser:
     skel_p.add_argument("--symbol", action="append", dest="symbols", default=[], help="Symbol name to keep expanded")
     skel_p.add_argument("--json", action="store_true", help="Output skeleton in JSON format")
 
+    # 15. lint-patch
+    lint_p = subparsers.add_parser("lint-patch", help="Run sub-50ms fast static linter pre-gates on a patch")
+    lint_p.add_argument("--patch-file", type=Path, help="Path to unified diff patch file")
+    lint_p.add_argument("--patch", help="Unified diff patch string")
+    lint_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Target workspace path")
+    lint_p.add_argument("--json", action="store_true", help="Output linter report in JSON format")
+
     return parser
 
 
@@ -753,6 +760,49 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             else:
                 print(f"Error skeletonizing file: {error}", file=sys.stderr)
             return 1
+
+    if sub == "lint-patch":
+        from .semantic_linter import lint_patch_in_memory
+
+        patch_str = args.patch
+        if args.patch_file:
+            patch_str = Path(args.patch_file).read_text(encoding="utf-8", errors="replace")
+        if not patch_str:
+            if getattr(args, "json", False):
+                print(
+                    json.dumps(
+                        {"valid": False, "error": "No patch specified"},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print("Error: No patch specified via --patch or --patch-file", file=sys.stderr)
+            return 2
+        report = lint_patch_in_memory(str(args.workspace), patch_str)
+        if getattr(args, "json", False):
+            print(
+                json.dumps(
+                    {
+                        "valid": report.valid,
+                        "diagnostics": [
+                            {"file": d.file, "line": d.line, "message": d.message, "rule": d.rule}
+                            for d in report.diagnostics
+                        ],
+                        "prescriptions": list(report.prescriptions),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            if report.valid:
+                print("[OK] Patch passed fast static linter gates without issues.")
+            else:
+                print("[FAIL] Patch failed static linter gates:")
+                for p in report.prescriptions:
+                    print(f"  - {p}")
+        return 0 if report.valid else 1
 
     return -1
 

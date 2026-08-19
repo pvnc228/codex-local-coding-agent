@@ -27,6 +27,12 @@ from .ollama_adapter import (
     OpenAICompatibleClient,
     build_client,
 )
+from .semantic_linter import (
+    LinterDiagnostic,
+    LinterReport,
+    lint_patch_in_memory,
+    lint_source_code,
+)
 from .service import DelegationRequest, DelegationService
 from .smoke import run_smoke_test
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
@@ -94,4 +100,8 @@ __all__ = [
     "purge_diff_residues",
     "skeletonize_python",
     "skeletonize_file",
+    "LinterDiagnostic",
+    "LinterReport",
+    "lint_source_code",
+    "lint_patch_in_memory",
 ]

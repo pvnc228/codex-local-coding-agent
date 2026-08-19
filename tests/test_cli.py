@@ -345,9 +345,30 @@ class CliTests(unittest.TestCase):
             code = handle_subcommand(args)
             self.assertEqual(code, 0)
 
+    def test_cli_subcommand_lint_patch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_py = Path(temp_dir) / "hello.py"
+            file_py.write_text("def hello():\n    return 'old'\n", encoding="utf-8")
+            patch = (
+                "--- a/hello.py\n"
+                "+++ b/hello.py\n"
+                "@@ -1,2 +1,2 @@\n"
+                " def hello():\n"
+                "-    return 'old'\n"
+                "+    return 'new'\n"
+            )
+            args = build_parser().parse_args(
+                ["lint-patch", "--workspace", temp_dir, "--patch", patch, "--json"]
+            )
+            from local_coding_agent.cli import handle_subcommand
+
+            code = handle_subcommand(args)
+            self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
