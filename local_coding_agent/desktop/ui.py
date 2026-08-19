@@ -1,7 +1,7 @@
 """Embedded single-file production-grade HTML template for Desktop AI Coding Harness.
 
-Includes server start/stop controls, live model load/unload VRAM management,
-real workspace file explorer, and smart offline engine action prompts.
+Includes real NVIDIA GPU hardware telemetry, separate dedicated modal dialogs for VRAM,
+Model Selector, Server Engine, and Settings, plus offline engine action cards.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
   <!-- TOP BAR -->
   <header class="h-11 border-b border-[var(--border-main)] bg-[var(--bg-header)] px-3.5 flex items-center justify-between shrink-0">
     
-    <!-- Left: Brand + Real Telemetry Badges -->
+    <!-- Left: Brand + 3 Distinct Dedicated Popover Buttons -->
     <div class="flex items-center gap-2.5">
       <button onclick="toggleSidebar()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 transition" title="Toggle Sessions (Ctrl+B)">
         <i data-lucide="panel-left" class="w-3.5 h-3.5"></i>
@@ -114,24 +114,23 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         <span class="font-semibold text-[var(--text-main)]">Local Harness</span>
       </div>
 
-      <!-- Real Telemetry Pills -->
-      <div class="flex items-center gap-1.5 font-mono text-[11px] num-tabular">
-        <button onclick="openSettingsModal()" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer" title="Inspect GPU & VRAM Memory">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="backendStatusDot"></span>
-          <span class="text-zinc-500 font-sans text-[10px]">VRAM</span> <span id="telemetryVram">0.0/16G</span>
-        </button>
+      <!-- 1. VRAM Button -> Opens GPU Modal -->
+      <button onclick="openModal('gpuModal')" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer font-mono text-[11px] num-tabular" title="Open GPU & VRAM Cockpit">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="topGpuDot"></span>
+        <span class="text-zinc-500 font-sans text-[10px]">VRAM</span> <span id="telemetryVram">0.0/8.0G</span>
+      </button>
 
-        <button onclick="openSettingsModal()" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer" title="Switch Model Profile & Server">
-          <span class="text-cyan-500 font-sans text-[10px]" id="backendLabel">OLLAMA</span>
-          <span class="text-[var(--text-main)]" id="telemetryModel">qwen2.5-coder</span>
-        </button>
+      <!-- 2. Model Button -> Opens Model Selector Modal -->
+      <button onclick="openModal('modelModal')" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer font-mono text-[11px]" title="Switch Model Profile">
+        <span class="text-cyan-500 font-sans text-[10px]" id="backendLabel">OLLAMA</span>
+        <span class="text-[var(--text-main)]" id="telemetryModel">qwen2.5-coder</span>
+      </button>
 
-        <!-- Server Online/Offline Indicator Pill -->
-        <button onclick="openSettingsModal()" id="btnTopServerStatus" class="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] text-zinc-400 hover:text-zinc-200 transition">
-          <span class="w-1.5 h-1.5 rounded-full bg-amber-500" id="serverLiveDot"></span>
-          <span id="serverLiveText" class="text-[10px] font-sans">Connecting...</span>
-        </button>
-      </div>
+      <!-- 3. Server Status Button -> Opens Server Engine Modal -->
+      <button onclick="openModal('serverModal')" class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-zinc-400 hover:text-zinc-200 transition font-mono text-[11px]" title="Manage Local Inference Servers">
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-500" id="serverLiveDot"></span>
+        <span id="serverLiveText" class="text-[10px] font-sans">Checking...</span>
+      </button>
     </div>
 
     <!-- Center: Segmented Navigation -->
@@ -147,7 +146,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       </button>
     </div>
 
-    <!-- Right: Workspace + Theme Toggle + Settings -->
+    <!-- Right: Workspace + Theme Toggle + 4. Settings Button -->
     <div class="flex items-center gap-2 text-xs">
       <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] font-mono text-[11px] text-[var(--text-muted)]">
         <i data-lucide="git-branch" class="w-3 h-3 text-zinc-500"></i>
@@ -161,8 +160,9 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         <i data-lucide="moon" id="themeIconMoon" class="w-3.5 h-3.5 block dark:hidden"></i>
       </button>
 
-      <button onclick="openSettingsModal()" class="p-1.5 rounded hover:bg-zinc-800/40 text-[var(--text-muted)] hover:text-[var(--text-main)] transition" title="Settings & Server Management">
-        <i data-lucide="sliders" class="w-3.5 h-3.5"></i>
+      <!-- 4. Settings Button -> Opens Settings Modal -->
+      <button onclick="openModal('settingsModal')" class="p-1.5 rounded hover:bg-zinc-800/40 text-[var(--text-muted)] hover:text-[var(--text-main)] transition" title="Preferences &amp; Diagnostics">
+        <i data-lucide="settings" class="w-3.5 h-3.5"></i>
       </button>
     </div>
   </header>
@@ -190,7 +190,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="flex-1 overflow-y-auto p-1.5 space-y-1 text-xs font-sans" id="sessionList">
-        <!-- Rendered dynamically -->
+        <!-- Sessions rendered dynamically from disk -->
       </div>
 
       <div class="p-2 border-t border-[var(--border-main)] text-[10px] font-mono text-zinc-500 flex items-center justify-between">
@@ -217,11 +217,11 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
                 <span class="text-[9px] font-mono text-zinc-500">• Connected</span>
               </div>
               <div class="p-3.5 rounded-lg bg-[var(--bg-card)] border border-[var(--border-main)] text-xs text-[var(--text-main)] leading-relaxed space-y-2">
-                <p>Welcome! Enter your coding instructions below or select a target workspace file. The controller will parse the AST, formulate atomic SEARCH/REPLACE diffs, and verify them against local test runners.</p>
+                <p>Welcome! Enter your coding instructions below or select a preset. The controller will compact the AST, formulate atomic SEARCH/REPLACE diffs, and verify with local test runners.</p>
                 <div class="flex items-center gap-2 pt-1">
-                  <span class="text-[10px] font-mono text-zinc-500">Engine:</span>
+                  <span class="text-[10px] font-mono text-zinc-500">Active Engine:</span>
                   <span class="px-1.5 py-0.2 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] font-mono text-cyan-400 text-[10px]" id="welcomeModelLabel">qwen2.5-coder</span>
-                  <button onclick="openSettingsModal()" class="text-[10px] text-cyan-500 hover:underline">Manage Server &amp; Models</button>
+                  <button onclick="openModal('modelModal')" class="text-[10px] text-cyan-500 hover:underline">Change Model</button>
                 </div>
               </div>
             </div>
@@ -350,7 +350,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
               <span>Apply Proposal (Ctrl+A)</span>
             </button>
             <button onclick="rollbackAction()" class="w-full py-1.5 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] font-medium text-xs transition flex items-center justify-center gap-1.5">
-              <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+              <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
               <span>Auto-Rollback (git restore)</span>
             </button>
           </div>
@@ -383,116 +383,167 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
 
   </main>
 
-  <!-- SETTINGS & SERVER/VRAM MANAGEMENT MODAL DIALOG -->
-  <div id="settingsModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
-    <div class="bg-[var(--bg-card)] border border-[var(--border-main)] rounded-xl w-full max-w-xl overflow-hidden shadow-xl animate-in fade-in zoom-in-95 duration-100">
-      
+  <!-- MODAL 1: GPU & NVIDIA-SMI TELEMETRY DIALOG -->
+  <div id="gpuModal" class="modal-dialog fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--bg-card)] border border-[var(--border-main)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
       <div class="px-4 py-3 border-b border-[var(--border-main)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
         <div class="flex items-center gap-2">
-          <i data-lucide="sliders" class="w-3.5 h-3.5 text-cyan-500"></i>
-          <h3 class="text-xs font-semibold text-[var(--text-main)]">Engine Controls, Server &amp; VRAM Management</h3>
+          <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-emerald-500"></i>
+          <h3 class="text-xs font-semibold text-[var(--text-main)]">GPU &amp; VRAM Hardware Cockpit</h3>
         </div>
-        <button onclick="closeSettingsModal()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200">
-          <i data-lucide="x" class="w-3.5 h-3.5"></i>
-        </button>
+        <button onclick="closeModals()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
       </div>
 
-      <div class="p-4 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
-        
-        <!-- Live Servers Status & Process Controls -->
-        <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] space-y-2.5">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] font-semibold text-[var(--text-main)] flex items-center gap-1.5">
-              <i data-lucide="server" class="w-3.5 h-3.5 text-cyan-500"></i>
-              <span>Local Engine Process Controls</span>
-            </span>
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <!-- Ollama Card -->
-            <div class="p-2.5 rounded bg-[var(--bg-card)] border border-[var(--border-main)] flex items-center justify-between">
-              <div>
-                <div class="font-medium text-[11px] flex items-center gap-1.5">
-                  <span class="w-1.5 h-1.5 rounded-full bg-zinc-500" id="dotOllama"></span>
-                  <span>Ollama (:11434)</span>
-                </div>
-                <div class="text-[10px] text-zinc-500 font-mono" id="labelOllamaStatus">Checking...</div>
-              </div>
-              <button onclick="startServerEngine('ollama')" id="btnStartOllama" class="px-2 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-zinc-950 font-semibold text-[10px] transition">
-                Start
-              </button>
-            </div>
-
-            <!-- llama-server Card -->
-            <div class="p-2.5 rounded bg-[var(--bg-card)] border border-[var(--border-main)] flex items-center justify-between">
-              <div>
-                <div class="font-medium text-[11px] flex items-center gap-1.5">
-                  <span class="w-1.5 h-1.5 rounded-full bg-zinc-500" id="dotLlama"></span>
-                  <span>llama-server (:8080)</span>
-                </div>
-                <div class="text-[10px] text-zinc-500 font-mono" id="labelLlamaStatus">Checking...</div>
-              </div>
-              <button onclick="startServerEngine('llama_server')" id="btnStartLlama" class="px-2 py-1 rounded bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold text-[10px] transition">
-                Start
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- GPU VRAM & Model Eviction -->
+      <div class="p-4 space-y-3.5 text-xs">
         <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] space-y-2">
-          <div class="flex items-center justify-between text-[11px] font-semibold text-[var(--text-main)]">
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-amber-500"></i>
-              <span>VRAM Memory &amp; Model Eviction</span>
-            </span>
-            <span class="font-mono text-zinc-400" id="modalVramText">0.0 / 16.0 GB</span>
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-[var(--text-main)]" id="gpuDeviceName">NVIDIA GeForce RTX 4060</span>
+            <span class="px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 font-mono text-[9px]">nvidia-smi</span>
           </div>
 
-          <div class="w-full h-1.5 rounded bg-[var(--bg-card-subtle)] overflow-hidden">
-            <div class="h-full bg-cyan-500 rounded transition-all duration-300" id="modalVramBar" style="width: 0%"></div>
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-zinc-400">VRAM Usage:</span>
+            <span class="font-mono font-bold text-[var(--text-main)]" id="gpuVramText">1.1 / 8.0 GB (14%)</span>
           </div>
 
-          <div class="flex items-center justify-between pt-1">
-            <button onclick="warmupActiveModel()" class="px-2 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-[10px] font-medium text-[var(--text-main)] transition">
-              ⚡ Preload Active Model
-            </button>
-            <button onclick="unloadAllVram()" class="px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] font-medium transition">
-              Eject ALL from VRAM
-            </button>
+          <div class="w-full h-2 rounded bg-[var(--bg-card-subtle)] overflow-hidden">
+            <div class="h-full bg-emerald-500 rounded transition-all duration-300" id="gpuVramBar" style="width: 14%"></div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 pt-1 font-mono text-[10px] text-zinc-400 border-t border-[var(--border-main)]">
+            <div>GPU Load: <span class="text-[var(--text-main)] font-semibold" id="gpuLoadPct">14%</span></div>
+            <div>Temp: <span class="text-[var(--text-main)] font-semibold" id="gpuTemp">48°C</span></div>
           </div>
         </div>
 
-        <!-- Model Selection -->
-        <div class="space-y-1.5">
-          <label class="text-[11px] font-medium text-[var(--text-muted)]">Active Model Profile</label>
-          <select id="modalProfileSelect" onchange="changeProfile(this.value)" class="w-full bg-[var(--bg-app)] border border-[var(--border-main)] rounded px-2.5 py-1.5 text-xs text-[var(--text-main)] outline-none focus:border-cyan-500 font-mono">
-            <option value="qwen2.5-coder">qwen2.5-coder:7b (Ollama, http://127.0.0.1:11434)</option>
-            <option value="ling-3.0-tiny-q6k">ling-3.0-tiny-q6k (llama-server, http://127.0.0.1:8080)</option>
-            <option value="qwen3-8b-q6k">qwen3-8b-q6k (Ollama)</option>
-            <option value="devstral-small-2-24b">devstral-small-2-24b (Advanced)</option>
-          </select>
-        </div>
-
-        <!-- Environment Doctor -->
-        <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] flex items-center justify-between">
-          <div>
-            <div class="text-xs font-medium text-[var(--text-main)]">Self-Healing Doctor (doctor --fix)</div>
-            <div class="text-[10px] text-zinc-500 font-mono">Auto-sync missing MCP configs &amp; Agent Skills.</div>
-          </div>
-          <button onclick="runDoctorCheck()" id="btnDoctor" class="px-2.5 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-[11px] font-medium text-[var(--text-main)] transition">
-            Run Check
+        <div class="flex items-center justify-between pt-1">
+          <button onclick="warmupActiveModel()" class="px-2.5 py-1 rounded bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-main)] text-[10px] font-medium text-[var(--text-main)] transition">
+            ⚡ Preload Model
+          </button>
+          <button onclick="unloadAllVram()" class="px-2.5 py-1 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] font-medium transition">
+            Eject ALL from VRAM
           </button>
         </div>
-
       </div>
 
       <div class="px-4 py-2 border-t border-[var(--border-main)] bg-[var(--bg-card-subtle)] flex justify-end">
-        <button onclick="closeSettingsModal()" class="px-3 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-xs font-medium text-[var(--text-main)]">
-          Done
-        </button>
+        <button onclick="closeModals()" class="px-3 py-1 rounded bg-[var(--bg-card)] border border-[var(--border-main)] text-xs font-medium text-[var(--text-main)]">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: MODEL & PROFILE SELECTOR DIALOG -->
+  <div id="modelModal" class="modal-dialog fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--bg-card)] border border-[var(--border-main)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+      <div class="px-4 py-3 border-b border-[var(--border-main)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
+        <div class="flex items-center gap-2">
+          <i data-lucide="cpu" class="w-3.5 h-3.5 text-cyan-500"></i>
+          <h3 class="text-xs font-semibold text-[var(--text-main)]">Model &amp; Profile Selector</h3>
+        </div>
+        <button onclick="closeModals()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
       </div>
 
+      <div class="p-4 space-y-3.5 text-xs">
+        <div class="space-y-1.5">
+          <label class="text-[11px] font-medium text-[var(--text-muted)]">Active Model Profile</label>
+          <select id="modalProfileSelect" onchange="changeProfile(this.value)" class="w-full bg-[var(--bg-app)] border border-[var(--border-main)] rounded px-2.5 py-2 text-xs text-[var(--text-main)] outline-none focus:border-cyan-500 font-mono">
+            <option value="qwen2.5-coder">Ollama: qwen2.5-coder (Default, 7B)</option>
+            <option value="ling-3.0-tiny-q6k">llama-server: ling-3.0-tiny-q6k (:8080)</option>
+            <option value="qwen3-8b-q6k">Ollama: qwen3-8b-q6k (Workhorse)</option>
+            <option value="devstral-small-2-24b">Ollama / OpenAI: devstral-small-2-24b</option>
+          </select>
+        </div>
+
+        <div class="p-3 rounded bg-[var(--bg-app)] border border-[var(--border-main)] space-y-1 font-mono text-[10px] text-zinc-400">
+          <div class="flex justify-between"><span>Provider:</span><span class="text-[var(--text-main)] font-semibold" id="profProvider">ollama</span></div>
+          <div class="flex justify-between"><span>Context Limit:</span><span class="text-[var(--text-main)] font-semibold" id="profCtx">8192 tokens</span></div>
+          <div class="flex justify-between"><span>Endpoint:</span><span class="text-cyan-400 font-semibold" id="profEndpoint">http://127.0.0.1:11434</span></div>
+        </div>
+      </div>
+
+      <div class="px-4 py-2 border-t border-[var(--border-main)] bg-[var(--bg-card-subtle)] flex justify-end">
+        <button onclick="closeModals()" class="px-3 py-1 rounded bg-[var(--bg-card)] border border-[var(--border-main)] text-xs font-medium text-[var(--text-main)]">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: INFERENCE SERVER PROCESS MANAGER DIALOG -->
+  <div id="serverModal" class="modal-dialog fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--bg-card)] border border-[var(--border-main)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+      <div class="px-4 py-3 border-b border-[var(--border-main)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
+        <div class="flex items-center gap-2">
+          <i data-lucide="server" class="w-3.5 h-3.5 text-amber-500"></i>
+          <h3 class="text-xs font-semibold text-[var(--text-main)]">Local Inference Servers</h3>
+        </div>
+        <button onclick="closeModals()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+      </div>
+
+      <div class="p-4 space-y-3 text-xs">
+        <div class="p-2.5 rounded bg-[var(--bg-app)] border border-[var(--border-main)] flex items-center justify-between">
+          <div>
+            <div class="font-medium text-[11px] flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-zinc-500" id="dotOllama"></span>
+              <span>Ollama Engine (:11434)</span>
+            </div>
+            <div class="text-[10px] text-zinc-500 font-mono" id="labelOllamaStatus">Checking...</div>
+          </div>
+          <button onclick="startServerEngine('ollama')" id="btnStartOllama" class="px-2.5 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-zinc-950 font-semibold text-[10px] transition">
+            Start
+          </button>
+        </div>
+
+        <div class="p-2.5 rounded bg-[var(--bg-app)] border border-[var(--border-main)] flex items-center justify-between">
+          <div>
+            <div class="font-medium text-[11px] flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-zinc-500" id="dotLlama"></span>
+              <span>llama-server Engine (:8080)</span>
+            </div>
+            <div class="text-[10px] text-zinc-500 font-mono" id="labelLlamaStatus">Checking...</div>
+          </div>
+          <button onclick="startServerEngine('llama_server')" id="btnStartLlama" class="px-2.5 py-1 rounded bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold text-[10px] transition">
+            Start
+          </button>
+        </div>
+      </div>
+
+      <div class="px-4 py-2 border-t border-[var(--border-main)] bg-[var(--bg-card-subtle)] flex justify-end">
+        <button onclick="closeModals()" class="px-3 py-1 rounded bg-[var(--bg-card)] border border-[var(--border-main)] text-xs font-medium text-[var(--text-main)]">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 4: SYSTEM SETTINGS & DOCTOR DIALOG -->
+  <div id="settingsModal" class="modal-dialog fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--bg-card)] border border-[var(--border-main)] rounded-xl w-full max-w-md overflow-hidden shadow-xl">
+      <div class="px-4 py-3 border-b border-[var(--border-main)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
+        <div class="flex items-center gap-2">
+          <i data-lucide="settings" class="w-3.5 h-3.5 text-cyan-500"></i>
+          <h3 class="text-xs font-semibold text-[var(--text-main)]">Preferences &amp; System Doctor</h3>
+        </div>
+        <button onclick="closeModals()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+      </div>
+
+      <div class="p-4 space-y-3.5 text-xs">
+        <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] flex items-center justify-between">
+          <div>
+            <div class="text-xs font-medium text-[var(--text-main)]">Self-Healing Doctor (doctor --fix)</div>
+            <div class="text-[10px] text-zinc-500 font-mono">Sync MCP configs &amp; IDE skills.</div>
+          </div>
+          <button onclick="runDoctorCheck()" id="btnDoctor" class="px-2.5 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-[11px] font-medium text-[var(--text-main)] transition">
+            Run Doctor
+          </button>
+        </div>
+
+        <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] space-y-1 font-mono text-[10px] text-zinc-400">
+          <div class="text-[11px] font-semibold text-[var(--text-main)] font-sans mb-1">Workspace Environment</div>
+          <div>Path: <span class="text-zinc-300" id="setWorkspacePath">.</span></div>
+          <div>Harness Core: <span class="text-emerald-400">v0.7.0 (R23 Cockpit)</span></div>
+        </div>
+      </div>
+
+      <div class="px-4 py-2 border-t border-[var(--border-main)] bg-[var(--bg-card-subtle)] flex justify-end">
+        <button onclick="closeModals()" class="px-3 py-1 rounded bg-[var(--bg-card)] border border-[var(--border-main)] text-xs font-medium text-[var(--text-main)]">Done</button>
+      </div>
     </div>
   </div>
 
@@ -512,6 +563,17 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
     let SESSIONS = [];
     let activeSession = null;
     let activeProfile = 'qwen2.5-coder';
+
+    function openModal(modalId) {
+      closeModals();
+      const m = document.getElementById(modalId);
+      if (m) m.classList.remove('hidden');
+      safeCreateIcons();
+    }
+
+    function closeModals() {
+      document.querySelectorAll('.modal-dialog').forEach(m => m.classList.add('hidden'));
+    }
 
     function renderUnifiedDiff(rawDiff) {
       if (!rawDiff || !rawDiff.trim()) {
@@ -644,7 +706,13 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('backendLabel').textContent = isLlama ? 'LLAMA-SERVER' : 'OLLAMA';
       const welcome = document.getElementById('welcomeModelLabel');
       if (welcome) welcome.textContent = val;
-      showToast(`Active profile switched to: ${val}`);
+      
+      const provEl = document.getElementById('profProvider');
+      const endEl = document.getElementById('profEndpoint');
+      if (provEl) provEl.textContent = isLlama ? 'llama-server' : 'ollama';
+      if (endEl) endEl.textContent = isLlama ? 'http://127.0.0.1:8080' : 'http://127.0.0.1:11434';
+
+      showToast(`Active profile: ${val}`);
     }
 
     async function pollStatus() {
@@ -654,8 +722,31 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           const data = await res.json();
           if (data.workspace_name) document.getElementById('workspaceName').textContent = data.workspace_name;
           if (data.git_branch) document.getElementById('workspaceBranch').textContent = `• ${data.git_branch}`;
-          
-          // Server status
+          const wsPath = document.getElementById('setWorkspacePath');
+          if (wsPath && data.workspace) wsPath.textContent = data.workspace;
+
+          // Real GPU & VRAM from nvidia-smi
+          if (data.vram) {
+            const v = data.vram;
+            document.getElementById('telemetryVram').textContent = `${v.used_gb}/${v.total_gb}G`;
+            
+            const devName = document.getElementById('gpuDeviceName');
+            if (devName && v.gpu_name) devName.textContent = v.gpu_name;
+            
+            const vText = document.getElementById('gpuVramText');
+            if (vText) vText.textContent = `${v.used_gb} / ${v.total_gb} GB (${v.percent}%)`;
+            
+            const vBar = document.getElementById('gpuVramBar');
+            if (vBar) vBar.style.width = `${v.percent}%`;
+
+            const gLoad = document.getElementById('gpuLoadPct');
+            if (gLoad && v.utilization_pct !== undefined) gLoad.textContent = `${v.utilization_pct}%`;
+
+            const gTemp = document.getElementById('gpuTemp');
+            if (gTemp && v.temp_c !== undefined) gTemp.textContent = `${v.temp_c}°C`;
+          }
+
+          // Real Server status
           const ollamaOnline = data.servers && data.servers.ollama && data.servers.ollama.online;
           const llamaOnline = data.servers && data.servers.llama_server && data.servers.llama_server.online;
           
@@ -664,11 +755,11 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           const labelOllama = document.getElementById('labelOllamaStatus');
           const labelLlama = document.getElementById('labelLlamaStatus');
           
-          if (dotOllama) dotOllama.className = `w-1.5 h-1.5 rounded-full ${ollamaOnline ? 'bg-emerald-500' : 'bg-red-500'}`;
-          if (labelOllama) labelOllama.textContent = ollamaOnline ? 'Online (Ready)' : 'Offline';
+          if (dotOllama) dotOllama.className = `w-2 h-2 rounded-full ${ollamaOnline ? 'bg-emerald-500' : 'bg-red-500'}`;
+          if (labelOllama) labelOllama.textContent = ollamaOnline ? 'Online (Port 11434)' : 'Offline';
 
-          if (dotLlama) dotLlama.className = `w-1.5 h-1.5 rounded-full ${llamaOnline ? 'bg-emerald-500' : 'bg-red-500'}`;
-          if (labelLlama) labelLlama.textContent = llamaOnline ? 'Online (Ready)' : 'Offline';
+          if (dotLlama) dotLlama.className = `w-2 h-2 rounded-full ${llamaOnline ? 'bg-emerald-500' : 'bg-red-500'}`;
+          if (labelLlama) labelLlama.textContent = llamaOnline ? 'Online (Port 8080)' : 'Offline';
 
           const isCurrentLlama = activeProfile.includes('ling') || activeProfile.includes('llama');
           const isCurrentOnline = isCurrentLlama ? llamaOnline : ollamaOnline;
@@ -677,18 +768,12 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           const topText = document.getElementById('serverLiveText');
           if (topDot) topDot.className = `w-1.5 h-1.5 rounded-full ${isCurrentOnline ? 'bg-emerald-500' : 'bg-red-500'}`;
           if (topText) topText.textContent = isCurrentOnline ? 'Online' : 'Offline';
-
-          if (data.vram) {
-            document.getElementById('telemetryVram').textContent = `${data.vram.used_gb}/${data.vram.total_gb}G`;
-            document.getElementById('modalVramText').textContent = `${data.vram.used_gb} / ${data.vram.total_gb} GB`;
-            document.getElementById('modalVramBar').style.width = `${data.vram.percent}%`;
-          }
         }
       } catch (e) {}
     }
 
     async function startServerEngine(backend) {
-      showToast(`Starting ${backend} in background...`);
+      showToast(`Starting ${backend}...`);
       try {
         const res = await fetch('/api/server/start', {
           method: 'POST',
@@ -771,14 +856,6 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       sb.classList.toggle('hidden');
     }
 
-    function openSettingsModal() {
-      document.getElementById('settingsModal').classList.remove('hidden');
-    }
-
-    function closeSettingsModal() {
-      document.getElementById('settingsModal').classList.add('hidden');
-    }
-
     function showToast(msg) {
       const toast = document.getElementById('toast');
       const toastText = document.getElementById('toastText');
@@ -788,7 +865,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       setTimeout(() => {
         toast.classList.remove('opacity-100', 'translate-y-0');
         toast.classList.add('opacity-0', 'translate-y-2');
-      }, 2400);
+      }, 2500);
     }
 
     async function startNewSession() {
@@ -890,7 +967,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       } catch {
         showToast('✓ All systems operational');
       } finally {
-        btn.textContent = 'Run Check';
+        btn.textContent = 'Run Doctor';
         btn.disabled = false;
       }
     }
@@ -920,7 +997,6 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       input.value = '';
       container.scrollTop = container.scrollHeight;
 
-      // Call live /api/chat
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
@@ -930,7 +1006,6 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         const data = await res.json();
         
         if (data.status === 'failed' && data.offline_server) {
-          // Render smart actionable offline card
           renderOfflineHelperCard(data.offline_server, data.error);
           return;
         }
@@ -1011,7 +1086,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
     // Startup
     loadSessions();
     pollStatus();
-    setInterval(pollStatus, 3000);
+    setInterval(pollStatus, 2500);
     safeCreateIcons();
   </script>
 </body>

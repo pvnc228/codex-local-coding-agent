@@ -1,8 +1,8 @@
 """Desktop API and Webview HTTP Server for Local AI Coding Harness.
 
-Provides real multi-backend probing (Ollama & llama-server), live model discovery,
-server start/stop process controls, model load/unload VRAM management,
-real workspace file introspection, and mediated execution with auto-rollback.
+Provides real hardware GPU telemetry directly from nvidia-smi, multi-backend probing
+(Ollama & llama-server), live model discovery, server process controls, model load/unload
+VRAM management, real workspace file introspection, and mediated execution with auto-rollback.
 """
 
 from __future__ import annotations
@@ -30,6 +30,48 @@ from ..validators import apply_patch, check_patch_applies
 from .ui import DESKTOP_HTML_TEMPLATE
 
 
+def get_nvidia_gpu_telemetry() -> dict[str, Any] | None:
+    """Query live GPU hardware metrics directly from nvidia-smi."""
+    try:
+        res = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used,memory.total,utilization.gpu,name,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1.5,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            first_line = res.stdout.strip().splitlines()[0]
+            parts = [p.strip() for p in first_line.split(",")]
+            if len(parts) >= 4:
+                used_mb = float(parts[0])
+                total_mb = float(parts[1])
+                util_gpu = float(parts[2])
+                name = parts[3]
+                temp_c = float(parts[4]) if len(parts) > 4 else None
+                used_gb = round(used_mb / 1024, 1)
+                total_gb = round(total_mb / 1024, 1)
+                percent = round((used_mb / total_mb) * 100, 1) if total_mb > 0 else 0.0
+                return {
+                    "gpu_name": name,
+                    "used_mb": round(used_mb, 1),
+                    "total_mb": round(total_mb, 1),
+                    "used_gb": used_gb,
+                    "total_gb": total_gb,
+                    "percent": percent,
+                    "utilization_pct": util_gpu,
+                    "temp_c": temp_c,
+                    "source": "nvidia-smi",
+                }
+    except Exception:
+        pass
+    return None
+
+
 class DesktopRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler serving the Desktop UI and REST endpoints."""
 
@@ -49,6 +91,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             )
         elif path in {"/api/status", "/status"}:
             self._handle_status()
+        elif path in {"/api/gpu", "/gpu", "/api/gpu/telemetry"}:
+            self._handle_gpu_telemetry()
         elif path in {"/api/models", "/models", "/api/profiles"}:
             self._handle_models()
         elif path in {"/api/sessions", "/sessions"}:
@@ -120,23 +164,30 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         ollama_online = self._probe_port("http://127.0.0.1:11434/api/tags")
         llama_online = self._probe_port("http://127.0.0.1:8080/v1/models")
 
-        # Query real loaded VRAM
-        vram_info = {"used_gb": 0.0, "total_gb": 16.0, "percent": 0.0, "loaded_models": []}
-        if ollama_online:
-            try:
-                client = build_client(get_profile(self.server_inst.default_profile))
-                manager = ModelMemoryManager(client)
-                snap = manager.snapshot()
-                if snap.is_supported:
-                    used_gb = round(snap.total_vram_bytes / (1024**3), 2)
-                    vram_info = {
-                        "used_gb": used_gb,
-                        "total_gb": 16.0,
-                        "percent": min(100.0, round((used_gb / 16.0) * 100, 1)),
-                        "loaded_models": [m.to_dict() for m in snap.models],
-                    }
-            except Exception:
-                pass
+        # 1. First priority: Real Hardware readings from nvidia-smi
+        gpu_telemetry = get_nvidia_gpu_telemetry()
+
+        # 2. Fallback: Ollama memory manager if nvidia-smi is unavailable
+        if gpu_telemetry:
+            vram_info = gpu_telemetry
+        else:
+            vram_info = {"used_gb": 0.0, "total_gb": 16.0, "percent": 0.0, "gpu_name": "System GPU"}
+            if ollama_online:
+                try:
+                    client = build_client(get_profile(self.server_inst.default_profile))
+                    manager = ModelMemoryManager(client)
+                    snap = manager.snapshot()
+                    if snap.is_supported:
+                        used_gb = round(snap.total_vram_bytes / (1024**3), 2)
+                        vram_info = {
+                            "used_gb": used_gb,
+                            "total_gb": 16.0,
+                            "percent": min(100.0, round((used_gb / 16.0) * 100, 1)),
+                            "gpu_name": "Ollama VRAM Manager",
+                            "loaded_models": [m.to_dict() for m in snap.models],
+                        }
+                except Exception:
+                    pass
 
         payload = {
             "status": "healthy",
@@ -153,6 +204,13 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             "stats": self.server_inst.stats.snapshot() if self.server_inst.stats else {},
         }
         self._send_json(payload)
+
+    def _handle_gpu_telemetry(self) -> None:
+        gpu = get_nvidia_gpu_telemetry()
+        if gpu:
+            self._send_json({"status": "ok", "gpu": gpu})
+        else:
+            self._send_json({"status": "unavailable", "message": "nvidia-smi telemetry not available on this host"})
 
     def _handle_models(self) -> None:
         profiles_data = []
@@ -215,7 +273,6 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                     "size_bytes": p.stat().st_size,
                     "is_code": p.suffix in (".py", ".ts", ".js", ".go", ".rs", ".json", ".md"),
                 })
-        # Sort code files first, then alphabetically
         files.sort(key=lambda x: (not x["is_code"], x["path"]))
         self._send_json({"workspace": str(workspace), "files": files[:80]})
 
@@ -249,9 +306,15 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         backend = data.get("backend", "ollama")
 
         if backend == "ollama":
+            # Search possible Windows locations for Ollama
             ollama_bin = shutil.which("ollama")
             if not ollama_bin:
-                self._send_json({"status": "failed", "error": "Ollama executable not found in system PATH. Install from ollama.com"})
+                appdata_ollama = Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"))
+                if appdata_ollama.exists():
+                    ollama_bin = str(appdata_ollama)
+
+            if not ollama_bin:
+                self._send_json({"status": "failed", "error": "Ollama executable not found. Please install Ollama from ollama.com"})
                 return
             try:
                 proc = subprocess.Popen(
@@ -269,7 +332,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         elif backend in ("llama_server", "llama.cpp"):
             llama_bin = shutil.which("llama-server") or shutil.which("server")
             if not llama_bin:
-                self._send_json({"status": "failed", "error": "llama-server executable not found in system PATH."})
+                self._send_json({"status": "failed", "error": "llama-server executable not found in system PATH. Build or download llama.cpp release."})
                 return
             try:
                 proc = subprocess.Popen(
@@ -308,8 +371,11 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         try:
             prof = get_profile(model_name)
             client = build_client(prof)
-            # Warm up model with small generate call
-            client.generate(TaskEnvelope(id="warmup", goal="ping", files=(), checks=()))
+            # Official Ollama native preload endpoint (warmup into VRAM with keep_alive)
+            if prof.provider == "ollama" and hasattr(client, "_request_json"):
+                client._request_json("POST", "/api/generate", {"model": prof.model, "prompt": "", "keep_alive": "10m"})
+            else:
+                client.complete("warmup", system="warmup", max_tokens=1)
             self._send_json({"status": "loaded", "model": model_name})
         except Exception as error:
             self._send_json({"status": "failed", "error": str(error)})
@@ -349,7 +415,6 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             return
 
         workspace = self.server_inst.workspace
-        # Auto-detect candidate files if not provided
         if not files:
             files = self._detect_relevant_files(workspace, prompt)
         if not checks:
@@ -398,12 +463,11 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "message": result.get("summary") or f"Task processed for '{prompt}'.",
             })
         except Exception as error:
-            # Provide clear pinpointed prescription when backend is offline
             err_msg = str(error)
             if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg:
                 is_llama = "8080" in err_msg or "ling" in profile_name
                 server_name = "llama-server on port 8080" if is_llama else "Ollama on port 11434"
-                prescript = f"Local backend server ({server_name}) is currently OFFLINE. Please start Ollama or llama-server, or use the 'Start Server' button in Settings."
+                prescript = f"Local backend server ({server_name}) is currently OFFLINE. Click 'Start {('llama-server' if is_llama else 'Ollama')}' or launch your local engine."
                 self._send_json({"status": "failed", "error": prescript, "offline_server": "llama_server" if is_llama else "ollama"})
             else:
                 self._send_json({"status": "failed", "error": err_msg})
@@ -435,19 +499,16 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "failed", "error": "No patch content provided to apply"})
             return
 
-        # 1. Preflight check
         applies, err = check_patch_applies(workspace, patch_str)
         if not applies:
             self._send_json({"status": "rejected", "error": f"Patch cannot apply cleanly: {err}"})
             return
 
-        # 2. Apply patch
         applied, detail = apply_patch(workspace, patch_str)
         if not applied:
             self._send_json({"status": "failed", "error": f"Apply failed: {detail}"})
             return
 
-        # 3. Post-apply check verification
         check_results = []
         checks_passed = True
         for cmd in checks:
@@ -474,7 +535,6 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 checks_passed = False
                 break
 
-        # 4. Auto-rollback if checks failed
         if not checks_passed:
             apply_patch(workspace, patch_str, reverse=True)
             self._send_json({
@@ -604,7 +664,6 @@ class DesktopServer:
 
     def save_session(self, session: dict[str, Any]) -> None:
         sessions = self.load_sessions()
-        # Prepend and deduplicate by id
         sessions = [s for s in sessions if s.get("id") != session.get("id")]
         sessions.insert(0, session)
         try:
@@ -623,7 +682,6 @@ class DesktopServer:
         self._thread.start()
 
     def stop(self) -> None:
-        # Kill spawned engine processes
         for name, proc in list(self.spawned_processes.items()):
             try:
                 proc.terminate()
