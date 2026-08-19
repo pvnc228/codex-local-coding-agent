@@ -217,9 +217,9 @@ local-agent doctor --json
 local-agent doctor --fix
 ```
 
-### Start Standalone Web Workbench / Dashboard:
+### Start Web Workbench / Dashboard (Experimental Preview):
 ```bash
-local-agent ui --port 8765
+local-agent ui --experimental --port 8765
 ```
 
 ### Install / Export Agent Skill:

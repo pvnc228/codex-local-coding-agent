@@ -286,9 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
     lint_p.add_argument("--json", action="store_true", help="Output linter report in JSON format")
 
     # 16. ui (app)
-    ui_p = subparsers.add_parser("ui", aliases=["app"], help="Start the standalone Web Workbench & Coding Arena")
+    ui_p = subparsers.add_parser("ui", aliases=["app"], help="[Experimental Preview] Start the standalone Web Workbench & Coding Arena")
     ui_p.add_argument("--host", default="127.0.0.1")
     ui_p.add_argument("--port", type=int, default=8765)
+    ui_p.add_argument("--experimental", action="store_true", help="Acknowledge running the experimental web workbench preview")
 
     return parser
 
@@ -648,10 +649,16 @@ def handle_subcommand(args: argparse.Namespace) -> int:
         from .monitor import MonitorServer
         from .stats import DelegationStats
 
+        if sub in ("ui", "app"):
+            print("=" * 72)
+            print(" [EXPERIMENTAL PREVIEW] Web Workbench UI is experimental incubation.")
+            print(" Full standalone Desktop Harness redesign is currently in progress.")
+            print("=" * 72)
+
         stats = DelegationStats()
         server = MonitorServer(host=args.host, port=args.port, stats=stats)
         path_name = "workbench" if sub in ("ui", "app") else "dashboard"
-        print(f"Starting Web Workbench on {server.url}/{path_name} (Press Ctrl+C to stop)...")
+        print(f"Starting server on {server.url}/{path_name} (Press Ctrl+C to stop)...")
         server.start()
         try:
             while True:

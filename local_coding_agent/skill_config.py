@@ -99,7 +99,7 @@ The controller is runtime-agnostic and natively supports two local inference bac
 - **Manage Profiles**: `local-agent profiles list --json`
 - **Manage VRAM & Memory**: `local-agent memory status --json`
 - **Check Health & Self-Healing**: `local-agent doctor --json` (or `local-agent doctor --fix`)
-- **Start Standalone Web Workbench / UI**: `local-agent ui --port 8765`
+- **Start Web Workbench / UI (Experimental Preview)**: `local-agent ui --experimental --port 8765`
 - **Install Skill**: `local-agent init-skill --write`
 """
 

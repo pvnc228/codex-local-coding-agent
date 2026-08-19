@@ -432,8 +432,11 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 <body>
   <header>
     <div>
-      <h1>Local Coding Agent</h1>
-      <p style="color: var(--text-muted); font-size: 0.8125rem;">Interactive Coding Workbench &amp; Proposal Arena</p>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <h1>Local Coding Agent</h1>
+        <span style="background: #854d0e; color: #fef08a; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">Experimental Preview</span>
+      </div>
+      <p style="color: var(--text-muted); font-size: 0.8125rem;">Interactive Coding Workbench (Standalone Desktop Harness Redesign Underway)</p>
     </div>
     <nav>
       <a href="/dashboard">Dashboard</a>

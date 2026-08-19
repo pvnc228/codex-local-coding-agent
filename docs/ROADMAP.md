@@ -116,16 +116,23 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - **VRAM-Aware Quant Selection**: Automatic hardware introspection determining the highest-performing quant fitting the system GPU budget.
 - **Automated Ingestion Wizard**: `local-agent doctor --fix` and `local-agent profiles pull <tier>` downloading recommended Ollama models / GGUFs and setting up IDE configs automatically.
 
-### R22 — Standalone AI Harness & Modern Web Workbench (`local-agent ui` / `local-agent app`) (Completed in v0.7.0)
-- **Embedded Web Server**: Zero-config Starlette / FastAPI / stdlib backend embedded in the Python package, serving the application on port 8765 without requiring Node.js on the host.
-- **Interactive Coding Arena**: Web UI (`/workbench`) allowing developers to submit prompts, configure TaskEnvelopes, and interact with local models directly without an external host IDE.
-- **GitHub-Grade Side-by-Side Diff Viewer**: Clean modern split diff preview with syntax highlighting.
-- **One-Click Action Controls**: Buttons for `Apply Proposal`, `Auto-Rollback`, `Decompose Task`, and `Retry with Prescription`.
-- **Live Observability & Benchmark Charts**: Interactive telemetry dashboard showing live GPU VRAM gauges, active worker slots, and radar charts comparing model accuracy and speed.
+### R22 — AI Harness & Modern Workbench Prototype (Experimental Web Preview)
+- **Experimental Web Prototype**: Lightweight embedded stdlib web UI (`/workbench`) on port 8765 for rapid prototyping of TaskEnvelopes and local model execution. Marked experimental pending full desktop redesign.
+- **Interactive Coding Arena**: Web UI allowing developers to submit prompts, configure TaskEnvelopes, and interact with local models directly.
+- **Side-by-Side Diff Preview**: Split diff view with patch review and status feedback.
+- **One-Click Action Controls**: Buttons for `Apply Proposal`, `Auto-Rollback`, and `Retry with Prescription`.
 
 ---
 
 ## Planned Milestones
+
+### R23 — Standalone Desktop AI Coding Harness (`local-agent desktop`)
+- **Dedicated Desktop Architecture**: Transitioning from a browser sandbox to a first-class desktop application (Tauri v2 / pywebview).
+- **Native Workspace & Git Integration**: Native folder picker, active git diff tree, character-exact SEARCH/REPLACE diff visualizer, and file-tree context picker.
+- **Speculative Model Racing Arena**: Visual side-by-side execution split view between competing local model drafts.
+- **Hardware & VRAM Telemetry Hub**: Real-time GPU VRAM, context window token meters, and live model process management.
+- **AST Skeletonizer & Token Savings Studio**: Interactive preview of code compaction before LLM dispatch.
+- **Pinpointed Prescriptions Studio**: Visual repair assistant for model diff alignment errors.
 
 ## Beyond Current Scope (Future Exploration)
 
