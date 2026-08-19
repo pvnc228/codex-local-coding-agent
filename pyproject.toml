@@ -30,6 +30,7 @@ local-coding-agent = "local_coding_agent.cli:main"
 [project.optional-dependencies]
 mcp = ["mcp==2.0.0"]
 dev = ["pytest"]
+desktop = ["pywebview>=5.0.0"]
 
 [tool.setuptools]
-packages = ["local_coding_agent"]
+packages = ["local_coding_agent", "local_coding_agent.desktop"]

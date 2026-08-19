@@ -217,9 +217,11 @@ local-agent doctor --json
 local-agent doctor --fix
 ```
 
-### Start Web Workbench / Dashboard (Experimental Preview):
+### Launch Desktop AI Coding Harness (R23 Cockpit):
 ```bash
-local-agent ui --experimental --port 8765
+local-agent desktop --port 8765
+# Or force open in system browser:
+local-agent desktop --browser
 ```
 
 ### Install / Export Agent Skill:

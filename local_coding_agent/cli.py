@@ -291,6 +291,14 @@ def build_parser() -> argparse.ArgumentParser:
     ui_p.add_argument("--port", type=int, default=8765)
     ui_p.add_argument("--experimental", action="store_true", help="Acknowledge running the experimental web workbench preview")
 
+    # 17. desktop
+    desk_p = subparsers.add_parser("desktop", help="Start the Standalone Desktop AI Coding Harness (R23)")
+    desk_p.add_argument("--host", default="127.0.0.1", help="Host address to bind")
+    desk_p.add_argument("--port", type=int, default=8765, help="Port to bind (default: 8765)")
+    desk_p.add_argument("--browser", action="store_true", help="Force open in system browser instead of native window")
+    desk_p.add_argument("--workspace", default=".", help="Target workspace path")
+    desk_p.add_argument("--profile", default="qwen2.5-coder", help="Default model profile")
+
     return parser
 
 
@@ -669,6 +677,17 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             server.stop()
             print("\nServer stopped.")
         return 0
+
+    if sub == "desktop":
+        from .desktop import launch_desktop_app
+
+        return launch_desktop_app(
+            host=args.host,
+            port=args.port,
+            workspace=args.workspace,
+            default_profile=args.profile,
+            browser=getattr(args, "browser", False),
+        )
 
     if sub == "benchmark":
         overrides = {}
