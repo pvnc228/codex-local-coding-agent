@@ -168,9 +168,11 @@ When a small local model produces a syntax or diff formatting error, the Pinpoin
 
 For AI agents operating in shell environments without MCP tools, or for direct script automation, every capability is directly available via `local-agent` / `python -m local_coding_agent`:
 
-### Delegate a Task:
+### Delegate a Task (Single or Speculative Multi-Draft Racing):
 ```bash
 local-agent delegate --task '{"id":"fix-1","goal":"Fix bug","files":["src/foo.py"],"checks":["pytest tests/test_foo.py"]}' --json
+# Or run speculative racing between 2 drafts:
+local-agent delegate --task task.json --speculative-drafts 2 --json
 ```
 
 ### Apply Patch Directly:
@@ -178,6 +180,16 @@ local-agent delegate --task '{"id":"fix-1","goal":"Fix bug","files":["src/foo.py
 local-agent delegate --task task.json --apply --json
 # Or apply a raw patch with verification:
 local-agent apply --patch-file changes.diff --workspace . --check "pytest tests/" --json
+```
+
+### Fast Semantic Linter Pre-Gate:
+```bash
+local-agent lint-patch --patch-file changes.diff --workspace . --json
+```
+
+### AST-Guided Skeletonization:
+```bash
+local-agent skeletonize src/large_module.py --symbol target_function --json
 ```
 
 ### Decompose a Broad Task:
@@ -198,12 +210,20 @@ local-agent memory unload qwen2.5-coder:latest --json
 local-agent memory enforce --limit 12884901888 --keep qwen3-8b-q6k:latest --json
 ```
 
-### Check System & Model Health:
+### Check System & Remediate Environment:
 ```bash
 local-agent doctor --json
+# Or auto-remediate missing MCP configs, Agent Skills, and setup:
+local-agent doctor --fix
+```
+
+### Start Standalone Web Workbench / Dashboard:
+```bash
+local-agent ui --port 8765
 ```
 
 ### Install / Export Agent Skill:
 ```bash
 local-agent init-skill --write
 ```
+

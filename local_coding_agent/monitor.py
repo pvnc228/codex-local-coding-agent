@@ -32,6 +32,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 
         if path in {"", "/dashboard"}:
             self._handle_dashboard()
+        elif path == "/workbench":
+            self._handle_workbench()
         elif path == "/health":
             self._handle_health()
         elif path == "/stats":
@@ -42,6 +44,38 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             self._handle_events()
         else:
             self._send_response(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"404 Not Found\n")
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        if path in {"/api/delegate", "/delegate"}:
+            self._handle_api_delegate()
+        else:
+            self._send_response(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"404 Not Found\n")
+
+    def _handle_api_delegate(self) -> None:
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+        try:
+            data = json.loads(body)
+            raw_task = data.get("task", {})
+            profile_name = data.get("profile", "qwen2.5-1.5b")
+            apply_flag = bool(data.get("apply", False))
+
+            from pathlib import Path
+            from .controller import Controller
+            from .ollama_adapter import build_client
+            from .profiles import get_profile
+            from .task import TaskEnvelope
+
+            task = TaskEnvelope.from_mapping(raw_task)
+            profile = get_profile(profile_name)
+            client = build_client(profile)
+            controller = Controller(client, str(Path.cwd()))
+            result = controller.run(task, apply=apply_flag)
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"status": "failed", "error": str(error)})
 
     def _handle_events(self) -> None:
         events = self.monitor.get_recent_events()
@@ -298,6 +332,193 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 </body>
 </html>
 """
+
+    def _handle_workbench(self) -> None:
+        workbench_html = self._render_workbench_html()
+        self._send_response(HTTPStatus.OK, "text/html; charset=utf-8", workbench_html.encode("utf-8"))
+
+    def _render_workbench_html(self) -> str:
+        return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local Coding Agent — Interactive Coding Workbench</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --success: #4ade80;
+      --warning: #facc15;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    nav a.active { color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 4px; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 0.8125rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+    input, textarea, select {
+      width: 100%;
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px 12px;
+      font-family: inherit;
+      font-size: 0.875rem;
+    }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+    button {
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 18px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover { opacity: 0.9; }
+    pre {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8125rem;
+      overflow-x: auto;
+      max-height: 480px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Local Coding Agent</h1>
+      <p style="color: var(--text-muted); font-size: 0.8125rem;">Interactive Coding Workbench &amp; Proposal Arena</p>
+    </div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/workbench" class="active">Workbench</a>
+    </nav>
+  </header>
+
+  <div class="two-col">
+    <div class="card">
+      <h2 style="font-size: 1.1rem; margin-bottom: 16px;">Task Envelope</h2>
+      <form id="taskForm">
+        <div class="form-group">
+          <label>Task ID</label>
+          <input type="text" id="taskId" value="atomic-fix-1" required>
+        </div>
+        <div class="form-group">
+          <label>Goal</label>
+          <input type="text" id="taskGoal" placeholder="Describe the single atomic change" required>
+        </div>
+        <div class="form-group">
+          <label>Target Files (comma-separated)</label>
+          <input type="text" id="taskFiles" placeholder="src/module.py" required>
+        </div>
+        <div class="form-group">
+          <label>Target Checks (comma-separated)</label>
+          <input type="text" id="taskChecks" placeholder="pytest tests/test_module.py">
+        </div>
+        <div class="form-group">
+          <label>Model Profile</label>
+          <select id="taskProfile">
+            <option value="qwen2.5-1.5b">qwen2.5-1.5b</option>
+            <option value="ling-3.0-tiny-q6k">ling-3.0-tiny-q6k (llama-server:8080)</option>
+            <option value="qwen3-8b-q6k">qwen3-8b-q6k</option>
+            <option value="qwen3.8-27b-q4">qwen3.8-27b-q4</option>
+          </select>
+        </div>
+        <button type="submit" id="btnSubmit">Delegate Task</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2 style="font-size: 1.1rem; margin-bottom: 16px;">Execution Result &amp; Diff</h2>
+      <div id="statusBadge" style="margin-bottom: 12px; font-size: 0.875rem; color: var(--text-muted);">Ready. Submit a task envelope to run.</div>
+      <pre id="outputPre">// Result will appear here...</pre>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('taskForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btnSubmit');
+      const badge = document.getElementById('statusBadge');
+      const output = document.getElementById('outputPre');
+
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      badge.textContent = 'Delegating task to local model executor...';
+
+      const task = {
+        id: document.getElementById('taskId').value,
+        goal: document.getElementById('taskGoal').value,
+        files: document.getElementById('taskFiles').value.split(',').map(s => s.trim()).filter(Boolean),
+        checks: document.getElementById('taskChecks').value.split(',').map(s => s.trim()).filter(Boolean)
+      };
+
+      try {
+        const res = await fetch('/api/delegate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task, profile: document.getElementById('taskProfile').value })
+        });
+        const data = await res.json();
+        badge.textContent = 'Status: ' + (data.status || 'done');
+        output.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        badge.textContent = 'Error executing task';
+        output.textContent = String(err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Delegate Task';
+      }
+    });
+  </script>
+</body>
+</html>"""
 
     def _send_json(self, data: Any) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

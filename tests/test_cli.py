@@ -382,9 +382,15 @@ class CliTests(unittest.TestCase):
         code = handle_subcommand(args)
         self.assertEqual(code, 0)
 
+    def test_cli_ui_subcommand(self):
+        args = build_parser().parse_args(["ui", "--port", "9999"])
+        self.assertEqual(args.subcommand, "ui")
+        self.assertEqual(args.port, 9999)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

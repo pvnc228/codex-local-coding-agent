@@ -89,46 +89,43 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 
 ---
 
-## Planned Milestones
-
-### R14 — Dynamic Context Compaction & Harness State Machine (Planned)
+### R14 — Dynamic Context Compaction & Harness State Machine (Completed in v0.7.0)
 - **Agentic Harness vs Conversational Chat (Stateless Context Reconstruction & Turn Assembly)**: Transition controller loop from passive chat history accumulation (`messages.append`) to an active stateful agentic harness. On each turn, the controller evaluates the world state (`HarnessState`: task envelope, observed files, latest tool observation, active pinpointed prescription) and synthesizes a clean, reconstructed context from scratch rather than sending a growing dialogue log. Deterministic state machine transitions (`received` -> `context_ready` -> `awaiting_model` -> `evaluating_candidate` -> `reconstructing_turn`).
 - **Tool Output Trimming & Eviction**: Automatic summarization/pruning of historical `read_file` and `search_text` results older than 1 turn to prevent context blowup and attention degradation on 3B–14B models (preserving `assistant(tool_calls)` ↔ `role:tool` pairing invariant).
 - **Diff Residue & Error Echo Elimination**: Purge multi-turn failed diff attempts and syntax errors from active context, replacing them with a minimal task envelope + active pinpointed prescription. Small models receive only the current state of files and precise repair instructions without seeing past hallucinations.
 
-
-## Next-Gen Milestones: Standalone AI Harness & Core Optimizations
-
-### R17 — AST-Guided Context Compaction & Skeletonization (`ast_compactor.py`)
+### R17 — AST-Guided Context Compaction & Skeletonization (`ast_compactor.py`) (Completed in v0.7.0)
 - **AST File Skeletonizer**: Pre-processor that parses code structures (Python `ast`, `tree-sitter`) and collapses non-target classes/functions down to their signatures and docstrings (`def process_order(id: str) -> bool: ...`).
 - **Target Function Expansion**: Full code body is expanded only for the specific symbol targeted for editing.
 - **Token Efficiency Gain**: Slashes prompt context by 60–85%, keeping 1B–4B models focused inside their optimal attention window and reducing generation latency.
 
-### R18 — Semantic Linter & Fast Pre-Test Prescriptions (`semantic_linter.py`)
+### R18 — Semantic Linter & Fast Pre-Test Prescriptions (`semantic_linter.py`) (Completed in v0.7.0)
 - **Sub-50ms Static Pre-Gates**: Lightweight static analysis pipeline (`ruff check` for Python, `biome` / `tsc --noEmit` for TypeScript) running immediately after patch generation.
 - **Instant In-Context Feedback**: Catches syntax errors, undefined variables, and type mismatches before spinning up heavy unit test runners (`pytest`), converting linter diagnostics into pinpointed prescriptive hints.
 
-### R19 — Speculative Multi-Drafting & Model Racing Engine
+### R19 — Speculative Multi-Drafting & Model Racing Engine (Completed in v0.7.0)
 - **Parallel Speculative Dispatch**: Coordinates concurrent execution of 2 lightweight workers across the `BoundedWorkerPool` (e.g. `qwen2.5-1.5b` with `temp=0` vs `gemma4-2b` with `temp=0.2`).
 - **First-Pass Winner Acceptance**: The first candidate patch that passes `git apply --check` and targeted tests is accepted; the competing worker is immediately cancelled.
 - **Reliability Boost**: Increases first-attempt success rates from ~70% to 95%+ with sub-second turnaround.
 
-### R20 — Streaming Progress & Token Telemetry (MCP + SSE)
+### R20 — Streaming Progress & Token Telemetry (MCP + SSE) (Completed in v0.7.0)
 - **MCP Progress Protocol**: Implementation of MCP `notifications/progress` broadcasting live controller lifecycle states (`[1/4] Compacting -> [2/4] Generating @ 84 tok/s -> [3/4] Testing -> [4/4] Validated`).
 - **Server-Sent Events (SSE)**: Real-time event stream (`/api/events`) for dashboard and terminal CLI progress bars.
 
-### R21 — Self-Healing Environment & Auto-Pulling (`doctor --fix`)
+### R21 — Self-Healing Environment & Auto-Pulling (`doctor --fix`) (Completed in v0.7.0)
 - **VRAM-Aware Quant Selection**: Automatic hardware introspection determining the highest-performing quant fitting the system GPU budget.
 - **Automated Ingestion Wizard**: `local-agent doctor --fix` and `local-agent profiles pull <tier>` downloading recommended Ollama models / GGUFs and setting up IDE configs automatically.
 
-### R22 — Standalone AI Harness & Modern Web Workbench (`local-agent ui` / `local-agent app`)
-- **Embedded Web Server**: Zero-config Starlette / FastAPI backend embedded in the Python package, serving the application on port 8765 without requiring Node.js on the host.
-- **Interactive Coding Arena**: Web UI allowing developers to submit prompts, configure TaskEnvelopes, and interact with local models directly without an external host IDE.
-- **GitHub-Grade Side-by-Side Diff Viewer**: Integration of open-source `diff2html` and Monaco Editor displaying split and unified diffs with syntax highlighting.
+### R22 — Standalone AI Harness & Modern Web Workbench (`local-agent ui` / `local-agent app`) (Completed in v0.7.0)
+- **Embedded Web Server**: Zero-config Starlette / FastAPI / stdlib backend embedded in the Python package, serving the application on port 8765 without requiring Node.js on the host.
+- **Interactive Coding Arena**: Web UI (`/workbench`) allowing developers to submit prompts, configure TaskEnvelopes, and interact with local models directly without an external host IDE.
+- **GitHub-Grade Side-by-Side Diff Viewer**: Clean modern split diff preview with syntax highlighting.
 - **One-Click Action Controls**: Buttons for `Apply Proposal`, `Auto-Rollback`, `Decompose Task`, and `Retry with Prescription`.
 - **Live Observability & Benchmark Charts**: Interactive telemetry dashboard showing live GPU VRAM gauges, active worker slots, and radar charts comparing model accuracy and speed.
 
 ---
+
+## Planned Milestones
 
 ## Beyond Current Scope (Future Exploration)
 

@@ -91,11 +91,15 @@ The controller is runtime-agnostic and natively supports two local inference bac
 
 
 - **Delegate a Task**: `local-agent delegate --task task.json --json`
+- **Speculative Multi-Draft Racing**: `local-agent delegate --task task.json --speculative-drafts 2 --json`
 - **Apply with Verification**: `local-agent delegate --task task.json --apply --json`
+- **Fast Semantic Linter Pre-Gate**: `local-agent lint-patch --patch-file changes.diff --json`
+- **AST-Guided Skeletonization**: `local-agent skeletonize src/file.py --symbol func_name --json`
 - **Decompose a Broad Task**: `local-agent decompose --task wide.json --json`
 - **Manage Profiles**: `local-agent profiles list --json`
 - **Manage VRAM & Memory**: `local-agent memory status --json`
-- **Check Health**: `local-agent doctor --json`
+- **Check Health & Self-Healing**: `local-agent doctor --json` (or `local-agent doctor --fix`)
+- **Start Standalone Web Workbench / UI**: `local-agent ui --port 8765`
 - **Install Skill**: `local-agent init-skill --write`
 """
 

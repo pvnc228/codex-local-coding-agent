@@ -285,6 +285,11 @@ def build_parser() -> argparse.ArgumentParser:
     lint_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Target workspace path")
     lint_p.add_argument("--json", action="store_true", help="Output linter report in JSON format")
 
+    # 16. ui (app)
+    ui_p = subparsers.add_parser("ui", aliases=["app"], help="Start the standalone Web Workbench & Coding Arena")
+    ui_p.add_argument("--host", default="127.0.0.1")
+    ui_p.add_argument("--port", type=int, default=8765)
+
     return parser
 
 
@@ -639,21 +644,23 @@ def handle_subcommand(args: argparse.Namespace) -> int:
         server.run(transport="stdio")
         return 0
 
-    if sub == "monitor":
+    if sub in ("monitor", "ui", "app"):
         from .monitor import MonitorServer
         from .stats import DelegationStats
 
         stats = DelegationStats()
         server = MonitorServer(host=args.host, port=args.port, stats=stats)
-        print(f"Starting Monitor on {server.url}/dashboard (Press Ctrl+C to stop)...")
+        path_name = "workbench" if sub in ("ui", "app") else "dashboard"
+        print(f"Starting Web Workbench on {server.url}/{path_name} (Press Ctrl+C to stop)...")
         server.start()
         try:
             while True:
                 import time
+
                 time.sleep(1)
         except KeyboardInterrupt:
             server.stop()
-            print("\nMonitor stopped.")
+            print("\nServer stopped.")
         return 0
 
     if sub == "benchmark":

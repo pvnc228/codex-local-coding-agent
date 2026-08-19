@@ -1,6 +1,6 @@
 """Bounded controller components for delegating small coding tasks."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 from .ast_compactor import skeletonize_file, skeletonize_python

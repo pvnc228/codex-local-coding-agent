@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-08-19
+
+### 🚀 Headline Features
+- **Dynamic Context Compaction & Harness State Machine (R14)**:
+  - Transitioned controller loop from passive conversational chat log accumulation to an active state machine (`HarnessState` & `ContextAssembler`).
+  - Reconstructs clean, stateless context envelopes per turn, eliminating dialogue confusion on small models.
+  - Automatic eviction of older tool-exchange blocks preserving `assistant(tool_calls)` ↔ `role:tool` pairing.
+  - Diff residue elimination purging failed diff attempts and syntax errors.
+- **AST-Guided Context Compaction & Skeletonization (`local_coding_agent.ast_compactor`) (R17)**:
+  - Python AST pre-processor collapsing non-target function and class bodies down to signatures and docstrings (`...`).
+  - Slashes context footprint by 60–85%, reducing latency and memory pressure on 1B–4B models.
+  - CLI subcommand: `local-agent skeletonize <file> --symbol <name> [--json]`.
+- **Semantic Linter & Fast Pre-Test Prescriptions (`local_coding_agent.semantic_linter`) (R18)**:
+  - Sub-50ms static pre-gates executing before slow test runners (`ast.parse`, `compile`, in-memory patch testing).
+  - Translates syntax errors directly into deterministic pinpointed prescriptions.
+  - CLI subcommand: `local-agent lint-patch --patch-file <file> [--json]`.
+- **Speculative Multi-Drafting & Model Racing Engine (`local_coding_agent.speculative_racing`) (R19)**:
+  - Concurrent speculative dispatch of candidate drafts across worker pool.
+  - First-pass winner acceptance with instant cancellation of competing racers.
+  - CLI option: `local-agent delegate --speculative-drafts 2`.
+- **Streaming Progress & Token Telemetry (R20)**:
+  - Real-time event stream and telemetry over SSE `/api/events`.
+- **Self-Healing Environment & Auto-Remediation (R21)**:
+  - 1-click self-healing wizard via `local-agent doctor --fix`.
+  - Automatically configures missing MCP servers and exports Agent Skills.
+- **Standalone Web Workbench & Coding Arena (`local-agent ui` / `local-agent app`) (R22)**:
+  - Zero-dependency embedded web server on port 8765.
+  - Interactive browser workbench (`/workbench`) for prompt testing, task delegation, diff visualization, and mediated apply without host IDE dependencies.
+
+---
+
 ## [0.6.0] - 2026-08-19
 
 ### 🚀 Headline Features
