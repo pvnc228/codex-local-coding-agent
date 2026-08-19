@@ -136,19 +136,59 @@ def discover_local_ollama_models() -> list[str]:
 
 
 def resolve_model_profile(name: str) -> Any:
-    """Resolve a configured profile or dynamically create an Ollama/OpenAI profile for any installed model."""
-    try:
-        return get_profile(name)
-    except Exception:
-        from ..profiles import ModelProfile
-        is_llama = "ling" in name or "llama" in name or "8080" in name
+    """Resolve a profile or dynamically create a profile matching discovered models."""
+    from ..profiles import ModelProfile
+
+    clean_name = name.strip()
+
+    # 1. If explicitly a llama-server model or profile
+    if "ling" in clean_name.lower() or "llama" in clean_name.lower() or "8080" in clean_name or clean_name.endswith(".gguf"):
         return ModelProfile(
-            name=name,
-            model=name,
-            provider="openai" if is_llama else "ollama",
-            endpoint="http://127.0.0.1:8080/v1" if is_llama else "http://127.0.0.1:11434",
+            name=clean_name,
+            model=clean_name,
+            provider="openai",
+            endpoint="http://127.0.0.1:8080/v1",
             num_ctx=8192,
         )
+
+    # 2. If exact match in local Ollama manifests/tags
+    ollama_models = discover_local_ollama_models()
+    if clean_name in ollama_models:
+        return ModelProfile(
+            name=clean_name,
+            model=clean_name,
+            provider="ollama",
+            endpoint="http://127.0.0.1:11434",
+            num_ctx=8192,
+        )
+
+    # 3. Check if standard profile exists in _PROFILES
+    try:
+        prof = get_profile(clean_name)
+        if prof.provider == "ollama" and ollama_models:
+            if prof.model not in ollama_models:
+                base = clean_name.split(":")[0].replace("codex-", "")
+                matched = next((m for m in ollama_models if m.startswith(base) or base in m), None)
+                if matched:
+                    return ModelProfile(
+                        name=clean_name,
+                        model=matched,
+                        provider="ollama",
+                        endpoint=prof.endpoint,
+                        num_ctx=prof.num_ctx,
+                    )
+        return prof
+    except Exception:
+        pass
+
+    # 4. Fallback profile
+    return ModelProfile(
+        name=clean_name,
+        model=clean_name,
+        provider="ollama",
+        endpoint="http://127.0.0.1:11434",
+        num_ctx=8192,
+    )
 
 
 class DesktopRequestHandler(BaseHTTPRequestHandler):
@@ -486,15 +526,35 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         try:
             prof = resolve_model_profile(model_name)
             client = build_client(prof)
-            if prof.provider == "ollama" and hasattr(client, "_request_json"):
-                client._request_json("POST", "/api/generate", {"model": prof.model, "prompt": "", "keep_alive": "10m"})
-            elif hasattr(client, "complete"):
-                client.complete("warmup", system="warmup", max_tokens=1)
-            elif hasattr(client, "chat"):
-                client.chat([{"role": "user", "content": "warmup"}])
+            if prof.provider == "ollama":
+                if hasattr(client, "_request_json"):
+                    try:
+                        client._request_json("POST", "/api/generate", {"model": prof.model, "prompt": "", "keep_alive": "10m"})
+                    except OllamaError as oe:
+                        if "not found" in str(oe).lower():
+                            alt = prof.model.split(":")[0] if ":" in prof.model else f"{prof.model}:latest"
+                            client._request_json("POST", "/api/generate", {"model": alt, "prompt": "", "keep_alive": "10m"})
+                        else:
+                            raise
+                else:
+                    client.complete("warmup", system="warmup", max_tokens=1)
+            elif prof.provider == "openai":
+                if hasattr(client, "complete"):
+                    client.complete("warmup", system="warmup", max_tokens=1)
+                elif hasattr(client, "chat"):
+                    client.chat([{"role": "user", "content": "warmup"}])
+            else:
+                if hasattr(client, "complete"):
+                    client.complete("warmup", system="warmup", max_tokens=1)
             self._send_json({"status": "loaded", "model": model_name})
         except Exception as error:
-            self._send_json({"status": "failed", "error": str(error)})
+            err_msg = str(error)
+            if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg or "timed out" in err_msg.lower():
+                is_llama = "8080" in err_msg or "ling" in model_name.lower() or "llama" in model_name.lower()
+                backend_name = "llama-server (port 8080)" if is_llama else "Ollama (port 11434)"
+                self._send_json({"status": "failed", "error": f"{backend_name} is OFFLINE. Start it in Local Inference Servers."})
+            else:
+                self._send_json({"status": "failed", "error": err_msg})
 
     def _handle_model_unload(self) -> None:
         data = self._read_json_body()

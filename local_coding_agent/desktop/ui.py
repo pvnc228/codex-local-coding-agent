@@ -788,8 +788,12 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
 
     function changeProfile(val) {
       activeProfile = val;
+      const select = document.getElementById('modalProfileSelect');
+      if (select && select.value !== val) {
+        select.value = val;
+      }
       document.getElementById('telemetryModel').textContent = val;
-      const isLlama = val.includes('ling') || val.includes('llama');
+      const isLlama = val.toLowerCase().includes('ling') || val.toLowerCase().includes('llama') || val.endsWith('.gguf');
       document.getElementById('backendLabel').textContent = isLlama ? 'LLAMA-SERVER' : 'OLLAMA';
       const welcome = document.getElementById('welcomeModelLabel');
       if (welcome) welcome.textContent = val;

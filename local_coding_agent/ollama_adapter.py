@@ -244,9 +244,9 @@ class OpenAICompatibleClient:
             if "not found" in str(err).lower() or "400" in str(err) or "404" in str(err):
                 try:
                     avail = self.available_models()
-                    models_list = avail.get("models", [])
-                    if models_list and isinstance(models_list[0], dict) and models_list[0].get("name"):
-                        self._active_model_name = str(models_list[0]["name"])
+                    models_list = [m["name"] for m in avail.get("models", []) if isinstance(m, dict) and "name" in m]
+                    if models_list:
+                        self._active_model_name = models_list[0]
                         payload["model"] = self._active_model_name
                         decoded = self._request_json("POST", "/v1/chat/completions", payload)
                     else:
