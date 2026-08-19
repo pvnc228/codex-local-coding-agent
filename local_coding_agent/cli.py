@@ -269,6 +269,12 @@ def build_parser() -> argparse.ArgumentParser:
     mon_p.add_argument("--host", default="127.0.0.1")
     mon_p.add_argument("--port", type=int, default=8765)
 
+    # 14. skeletonize
+    skel_p = subparsers.add_parser("skeletonize", help="Skeletonize source file by collapsing non-target structures")
+    skel_p.add_argument("file", type=Path, help="Path to source file")
+    skel_p.add_argument("--symbol", action="append", dest="symbols", default=[], help="Symbol name to keep expanded")
+    skel_p.add_argument("--json", action="store_true", help="Output skeleton in JSON format")
+
     return parser
 
 
@@ -711,6 +717,42 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             print(json.dumps(artifact, ensure_ascii=False, indent=2))
         return 0 if artifact["models"] and all(item["status"] == "completed" for item in artifact["models"]) else 1
 
+    if sub == "skeletonize":
+        from .ast_compactor import skeletonize_file
+
+        try:
+            skeleton = skeletonize_file(str(args.file), target_symbols=args.symbols)
+            if getattr(args, "json", False):
+                print(
+                    json.dumps(
+                        {"file": str(args.file), "symbols": args.symbols, "skeleton": skeleton},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                try:
+                    print(skeleton)
+                except UnicodeEncodeError:
+                    if hasattr(sys.stdout, "buffer"):
+                        sys.stdout.buffer.write(skeleton.encode("utf-8", errors="replace"))
+                        sys.stdout.buffer.write(b"\n")
+                        sys.stdout.buffer.flush()
+                    else:
+                        print(skeleton.encode("ascii", errors="replace").decode("ascii"))
+            return 0
+        except Exception as error:
+            if getattr(args, "json", False):
+                print(
+                    json.dumps(
+                        {"status": "failed", "error": str(error)},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(f"Error skeletonizing file: {error}", file=sys.stderr)
+            return 1
 
     return -1
 

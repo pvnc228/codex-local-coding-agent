@@ -3,6 +3,7 @@
 __version__ = "0.6.0"
 
 
+from .ast_compactor import skeletonize_file, skeletonize_python
 from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
 
 from .calibration import calibrate_for_model, calibrate_workers, model_vram_bytes
@@ -91,4 +92,6 @@ __all__ = [
     "ContextAssembler",
     "compact_tool_exchanges",
     "purge_diff_residues",
+    "skeletonize_python",
+    "skeletonize_file",
 ]

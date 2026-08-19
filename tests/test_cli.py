@@ -330,9 +330,25 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.ladder)
         self.assertTrue(args.json)
 
+    def test_cli_subcommand_skeletonize(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_py = Path(temp_dir) / "sample.py"
+            file_py.write_text(
+                "def func_a():\n    return 1\n\ndef func_b():\n    return 2\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                ["skeletonize", str(file_py), "--symbol", "func_b", "--json"]
+            )
+            from local_coding_agent.cli import handle_subcommand
+
+            code = handle_subcommand(args)
+            self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
