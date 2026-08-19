@@ -9,6 +9,12 @@ from threading import Event, Thread
 from typing import Any, Protocol
 
 from .atomizer import TaskBudget, preflight
+from .context_manager import (
+    ContextAssembler,
+    HarnessState,
+    compact_tool_exchanges,
+    purge_diff_residues,
+)
 from .prescriptions import json_syntax_prescription, prescribe_all, tool_policy_prescription
 from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
 from .task import TaskEnvelope
@@ -675,21 +681,15 @@ class Controller:
         self, messages: list[dict[str, Any]], *, audit: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Compact messages by evicting historical tool-call exchanges older than 1 turn."""
-        current_messages = list(messages)
-        while self._messages_size(current_messages) > self.max_context_bytes:
-            blocks = self._find_tool_exchange_blocks(current_messages)
-            if len(blocks) <= 1:
-                break
-            start, end = blocks[0]
-            dropped = current_messages[start:end]
+        compacted, dropped = compact_tool_exchanges(messages, max_bytes=self.max_context_bytes)
+        if dropped:
             tool_names = [m.get("tool_name") for m in dropped if m.get("role") == "tool"]
-            del current_messages[start:end]
             audit.append({
                 "event": "context_compacted",
                 "dropped_messages_count": len(dropped),
                 "dropped_tool_names": tool_names,
             })
-        return current_messages
+        return compacted
 
     @staticmethod
     def _find_tool_exchange_blocks(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:

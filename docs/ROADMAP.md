@@ -73,19 +73,14 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - **100% CLI Parity ("Fool-Proof" Control)**: Console commands for all capabilities (`delegate`, `decompose`, `profiles`, `memory`, `calibrate`, `apply`, `init-skill`, `doctor`, `init-mcp`, `test-run`, `serve-mcp`, `monitor`, `benchmark`) with machine-parseable `--json` output.
 - **Cross-Platform Resilience**: Hardened stdout encoding defense for Windows (`cp1252`), macOS, and Linux.
 
-### R14 — Dynamic Context Compaction & Harness State Machine (Planned)
-- **Agentic Harness vs Conversational Chat**: Transition controller loop from passive chat history accumulation to active agentic state management.
-- **Tool Output Trimming & Eviction**: Automatic summarization/pruning of historical `read_file` and `search_text` results older than 1 turn to prevent context blowup and attention degradation on 3B–14B models.
-- **Diff Residue Elimination**: Purge multi-turn failed diff attempts from active context, replacing them with a minimal task envelope + active pinpointed prescription.
-
-### R15 — Multi-Dimensional Capability Ladder & Intelligence Benchmark (Planned)
+### R15 — Multi-Dimensional Capability Ladder & Intelligence Benchmark (Completed in v0.6.0)
 - **Taxonomy of Difficulty Tiers**: Progressive test suite from Tier 0 (Syntax/Formatting/Typos) -> Tier 1 (Atomic Pure Functions) -> Tier 2 (Single-File Multi-Hunk Refactor) -> Tier 3 (Cross-File Invariants) -> Tier 4 (Algorithmic & Strict Constraints).
 - **Adaptive Early-Exit Benchmark Ladder**: Dynamic step-up evaluation that calculates the model's reliability ceiling without wasting compute on out-of-reach tiers.
 - **Task Decomposition & Granularity Tolerance**: Quantitative evaluation of maximum digestible chunk size (`atomic_hunk`, `function_level`, `file_level`, `multi_file_batch`).
 - **Polyglot Evaluation Matrix**: Multi-language capability benchmarks across Python, TypeScript/JavaScript, Rust, and Go to establish per-language capability ratings.
 - **Tool Horizon & Turn Endurance**: Measurement of the model's degradation point (repetition, loop fatigue, schema drift, hallucination) across extended multi-turn tool loops.
 
-### R16 — MCP Capability Discovery, Smart Routing & Task Gatekeeper (Planned)
+### R16 — MCP Capability Discovery, Smart Routing & Task Gatekeeper (Completed in v0.6.0)
 - **Structured Capability Profile**: Standardized JSON capability vector (`overall_tier`, `confidence_95_ci`, `granularity_tolerance`, `turn_horizon`, `languages`, `tps_generation`).
 - **MCP Protocol Discovery & Introspection**: Expose model capabilities and routing advice via MCP tool definitions, MCP resource `model://profile`, and system prompt injection for calling host agents.
 - **Pre-Flight Complexity Gatekeeper**: Immediate controller-level rejection/warning before invoking LLM if submitted task exceeds model's verified tier or file bounds (`CAPABILITY_OVERLOAD`).
@@ -93,6 +88,14 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 - **CLI Intelligence Inspector**: `local-agent doctor --rank` and `local-agent benchmark --ladder` reporting model intelligence tier, supported languages, and routing sweet spot.
 
 ---
+
+## Planned Milestones
+
+### R14 — Dynamic Context Compaction & Harness State Machine (Planned)
+- **Agentic Harness vs Conversational Chat (Stateless Context Reconstruction & Turn Assembly)**: Transition controller loop from passive chat history accumulation (`messages.append`) to an active stateful agentic harness. On each turn, the controller evaluates the world state (`HarnessState`: task envelope, observed files, latest tool observation, active pinpointed prescription) and synthesizes a clean, reconstructed context from scratch rather than sending a growing dialogue log. Deterministic state machine transitions (`received` -> `context_ready` -> `awaiting_model` -> `evaluating_candidate` -> `reconstructing_turn`).
+- **Tool Output Trimming & Eviction**: Automatic summarization/pruning of historical `read_file` and `search_text` results older than 1 turn to prevent context blowup and attention degradation on 3B–14B models (preserving `assistant(tool_calls)` ↔ `role:tool` pairing invariant).
+- **Diff Residue & Error Echo Elimination**: Purge multi-turn failed diff attempts and syntax errors from active context, replacing them with a minimal task envelope + active pinpointed prescription. Small models receive only the current state of files and precise repair instructions without seeing past hallucinations.
+
 
 ## Next-Gen Milestones: Standalone AI Harness & Core Optimizations
 

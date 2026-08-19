@@ -6,6 +6,12 @@ __version__ = "0.6.0"
 from .atomizer import Decomposition, PreflightReport, TaskBudget, decompose, preflight
 
 from .calibration import calibrate_for_model, calibrate_workers, model_vram_bytes
+from .context_manager import (
+    ContextAssembler,
+    HarnessState,
+    compact_tool_exchanges,
+    purge_diff_residues,
+)
 from .controller import Controller
 from .delegator import DelegatingAgent, DecompositionTemplate, is_decomposable_failure
 from .doctor import CheckResult, DoctorReport, diagnose_environment
@@ -81,4 +87,8 @@ __all__ = [
     "TaskStore",
     "TaskRecord",
     "JsonFileTaskStore",
+    "HarnessState",
+    "ContextAssembler",
+    "compact_tool_exchanges",
+    "purge_diff_residues",
 ]
