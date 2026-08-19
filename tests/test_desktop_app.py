@@ -48,19 +48,9 @@ def test_desktop_server_models_api():
 
 def test_desktop_server_sessions_api():
     with DesktopServer() as server:
-        # GET sessions
-        req = urllib.request.Request(f"{server.url}/api/sessions")
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
-            assert resp.status == 200
-            data = json.loads(resp.read().decode("utf-8"))
-            assert "sessions" in data
-            assert len(data["sessions"]) >= 2
-            types = {s["type"] for s in data["sessions"]}
-            assert "user" in types
-            assert "agent" in types
-
-        # POST new session
+        # POST new user session
         new_sess_payload = json.dumps({
+            "id": "test-sess-1",
             "type": "user",
             "title": "Test new session",
             "file": "calc.py",
@@ -78,6 +68,35 @@ def test_desktop_server_sessions_api():
             post_data = json.loads(resp_post.read().decode("utf-8"))
             assert post_data["status"] == "created"
             assert post_data["session"]["title"] == "Test new session"
+
+        # POST new agent session
+        agent_sess_payload = json.dumps({
+            "id": "test-sess-2",
+            "type": "agent",
+            "title": "Agent delegated task",
+            "file": "calc.py",
+            "patch": "",
+            "checks": ["pytest tests/"],
+        }).encode("utf-8")
+        req_post_agent = urllib.request.Request(
+            f"{server.url}/api/sessions",
+            data=agent_sess_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_post_agent, timeout=3.0) as resp_agent:
+            assert resp_agent.status == 200
+
+        # GET sessions
+        req = urllib.request.Request(f"{server.url}/api/sessions")
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert "sessions" in data
+            assert len(data["sessions"]) >= 2
+            types = {s["type"] for s in data["sessions"]}
+            assert "user" in types
+            assert "agent" in types
 
 
 def test_desktop_server_chat_api():

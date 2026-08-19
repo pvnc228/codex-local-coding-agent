@@ -1,16 +1,19 @@
 """Desktop API and Webview HTTP Server for Local AI Coding Harness.
 
 Provides real multi-backend probing (Ollama & llama-server), live model discovery,
-end-to-end task execution via Controller, mediated apply with post-apply check verification
-and automatic rollback, and persistent session state.
+server start/stop process controls, model load/unload VRAM management,
+real workspace file introspection, and mediated execution with auto-rollback.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +21,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..doctor import diagnose_environment
-from ..ollama_adapter import build_client
+from ..memory import ModelMemoryManager
+from ..ollama_adapter import OllamaError, build_client
 from ..profiles import get_profile, list_profiles
 from ..stats import DelegationStats
 from ..task import TaskEnvelope
@@ -49,6 +53,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._handle_models()
         elif path in {"/api/sessions", "/sessions"}:
             self._handle_sessions()
+        elif path in {"/api/workspace/files", "/workspace/files"}:
+            self._handle_workspace_files()
         elif path in {"/api/health", "/health"}:
             self._send_json({"status": "ok", "uptime": round(time.monotonic() - self.server_inst.started_at, 2)})
         else:
@@ -66,6 +72,16 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._handle_apply()
         elif path in {"/api/rollback", "/rollback"}:
             self._handle_rollback()
+        elif path in {"/api/server/start", "/server/start"}:
+            self._handle_server_start()
+        elif path in {"/api/server/stop", "/server/stop"}:
+            self._handle_server_stop()
+        elif path in {"/api/model/load", "/model/load"}:
+            self._handle_model_load()
+        elif path in {"/api/model/unload", "/model/unload"}:
+            self._handle_model_unload()
+        elif path in {"/api/model/unload_all", "/model/unload_all"}:
+            self._handle_model_unload_all()
         elif path in {"/api/doctor/fix", "/doctor/fix"}:
             self._handle_doctor_fix()
         elif path in {"/api/sessions", "/sessions"}:
@@ -100,17 +116,27 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        # Inspect real VRAM or fallback
-        vram_info = {"used_gb": 0.0, "total_gb": 0.0, "percent": 0.0}
-        try:
-            client = build_client(get_profile(self.server_inst.default_profile))
-            loaded = client.loaded_models()
-            models_list = loaded.get("models", [])
-            used_bytes = sum(m.get("size_vram", m.get("size", 0)) for m in models_list)
-            used_gb = round(used_bytes / (1024**3), 1)
-            vram_info = {"used_gb": used_gb, "total_gb": 16.0, "percent": min(100.0, round((used_gb / 16.0) * 100, 1))}
-        except Exception:
-            vram_info = {"used_gb": 5.8, "total_gb": 16.0, "percent": 36.2}
+        # Check server endpoints
+        ollama_online = self._probe_port("http://127.0.0.1:11434/api/tags")
+        llama_online = self._probe_port("http://127.0.0.1:8080/v1/models")
+
+        # Query real loaded VRAM
+        vram_info = {"used_gb": 0.0, "total_gb": 16.0, "percent": 0.0, "loaded_models": []}
+        if ollama_online:
+            try:
+                client = build_client(get_profile(self.server_inst.default_profile))
+                manager = ModelMemoryManager(client)
+                snap = manager.snapshot()
+                if snap.is_supported:
+                    used_gb = round(snap.total_vram_bytes / (1024**3), 2)
+                    vram_info = {
+                        "used_gb": used_gb,
+                        "total_gb": 16.0,
+                        "percent": min(100.0, round((used_gb / 16.0) * 100, 1)),
+                        "loaded_models": [m.to_dict() for m in snap.models],
+                    }
+            except Exception:
+                pass
 
         payload = {
             "status": "healthy",
@@ -119,14 +145,16 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             "workspace_name": Path(workspace).resolve().name,
             "git_branch": branch,
             "profile": self.server_inst.default_profile,
+            "servers": {
+                "ollama": {"online": ollama_online, "endpoint": "http://127.0.0.1:11434"},
+                "llama_server": {"online": llama_online, "endpoint": "http://127.0.0.1:8080"},
+            },
             "vram": vram_info,
             "stats": self.server_inst.stats.snapshot() if self.server_inst.stats else {},
         }
         self._send_json(payload)
 
     def _handle_models(self) -> None:
-        import urllib.request
-
         profiles_data = []
         for name in list_profiles():
             prof = get_profile(name)
@@ -175,8 +203,24 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             },
         })
 
+    def _handle_workspace_files(self) -> None:
+        workspace = Path(self.server_inst.workspace)
+        files = []
+        for p in workspace.rglob("*"):
+            if p.is_file() and not any(part.startswith(".") or part in ("__pycache__", "venv", ".git", "build", "dist", "node_modules") for part in p.parts):
+                rel = str(p.relative_to(workspace).as_posix())
+                files.append({
+                    "path": rel,
+                    "name": p.name,
+                    "size_bytes": p.stat().st_size,
+                    "is_code": p.suffix in (".py", ".ts", ".js", ".go", ".rs", ".json", ".md"),
+                })
+        # Sort code files first, then alphabetically
+        files.sort(key=lambda x: (not x["is_code"], x["path"]))
+        self._send_json({"workspace": str(workspace), "files": files[:80]})
+
     def _handle_sessions(self) -> None:
-        self._send_json({"sessions": self.server_inst.sessions})
+        self._send_json({"sessions": self.server_inst.load_sessions()})
 
     def _handle_create_session(self) -> None:
         data = self._read_json_body()
@@ -197,8 +241,101 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             "status": data.get("status", "Active"),
             "time": "Just now",
         }
-        self.server_inst.sessions.insert(0, session)
+        self.server_inst.save_session(session)
         self._send_json({"status": "created", "session": session})
+
+    def _handle_server_start(self) -> None:
+        data = self._read_json_body()
+        backend = data.get("backend", "ollama")
+
+        if backend == "ollama":
+            ollama_bin = shutil.which("ollama")
+            if not ollama_bin:
+                self._send_json({"status": "failed", "error": "Ollama executable not found in system PATH. Install from ollama.com"})
+                return
+            try:
+                proc = subprocess.Popen(
+                    [ollama_bin, "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                self.server_inst.spawned_processes["ollama"] = proc
+                time.sleep(0.5)
+                self._send_json({"status": "started", "backend": "ollama", "pid": proc.pid})
+            except Exception as error:
+                self._send_json({"status": "failed", "error": str(error)})
+
+        elif backend in ("llama_server", "llama.cpp"):
+            llama_bin = shutil.which("llama-server") or shutil.which("server")
+            if not llama_bin:
+                self._send_json({"status": "failed", "error": "llama-server executable not found in system PATH."})
+                return
+            try:
+                proc = subprocess.Popen(
+                    [llama_bin, "--port", "8080"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                self.server_inst.spawned_processes["llama_server"] = proc
+                time.sleep(0.5)
+                self._send_json({"status": "started", "backend": "llama_server", "pid": proc.pid})
+            except Exception as error:
+                self._send_json({"status": "failed", "error": str(error)})
+        else:
+            self._send_json({"status": "failed", "error": f"Unknown backend: {backend}"})
+
+    def _handle_server_stop(self) -> None:
+        data = self._read_json_body()
+        backend = data.get("backend", "all")
+        stopped = []
+
+        for name, proc in list(self.server_inst.spawned_processes.items()):
+            if backend in (name, "all"):
+                try:
+                    proc.terminate()
+                    stopped.append(name)
+                    del self.server_inst.spawned_processes[name]
+                except Exception:
+                    pass
+
+        self._send_json({"status": "stopped", "backends": stopped})
+
+    def _handle_model_load(self) -> None:
+        data = self._read_json_body()
+        model_name = data.get("model") or self.server_inst.default_profile
+        try:
+            prof = get_profile(model_name)
+            client = build_client(prof)
+            # Warm up model with small generate call
+            client.generate(TaskEnvelope(id="warmup", goal="ping", files=(), checks=()))
+            self._send_json({"status": "loaded", "model": model_name})
+        except Exception as error:
+            self._send_json({"status": "failed", "error": str(error)})
+
+    def _handle_model_unload(self) -> None:
+        data = self._read_json_body()
+        model_name = data.get("model")
+        if not model_name:
+            self._send_json({"status": "failed", "error": "model name required"})
+            return
+        try:
+            client = build_client(get_profile(self.server_inst.default_profile))
+            manager = ModelMemoryManager(client)
+            snap = manager.unload_model(model_name)
+            self._send_json({"status": "unloaded", "model": model_name, "remaining": [m.name for m in snap.models]})
+        except Exception as error:
+            self._send_json({"status": "failed", "error": str(error)})
+
+    def _handle_model_unload_all(self) -> None:
+        try:
+            client = build_client(get_profile(self.server_inst.default_profile))
+            manager = ModelMemoryManager(client)
+            snap = manager.unload_all()
+            self._send_json({"status": "unloaded_all", "remaining_bytes": snap.total_vram_bytes})
+        except Exception as error:
+            self._send_json({"status": "failed", "error": str(error)})
 
     def _handle_chat(self) -> None:
         data = self._read_json_body()
@@ -218,7 +355,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         if not checks:
             checks = self._detect_test_checks(workspace)
 
-        task_id = f"chat-{int(time.time())}"
+        task_id = f"task-{int(time.time())}"
         task = TaskEnvelope(
             id=task_id,
             goal=prompt,
@@ -239,14 +376,14 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             session_record = {
                 "id": task_id,
                 "type": "user",
-                "title": prompt[:48] + ("..." if len(prompt) > 48 else ""),
+                "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
                 "file": target_file,
                 "patch": patch_content,
                 "checks": checks,
                 "status": "Verified" if result.get("status") == "accepted" else "Needs Review",
                 "time": "Just now",
             }
-            self.server_inst.sessions.insert(0, session_record)
+            self.server_inst.save_session(session_record)
 
             self._send_json({
                 "status": result.get("status", "completed"),
@@ -261,7 +398,15 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "message": result.get("summary") or f"Task processed for '{prompt}'.",
             })
         except Exception as error:
-            self._send_json({"status": "failed", "error": str(error)})
+            # Provide clear pinpointed prescription when backend is offline
+            err_msg = str(error)
+            if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg:
+                is_llama = "8080" in err_msg or "ling" in profile_name
+                server_name = "llama-server on port 8080" if is_llama else "Ollama on port 11434"
+                prescript = f"Local backend server ({server_name}) is currently OFFLINE. Please start Ollama or llama-server, or use the 'Start Server' button in Settings."
+                self._send_json({"status": "failed", "error": prescript, "offline_server": "llama_server" if is_llama else "ollama"})
+            else:
+                self._send_json({"status": "failed", "error": err_msg})
 
     def _handle_delegate(self) -> None:
         data = self._read_json_body()
@@ -360,10 +505,17 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         report = diagnose_environment(fix=True)
         self._send_json({"status": "ok", "report": report})
 
+    def _probe_port(self, url: str) -> bool:
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=0.2) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
     def _detect_relevant_files(self, workspace: str, prompt: str) -> list[str]:
         ws_path = Path(workspace)
         try:
-            # Check git status for modified files first
             res = subprocess.run(
                 ["git", "status", "--porcelain"],
                 cwd=workspace,
@@ -378,7 +530,6 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        # Search for .py / .ts files mentioned in prompt or top-level src
         for p in (ws_path / "src").glob("*.py"):
             return [str(p.relative_to(ws_path).as_posix())]
         for p in ws_path.glob("*.py"):
@@ -411,7 +562,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
 
 class DesktopServer:
-    """Desktop Harness embedded HTTP server."""
+    """Desktop Harness embedded HTTP server with persistent storage and process orchestration."""
 
     def __init__(
         self,
@@ -427,52 +578,8 @@ class DesktopServer:
         self.default_profile = default_profile
         self.stats = stats or DelegationStats()
         self.started_at = time.monotonic()
-        self.sessions: list[dict[str, Any]] = [
-            {
-                "id": "sess-01",
-                "type": "user",
-                "title": "Fix float precision in convert.py",
-                "file": "convert.py",
-                "patch": """diff --git a/convert.py b/convert.py
---- a/convert.py
-+++ b/convert.py
-@@ -1,7 +1,8 @@
- from decimal import Decimal
- 
- def calculate_conversion(amount_cents: int, rate: float) -> int:
--    # Bug: float rounding creates penny discrepancy
--    return int(amount_cents * rate)
-+    # Fixed: integer arithmetic with explicit bankers rounding
-+    rate_factor = Decimal(str(rate))
-+    return int(Decimal(amount_cents) * rate_factor)
-""",
-                "checks": ["pytest tests/test_convert.py"],
-                "status": "Verified",
-                "time": "Just now",
-            },
-            {
-                "id": "sess-02",
-                "type": "agent",
-                "agent": "Codex",
-                "taskId": "req-tax-precision-402",
-                "title": "req-tax-precision-402",
-                "goal": "Fix decimal precision in tax calculation without breaking existing interfaces",
-                "file": "src/tax.py",
-                "patch": """diff --git a/src/tax.py b/src/tax.py
---- a/src/tax.py
-+++ b/src/tax.py
-@@ -10,6 +10,6 @@ class TaxCalculator:
-     def compute_sales_tax(self, subtotal_cents: int, tax_rate_bps: int) -> int:
--        rate = tax_rate_bps / 10000.0
--        return round(subtotal_cents * rate)
-+        # Precise integer basis point arithmetic
-+        return (subtotal_cents * tax_rate_bps + 5000) // 10000
-""",
-                "checks": ["pytest tests/test_tax.py"],
-                "status": "Ready to Apply",
-                "time": "12m ago",
-            },
-        ]
+        self.spawned_processes: dict[str, subprocess.Popen[Any]] = {}
+        self.sessions_file = Path(self.workspace) / ".local_agent_sessions.json"
         self._httpd = ThreadingHTTPServer((host, port), DesktopRequestHandler)
         self._httpd.desktop_server = self  # type: ignore[attr-defined]
         self._thread: threading.Thread | None = None
@@ -485,6 +592,26 @@ class DesktopServer:
     def url(self) -> str:
         return f"http://{self.host}:{self.actual_port}"
 
+    def load_sessions(self) -> list[dict[str, Any]]:
+        if self.sessions_file.exists():
+            try:
+                data = json.loads(self.sessions_file.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                pass
+        return []
+
+    def save_session(self, session: dict[str, Any]) -> None:
+        sessions = self.load_sessions()
+        # Prepend and deduplicate by id
+        sessions = [s for s in sessions if s.get("id") != session.get("id")]
+        sessions.insert(0, session)
+        try:
+            self.sessions_file.write_text(json.dumps(sessions[:50], indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
     def start(self) -> None:
         if self._thread is not None:
             return
@@ -496,6 +623,14 @@ class DesktopServer:
         self._thread.start()
 
     def stop(self) -> None:
+        # Kill spawned engine processes
+        for name, proc in list(self.spawned_processes.items()):
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        self.spawned_processes.clear()
+
         if self._thread is None:
             return
         self._httpd.shutdown()

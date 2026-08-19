@@ -13,7 +13,7 @@ build/
 .coverage
 htmlcov/
 
-# Local run artifacts
+.local_agent_sessions.json
 .codex-run/
 .local-run/
 .opencode/
