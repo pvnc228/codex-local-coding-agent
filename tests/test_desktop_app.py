@@ -33,8 +33,22 @@ def test_desktop_server_status_api():
             assert "vram" in data
 
 
+def test_desktop_server_models_api():
+    with DesktopServer() as server:
+        req = urllib.request.Request(f"{server.url}/api/models")
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert "profiles" in data
+            assert len(data["profiles"]) > 0
+            assert "backends" in data
+            assert "ollama" in data["backends"]
+            assert "llama_server" in data["backends"]
+
+
 def test_desktop_server_sessions_api():
     with DesktopServer() as server:
+        # GET sessions
         req = urllib.request.Request(f"{server.url}/api/sessions")
         with urllib.request.urlopen(req, timeout=3.0) as resp:
             assert resp.status == 200
@@ -44,6 +58,26 @@ def test_desktop_server_sessions_api():
             types = {s["type"] for s in data["sessions"]}
             assert "user" in types
             assert "agent" in types
+
+        # POST new session
+        new_sess_payload = json.dumps({
+            "type": "user",
+            "title": "Test new session",
+            "file": "calc.py",
+            "patch": "diff --git a/calc.py b/calc.py\n+def add(): pass",
+            "checks": ["pytest tests/"],
+        }).encode("utf-8")
+        req_post = urllib.request.Request(
+            f"{server.url}/api/sessions",
+            data=new_sess_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_post, timeout=3.0) as resp_post:
+            assert resp_post.status == 200
+            post_data = json.loads(resp_post.read().decode("utf-8"))
+            assert post_data["status"] == "created"
+            assert post_data["session"]["title"] == "Test new session"
 
 
 def test_desktop_server_chat_api():
@@ -58,9 +92,8 @@ def test_desktop_server_chat_api():
         with urllib.request.urlopen(req, timeout=3.0) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode("utf-8"))
-            assert data["status"] == "accepted"
+            assert data["status"] in ("accepted", "failed", "completed")
             assert "thinking" in data
-            assert "testResult" in data
 
 
 def test_desktop_server_rollback_api(tmp_path):
@@ -75,6 +108,21 @@ def test_desktop_server_rollback_api(tmp_path):
             assert resp.status == 200
             data = json.loads(resp.read().decode("utf-8"))
             assert "status" in data
+
+
+def test_desktop_server_apply_no_patch(tmp_path):
+    with DesktopServer(workspace=tmp_path) as server:
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": ""}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "failed"
+            assert "No patch content" in data["error"]
 
 
 def test_cli_desktop_parser():

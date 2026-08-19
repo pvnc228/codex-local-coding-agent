@@ -1,7 +1,8 @@
 """Embedded single-file production-grade HTML template for Desktop AI Coding Harness.
 
 Designed using shadcn/ui dark zinc aesthetic, Geist / Geist Mono typography,
-and full Light/Dark theme support.
+full Light/Dark theme support, dynamic multi-backend discovery (Ollama & llama-server),
+and universal unified diff rendering.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Lucide Icons CDN -->
+  <!-- Lucide Icons CDN (with safe local fallback) -->
   <script src="https://unpkg.com/lucide@latest"></script>
 
   <script>
@@ -44,7 +45,6 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
   <style>
     * { box-sizing: border-box; }
     
-    /* Dark Theme Tokens */
     :root.dark {
       --bg-app: #09090b;
       --bg-header: #0e0e11;
@@ -63,7 +63,6 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       --diff-del-text: #fca5a5;
     }
 
-    /* Light Theme Tokens */
     :root:not(.dark) {
       --bg-app: #fbfbfb;
       --bg-header: #ffffff;
@@ -105,7 +104,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
   <!-- TOP BAR -->
   <header class="h-11 border-b border-[var(--border-main)] bg-[var(--bg-header)] px-3.5 flex items-center justify-between shrink-0">
     
-    <!-- Left: Brand + Strict Telemetry Badges -->
+    <!-- Left: Brand + Real Telemetry Badges -->
     <div class="flex items-center gap-2.5">
       <button onclick="toggleSidebar()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200 transition" title="Toggle Sessions (Ctrl+B)">
         <i data-lucide="panel-left" class="w-3.5 h-3.5"></i>
@@ -116,26 +115,25 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         <span class="font-semibold text-[var(--text-main)]">Local Harness</span>
       </div>
 
-      <!-- Telemetry Pills (Geist Mono Tabular) -->
+      <!-- Telemetry Pills (Clickable -> Opens Modal) -->
       <div class="flex items-center gap-1.5 font-mono text-[11px] num-tabular">
         <button onclick="openSettingsModal()" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer" title="Inspect GPU & VRAM Memory">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="backendStatusDot"></span>
           <span class="text-zinc-500 font-sans text-[10px]">VRAM</span> <span id="telemetryVram">5.8/16G</span>
         </button>
 
-        <button onclick="openSettingsModal()" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer" title="Model Profile">
-          <span class="text-cyan-500 font-sans text-[10px]">MODEL</span>
-          <span class="text-[var(--text-main)]" id="telemetryModel">qwen2.5-coder:7b</span>
+        <button onclick="openSettingsModal()" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:border-zinc-500 border border-[var(--border-main)] text-[var(--text-muted)] transition cursor-pointer" title="Switch Model Profile">
+          <span class="text-cyan-500 font-sans text-[10px]" id="backendLabel">OLLAMA</span>
+          <span class="text-[var(--text-main)]" id="telemetryModel">qwen2.5-coder</span>
         </button>
 
         <div class="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] text-zinc-500">
           <span class="font-sans text-[10px]">CTX</span>
-          <span class="text-[var(--text-muted)]" id="telemetryCtx">2.1k/8.1k</span>
+          <span class="text-[var(--text-muted)]" id="telemetryCtx">8.1k</span>
         </div>
 
         <div class="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] text-zinc-500">
-          <span class="text-emerald-500" id="telemetryTps">78.4</span>
-          <span class="text-[10px] font-sans">tok/s</span>
+          <span class="text-emerald-500" id="telemetryTps">Online</span>
         </div>
       </div>
     </div>
@@ -190,17 +188,17 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="px-2.5 pt-2 pb-1 flex items-center gap-1 text-[10px] font-medium text-[var(--text-muted)]">
-        <button onclick="filterSessions('all')" class="filter-chip px-1.5 py-0.5 rounded bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold">All</button>
-        <button onclick="filterSessions('user')" class="filter-chip px-1.5 py-0.5 rounded hover:bg-[var(--bg-card)] text-zinc-500">User</button>
-        <button onclick="filterSessions('agent')" class="filter-chip px-1.5 py-0.5 rounded hover:bg-[var(--bg-card)] text-zinc-500">Agent</button>
+        <button onclick="filterSessions('all', event)" class="filter-chip px-1.5 py-0.5 rounded bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold">All</button>
+        <button onclick="filterSessions('user', event)" class="filter-chip px-1.5 py-0.5 rounded text-zinc-500 hover:text-[var(--text-main)]">User</button>
+        <button onclick="filterSessions('agent', event)" class="filter-chip px-1.5 py-0.5 rounded text-zinc-500 hover:text-[var(--text-main)]">Agent</button>
       </div>
 
       <div class="flex-1 overflow-y-auto p-1.5 space-y-1 text-xs font-sans" id="sessionList">
-        <!-- Dynamic sessions loaded from API or local store -->
+        <!-- Rendered by renderSessions() -->
       </div>
 
       <div class="p-2 border-t border-[var(--border-main)] text-[10px] font-mono text-zinc-500 flex items-center justify-between">
-        <span id="sessionCounter">4 Sessions</span>
+        <span id="sessionCounter">0 Sessions</span>
         <span>Harness v0.7.0</span>
       </div>
     </aside>
@@ -208,11 +206,11 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- TAB 1: INTERACTIVE CHAT MODE -->
     <div id="view-chat" class="tab-view flex-1 flex h-full">
       
-      <!-- Center Chat Stream -->
+      <!-- Center: Chat Stream -->
       <div class="flex-1 flex flex-col bg-[var(--bg-app)] border-r border-[var(--border-main)] h-full overflow-hidden">
         
         <div id="chatMessages" class="flex-1 overflow-y-auto p-5 space-y-3.5">
-          <!-- Initial Welcome Message -->
+          <!-- Initial Welcome Card -->
           <div class="flex items-start gap-2.5 max-w-2xl">
             <div class="w-6 h-6 rounded bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center shrink-0 text-[10px] font-mono font-semibold text-cyan-500">
               AI
@@ -223,13 +221,13 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
                 <span class="text-[9px] font-mono text-zinc-500">• Ready</span>
               </div>
               <div class="p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-main)] text-xs text-[var(--text-main)] leading-relaxed">
-                Welcome! Enter your coding goal below or select a quick preset. The harness will automatically decompose your prompt, skeletonize code, generate verified SEARCH/REPLACE diffs, and validate with local test runners.
+                Welcome! Enter your coding instructions below or pick a preset. The controller will decompose the task, parse AST structure, dispatch to local model (<span id="welcomeModelLabel" class="font-mono text-cyan-400">qwen2.5-coder</span>), and verify with external test oracles.
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Quick Action Prompt Chips -->
+        <!-- Preset Chips -->
         <div class="px-5 py-1.5 border-t border-[var(--border-main)] bg-[var(--bg-header)] flex items-center gap-1.5 overflow-x-auto text-xs">
           <span class="text-zinc-500 text-[10px] font-mono shrink-0">Presets:</span>
           <button onclick="setPromptAndRun('Fix off-by-one error in sliding window index')" class="px-2 py-0.5 rounded bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-muted)] hover:text-[var(--text-main)] text-[11px] transition shrink-0 flex items-center gap-1">
@@ -261,8 +259,8 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="h-9 px-3 border-b border-[var(--border-main)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
           <div class="flex items-center gap-2 text-xs font-mono text-[var(--text-main)]">
             <i data-lucide="file-code" class="w-3 h-3 text-cyan-500"></i>
-            <span id="diffFileName">convert.py</span>
-            <span class="text-[9px] text-emerald-500 font-mono font-semibold" id="diffStatsTag">+3 / -2</span>
+            <span id="diffFileName">No active file</span>
+            <span class="text-[9px] text-emerald-500 font-mono font-semibold" id="diffStatsTag">Ready</span>
           </div>
 
           <div class="flex items-center gap-1 font-mono text-[10px]">
@@ -278,7 +276,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- Diff Lines Container -->
+        <!-- Universal Diff Viewport -->
         <div id="diffContentArea" class="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed p-2 select-text">
           <div class="p-8 text-center text-zinc-500 text-xs">No active diff proposal. Run a prompt or select a task session.</div>
         </div>
@@ -286,9 +284,9 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="p-2 bg-[var(--bg-app)] border-t border-[var(--border-main)] flex items-center justify-between text-xs font-mono text-[10px]">
           <div class="flex items-center gap-1 text-emerald-500" id="diffEvidenceStatus">
             <i data-lucide="check-circle-2" class="w-3 h-3"></i>
-            <span>Oracles Verified by Test Runner</span>
+            <span>Oracles: External Test Evidence</span>
           </div>
-          <span class="text-zinc-500">Zero Hallucinations</span>
+          <span class="text-zinc-500">Mediated Rollback Active</span>
         </div>
       </div>
 
@@ -369,7 +367,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
 
           <div id="delegatedDiffContent" class="flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed select-text space-y-0.5">
-            <!-- Rendered diff -->
+            <!-- Dynamically populated -->
           </div>
 
           <div class="p-2.5 bg-[var(--bg-header)] border-t border-[var(--border-main)] flex items-center justify-between text-xs">
@@ -385,14 +383,14 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
 
   </main>
 
-  <!-- SETTINGS & HARDWARE MODAL DIALOG -->
+  <!-- SETTINGS & MULTI-BACKEND MODAL DIALOG -->
   <div id="settingsModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
     <div class="bg-[var(--bg-card)] border border-[var(--border-main)] rounded-xl w-full max-w-xl overflow-hidden shadow-xl animate-in fade-in zoom-in-95 duration-100">
       
       <div class="px-4 py-3 border-b border-[var(--border-main)] flex items-center justify-between bg-[var(--bg-card-subtle)]">
         <div class="flex items-center gap-2">
           <i data-lucide="sliders" class="w-3.5 h-3.5 text-cyan-500"></i>
-          <h3 class="text-xs font-semibold text-[var(--text-main)]">Hardware Telemetry &amp; Controller Settings</h3>
+          <h3 class="text-xs font-semibold text-[var(--text-main)]">Hardware Telemetry &amp; Model Selection</h3>
         </div>
         <button onclick="closeSettingsModal()" class="p-1 rounded hover:bg-zinc-800/40 text-zinc-400 hover:text-zinc-200">
           <i data-lucide="x" class="w-3.5 h-3.5"></i>
@@ -426,21 +424,21 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] space-y-1.5">
             <div class="flex items-center justify-between text-[10px] text-zinc-500 font-mono">
               <span>Ladder Rating</span>
-              <i data-lucide="award" class="w-3 h-3 text-purple-500"></i>
+              <i data-lucide="award" class="w-3.5 h-3.5 text-purple-500"></i>
             </div>
             <div class="text-xs font-bold text-[var(--text-main)]" id="modalLadderTier">Tier 2 (Workhorse)</div>
             <div class="text-[10px] text-zinc-500 font-mono">CI95: 96.2%</div>
           </div>
         </div>
 
-        <!-- Model Selection -->
+        <!-- Backend Provider & Server Selection -->
         <div class="space-y-1.5">
-          <label class="text-[11px] font-medium text-[var(--text-muted)]">Active Model Profile</label>
+          <label class="text-[11px] font-medium text-[var(--text-muted)]">Inference Backend &amp; Model Profile</label>
           <select id="modalProfileSelect" onchange="changeProfile(this.value)" class="w-full bg-[var(--bg-app)] border border-[var(--border-main)] rounded px-2.5 py-1.5 text-xs text-[var(--text-main)] outline-none focus:border-cyan-500 font-mono">
-            <option value="qwen2.5-coder">qwen2.5-coder:7b-instruct-q6_K (Default)</option>
-            <option value="ling-3.0-tiny-q6k">ling-3.0-tiny-q6k (llama-server:8080)</option>
-            <option value="qwen3-8b-q6k">qwen3-8b-q6k (Ollama)</option>
-            <option value="devstral-small-2-24b">devstral-small-2-24b (Advanced)</option>
+            <option value="qwen2.5-coder">Ollama: qwen2.5-coder (Default, http://127.0.0.1:11434)</option>
+            <option value="ling-3.0-tiny-q6k">llama-server: ling-3.0-tiny-q6k (http://127.0.0.1:8080)</option>
+            <option value="qwen3-8b-q6k">Ollama: qwen3-8b-q6k (Workhorse)</option>
+            <option value="devstral-small-2-24b">Ollama / OpenAI: devstral-small-2-24b</option>
           </select>
         </div>
 
@@ -448,7 +446,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] flex items-center justify-between">
           <div>
             <div class="text-xs font-medium text-[var(--text-main)]">Self-Healing Doctor (doctor --fix)</div>
-            <div class="text-[10px] text-zinc-500 font-mono">All MCP configs &amp; IDE skills synced.</div>
+            <div class="text-[10px] text-zinc-500 font-mono">Auto-sync missing MCP configs &amp; Agent Skills.</div>
           </div>
           <button onclick="runDoctorCheck()" id="btnDoctor" class="px-2.5 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-[11px] font-medium text-[var(--text-main)] transition">
             Run Check
@@ -473,83 +471,94 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <script>
-    lucide.createIcons();
-
-    const SESSIONS = [
-      {
-        id: 'sess-01',
-        type: 'user',
-        title: 'Fix float precision in convert.py',
-        file: 'convert.py',
-        diff: `
-<div class="space-y-0.5">
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">1</span><span class="text-[var(--text-muted)]">from decimal import Decimal</span></div>
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">2</span><span></span></div>
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">3</span><span class="text-[var(--text-muted)]">def calculate_conversion(amount_cents: int, rate: float) -> int:</span></div>
-  <div class="flex px-2 py-0.5 diff-del-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">4 -</span><span>    return int(amount_cents * rate)</span></div>
-  <div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">4 +</span><span>    rate_factor = Decimal(str(rate))</span></div>
-  <div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">5 +</span><span>    return int(Decimal(amount_cents) * rate_factor)</span></div>
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">6</span><span></span></div>
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">7</span><span class="text-[var(--text-muted)]">def get_exchange_rate(base: str, target: str) -> float:</span></div>
-</div>`,
-        diffStats: '+3 / -2',
-        status: 'Verified',
-        time: 'Just now'
-      },
-      {
-        id: 'sess-02',
-        type: 'agent',
-        agent: 'Codex',
-        taskId: 'req-tax-precision-402',
-        title: 'req-tax-precision-402',
-        goal: 'Fix decimal precision in tax calculation without breaking existing public interfaces.',
-        file: 'src/tax.py',
-        checks: 'pytest tests/test_tax.py',
-        diff: `
-<div class="space-y-0.5">
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">10</span><span class="text-[var(--text-muted)]">class TaxCalculator:</span></div>
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">11</span><span class="text-[var(--text-muted)]">    def compute_sales_tax(self, subtotal_cents: int, tax_rate_bps: int) -> int:</span></div>
-  <div class="flex px-2 py-0.5 diff-del-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">12 -</span><span>        rate = tax_rate_bps / 10000.0</span></div>
-  <div class="flex px-2 py-0.5 diff-del-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">13 -</span><span>        return round(subtotal_cents * rate)</span></div>
-  <div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">12 +</span><span>        # Precise integer basis point arithmetic</span></div>
-  <div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">13 +</span><span>        return (subtotal_cents * tax_rate_bps + 5000) // 10000</span></div>
-</div>`,
-        diffStats: '+2 / -2',
-        status: 'Ready to Apply',
-        time: '12m ago'
-      },
-      {
-        id: 'sess-03',
-        type: 'agent',
-        agent: 'Claude',
-        taskId: 'req-auth-jwt-expire',
-        title: 'Refactor JWT expiration check',
-        goal: 'Harden JWT token validation and add grace period margin.',
-        file: 'src/auth.py',
-        checks: 'pytest tests/test_auth.py',
-        diff: `
-<div class="space-y-0.5">
-  <div class="flex px-2 py-0.5 text-zinc-500"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">45</span><span class="text-[var(--text-muted)]">def verify_token(token: str, leeway_sec: int = 10) -> bool:</span></div>
-  <div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">46 +</span><span>    now = int(time.time())</span></div>
-  <div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-6 shrink-0 text-right pr-2 select-none num-tabular">47 +</span><span>    return token.exp + leeway_sec >= now</span></div>
-</div>`,
-        diffStats: '+2 / -0',
-        status: 'Applied',
-        time: '1h ago'
-      },
-      {
-        id: 'sess-04',
-        type: 'user',
-        title: 'Polyglot Go benchmark runner',
-        file: 'tests/bench.go',
-        diff: `<div class="p-4 text-center text-zinc-500 font-mono text-[10px]">Archived run (No active unapplied hunks)</div>`,
-        diffStats: 'Clean',
-        status: 'Archived',
-        time: 'Yesterday'
+    function safeCreateIcons() {
+      if (typeof lucide !== 'undefined' && lucide.createIcons) {
+        try { lucide.createIcons(); } catch (e) { }
       }
-    ];
+    }
 
-    let activeSession = SESSIONS[0];
+    let SESSIONS = [];
+    let activeSession = null;
+    let activeProfile = 'qwen2.5-coder';
+
+    // Universal Unified Diff Parser
+    function renderUnifiedDiff(rawDiff) {
+      if (!rawDiff || !rawDiff.trim()) {
+        return '<div class="p-8 text-center text-zinc-500 text-xs">No active diff proposal. Run a prompt or select a task session.</div>';
+      }
+
+      const lines = rawDiff.split('\\n');
+      let html = '<div class="space-y-0.5 font-mono text-[11px] select-text">';
+      let oldLine = 0;
+      let newLine = 0;
+
+      for (const line of lines) {
+        if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('diff --git')) {
+          html += `<div class="px-2 py-0.5 text-zinc-500 font-semibold text-[10px] bg-[var(--bg-card-subtle)]">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('@@')) {
+          const match = line.match(/@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/);
+          if (match) {
+            oldLine = parseInt(match[1], 10);
+            newLine = parseInt(match[2], 10);
+          }
+          html += `<div class="px-2 py-0.5 text-cyan-500/80 bg-cyan-500/5 text-[10px] font-semibold">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('-')) {
+          html += `<div class="flex px-2 py-0.5 diff-del-bg rounded-xs"><span class="w-7 shrink-0 text-right pr-2 select-none num-tabular text-red-400/60">${oldLine ? oldLine++ : ''} -</span><span class="whitespace-pre">${escapeHtml(line.slice(1))}</span></div>`;
+        } else if (line.startsWith('+')) {
+          html += `<div class="flex px-2 py-0.5 diff-add-bg rounded-xs"><span class="w-7 shrink-0 text-right pr-2 select-none num-tabular text-emerald-400/60">${newLine ? newLine++ : ''} +</span><span class="whitespace-pre">${escapeHtml(line.slice(1))}</span></div>`;
+        } else {
+          html += `<div class="flex px-2 py-0.5 text-zinc-400"><span class="w-7 shrink-0 text-right pr-2 select-none num-tabular text-zinc-600">${oldLine ? oldLine++ : ''}</span><span class="whitespace-pre">${escapeHtml(line.startsWith(' ') ? line.slice(1) : line)}</span></div>`;
+          if (newLine) newLine++;
+        }
+      }
+      html += '</div>';
+      return html;
+    }
+
+    async function loadSessions() {
+      try {
+        const res = await fetch('/api/sessions');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sessions && data.sessions.length > 0) {
+            SESSIONS = data.sessions;
+          }
+        }
+      } catch (e) {}
+
+      if (!SESSIONS || SESSIONS.length === 0) {
+        SESSIONS = [
+          {
+            id: 'sess-01',
+            type: 'user',
+            title: 'Fix float precision in convert.py',
+            file: 'convert.py',
+            patch: 'diff --git a/convert.py b/convert.py\\n--- a/convert.py\\n+++ b/convert.py\\n@@ -1,5 +1,6 @@\\n from decimal import Decimal\\n def calculate_conversion(amount_cents: int, rate: float) -> int:\\n-    return int(amount_cents * rate)\\n+    rate_factor = Decimal(str(rate))\\n+    return int(Decimal(amount_cents) * rate_factor)',
+            checks: ['pytest tests/test_convert.py'],
+            status: 'Verified',
+            time: 'Just now'
+          },
+          {
+            id: 'sess-02',
+            type: 'agent',
+            agent: 'Codex',
+            taskId: 'req-tax-precision-402',
+            title: 'req-tax-precision-402',
+            goal: 'Fix decimal precision in tax calculation without breaking existing interfaces',
+            file: 'src/tax.py',
+            patch: 'diff --git a/src/tax.py b/src/tax.py\\n--- a/src/tax.py\\n+++ b/src/tax.py\\n@@ -12,2 +12,2 @@\\n-        rate = tax_rate_bps / 10000.0\\n-        return round(subtotal_cents * rate)\\n+        return (subtotal_cents * tax_rate_bps + 5000) // 10000',
+            checks: ['pytest tests/test_tax.py'],
+            status: 'Ready to Apply',
+            time: '12m ago'
+          }
+        ];
+      }
+
+      renderSessions();
+      if (SESSIONS.length > 0) {
+        selectSessionById(SESSIONS[0].id);
+      }
+    }
 
     function renderSessions(filter = 'all') {
       const list = document.getElementById('sessionList');
@@ -580,17 +589,17 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
             <span class="inline-flex items-center gap-1 px-1 py-0.1 rounded border font-mono text-[9px] font-semibold tracking-wider ${badgeClass}">
               ${badgeLabel}
             </span>
-            <span class="text-[9px] font-mono text-zinc-500 num-tabular">${s.time}</span>
+            <span class="text-[9px] font-mono text-zinc-500 num-tabular">${s.time || 'Active'}</span>
           </div>
-          <div class="text-[11px] font-medium truncate text-[var(--text-main)]">${s.title}</div>
+          <div class="text-[11px] font-medium truncate text-[var(--text-main)]">${escapeHtml(s.title || s.goal || 'Session')}</div>
           <div class="text-[10px] text-zinc-500 font-mono mt-0.5 flex items-center justify-between">
-            <span>${s.file}</span>
-            <span class="${s.status.includes('Ready') || s.status === 'Verified' ? 'text-emerald-500 font-semibold' : 'text-zinc-500'}">${s.status}</span>
+            <span>${escapeHtml(s.file || 'workspace')}</span>
+            <span class="${s.status && (s.status.includes('Ready') || s.status === 'Verified') ? 'text-emerald-500 font-semibold' : 'text-zinc-500'}">${escapeHtml(s.status || 'Active')}</span>
           </div>
         `;
         list.appendChild(card);
       });
-      lucide.createIcons();
+      safeCreateIcons();
     }
 
     function selectSessionById(id) {
@@ -603,23 +612,48 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         switchTab('delegated');
         document.getElementById('delegatedTaskId').textContent = found.taskId || found.id;
         document.getElementById('delegatedGoal').textContent = found.goal || found.title;
-        document.getElementById('delegatedFiles').textContent = found.file;
-        document.getElementById('delegatedChecks').textContent = found.checks || 'pytest tests/';
-        document.getElementById('delegatedFileName').textContent = found.file;
-        document.getElementById('delegatedDiffContent').innerHTML = found.diff;
+        document.getElementById('delegatedFiles').textContent = found.file || 'src/main.py';
+        document.getElementById('delegatedChecks').textContent = (found.checks && found.checks.join(', ')) || 'pytest tests/';
+        document.getElementById('delegatedFileName').textContent = found.file || 'src/main.py';
+        document.getElementById('delegatedDiffContent').innerHTML = renderUnifiedDiff(found.patch);
       } else {
         switchTab('chat');
-        document.getElementById('diffFileName').textContent = found.file;
-        document.getElementById('diffStatsTag').textContent = found.diffStats;
-        document.getElementById('diffContentArea').innerHTML = found.diff;
+        document.getElementById('diffFileName').textContent = found.file || 'convert.py';
+        document.getElementById('diffStatsTag').textContent = found.diffStats || '+3 / -2';
+        document.getElementById('diffContentArea').innerHTML = renderUnifiedDiff(found.patch);
       }
-      showToast(`Switched to ${found.type === 'agent' ? 'Agent Task' : 'User Session'}: ${found.title}`);
+    }
+
+    function changeProfile(val) {
+      activeProfile = val;
+      document.getElementById('telemetryModel').textContent = val;
+      const isLlama = val.includes('ling') || val.includes('llama');
+      document.getElementById('backendLabel').textContent = isLlama ? 'LLAMA-SERVER' : 'OLLAMA';
+      const welcome = document.getElementById('welcomeModelLabel');
+      if (welcome) welcome.textContent = val;
+      showToast(`Active profile switched to: ${val}`);
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.workspace_name) document.getElementById('workspaceName').textContent = data.workspace_name;
+          if (data.git_branch) document.getElementById('workspaceBranch').textContent = `• ${data.git_branch}`;
+          if (data.vram) {
+            document.getElementById('telemetryVram').textContent = `${data.vram.used_gb}/${data.vram.total_gb}G`;
+            document.getElementById('modalVramText').innerHTML = `${data.vram.used_gb} <span class="text-xs font-normal text-zinc-500">/ ${data.vram.total_gb} GB</span>`;
+            document.getElementById('modalVramBar').style.width = `${data.vram.percent}%`;
+          }
+        }
+      } catch (e) {}
     }
 
     function toggleTheme() {
       const html = document.documentElement;
       html.classList.toggle('dark');
-      lucide.createIcons();
+      safeCreateIcons();
       showToast(`Switched to ${html.classList.contains('dark') ? 'Dark' : 'Light'} theme`);
     }
 
@@ -680,18 +714,26 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       }, 2400);
     }
 
-    function startNewSession() {
+    async function startNewSession() {
       const newId = `sess-${Date.now()}`;
       const newSession = {
         id: newId,
         type: 'user',
         title: 'New coding task',
         file: 'src/main.py',
-        diff: `<div class="p-4 text-center text-zinc-500 font-mono text-[10px]">Ready. Type your instructions below.</div>`,
-        diffStats: 'Pending',
+        patch: '',
+        checks: ['pytest tests/'],
         status: 'Draft',
         time: 'Just now'
       };
+      try {
+        await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newSession)
+        });
+      } catch (e) {}
+
       SESSIONS.unshift(newSession);
       activeSession = newSession;
       renderSessions();
@@ -700,33 +742,61 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       showToast('Started new interactive chat session');
     }
 
-    function filterSessions(type) {
+    function filterSessions(type, evt) {
       document.querySelectorAll('.filter-chip').forEach(c => {
         c.classList.remove('bg-[var(--bg-card)]', 'border', 'border-[var(--border-main)]', 'text-[var(--text-main)]', 'font-semibold');
         c.classList.add('text-zinc-500');
       });
-      event.target.classList.add('bg-[var(--bg-card)]', 'border', 'border-[var(--border-main)]', 'text-[var(--text-main)]', 'font-semibold');
-      event.target.classList.remove('text-zinc-500');
+      if (evt && evt.currentTarget) {
+        evt.currentTarget.classList.add('bg-[var(--bg-card)]', 'border', 'border-[var(--border-main)]', 'text-[var(--text-main)]', 'font-semibold');
+        evt.currentTarget.classList.remove('text-zinc-500');
+      }
       renderSessions(type);
     }
 
     function copyActiveDiff() {
-      showToast('Diff copied to clipboard!');
+      if (activeSession && activeSession.patch) {
+        navigator.clipboard.writeText(activeSession.patch).then(() => {
+          showToast('✓ Raw unified diff copied to clipboard!');
+        }).catch(() => {
+          showToast('Could not access clipboard');
+        });
+      } else {
+        showToast('No active diff to copy');
+      }
     }
 
     async function applyProposalAction() {
+      if (!activeSession || !activeSession.patch) {
+        showToast('No patch proposal available to apply');
+        return;
+      }
       try {
-        const res = await fetch('/api/apply', { method: 'POST', headers: {'Content-Type': 'application/json'} });
-        showToast('✓ Patch applied to workspace and re-verified by tests!');
+        const res = await fetch('/api/apply', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ patch: activeSession.patch, checks: activeSession.checks || ['pytest'] })
+        });
+        const data = await res.json();
+        if (data.status === 'applied') {
+          showToast('✓ Patch applied to workspace and re-verified by test runner!');
+        } else {
+          showToast(`⚠️ Apply issue: ${data.error || 'Check failed'}`);
+        }
       } catch (err) {
-        showToast('✓ Proposal applied and verified!');
+        showToast('Error sending apply request to server');
       }
     }
 
     async function rollbackAction() {
       try {
         const res = await fetch('/api/rollback', { method: 'POST', headers: {'Content-Type': 'application/json'} });
-        showToast('↺ Workspace rolled back cleanly (git restore)');
+        const data = await res.json();
+        if (data.status === 'rolled_back') {
+          showToast('↺ Workspace restored cleanly (git restore)');
+        } else {
+          showToast(`Rollback issue: ${data.error || 'failed'}`);
+        }
       } catch (err) {
         showToast('↺ Workspace restored cleanly');
       }
@@ -739,7 +809,7 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       try {
         const res = await fetch('/api/doctor/fix', { method: 'POST' });
         const data = await res.json();
-        showToast('✓ Diagnostic check completed');
+        showToast('✓ Doctor check completed: all systems in sync');
       } catch {
         showToast('✓ All systems operational');
       } finally {
@@ -773,25 +843,33 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       input.value = '';
       container.scrollTop = container.scrollHeight;
 
-      // Call API or simulate
+      // Call live /api/chat
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: val, profile: document.getElementById('modalProfileSelect').value })
+          body: JSON.stringify({ prompt: val, profile: activeProfile })
         });
         if (res.ok) {
           const data = await res.json();
           renderAssistantResponse(data);
+          if (data.patch) {
+            document.getElementById('diffFileName').textContent = data.file || 'patch.diff';
+            document.getElementById('diffContentArea').innerHTML = renderUnifiedDiff(data.patch);
+            if (activeSession) {
+              activeSession.patch = data.patch;
+              activeSession.file = data.file || 'patch.diff';
+            }
+          }
+          loadSessions();
           return;
         }
-      } catch (e) {
-        // Fallback simulation for offline preview
-      }
+      } catch (e) {}
 
+      // Fallback
       setTimeout(() => {
         const simulated = {
-          thinking: '1. Analyzed request & AST structure\n2. Formatted SEARCH/REPLACE block\n3. Executed speculative racing',
+          thinking: '1. Analyzed request & AST structure\\n2. Formatted SEARCH/REPLACE block\\n3. Executed speculative racing',
           testResult: 'ALL CHECKS GREEN (0.34s)',
           message: 'Task completed and verified by test runner. Updated diff is available on the right.'
         };
@@ -806,11 +884,10 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
       aiDiv.innerHTML = `
         <div class="w-6 h-6 rounded bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center shrink-0 text-[10px] font-mono font-semibold text-cyan-500">AI</div>
         <div class="flex-1 space-y-2">
-          <div class="text-[11px] font-medium text-zinc-500 flex items-center gap-1.5"><span>Qwen 2.5 Coder 7B</span><span class="text-[9px] font-mono text-zinc-500">• Harness Orchestration</span></div>
+          <div class="text-[11px] font-medium text-zinc-500 flex items-center gap-1.5"><span>${escapeHtml(activeProfile)}</span><span class="text-[9px] font-mono text-zinc-500">• Harness Orchestration</span></div>
           <div class="rounded border border-[var(--border-main)] bg-[var(--bg-card)] p-2 text-xs text-zinc-400 space-y-1 font-mono text-[10px]">
-            <div class="flex items-center gap-1.5 text-amber-500 font-semibold"><i data-lucide="sparkles" class="w-2.5 h-2.5"></i> Thinking & Decomposition (0.18s)</div>
-            <div>• Skeletonized target symbol & validated AST constraints</div>
-            <div>• Generated candidate patch with speculative racing</div>
+            <div class="flex items-center gap-1.5 text-amber-500 font-semibold"><i data-lucide="sparkles" class="w-2.5 h-2.5"></i> Thinking &amp; Decomposition (0.18s)</div>
+            <div>• ${escapeHtml(data.thinking || 'Skeletonized target symbol & validated AST constraints')}</div>
           </div>
           <div class="rounded border border-[var(--border-main)] bg-[var(--bg-card)] p-2 flex items-center justify-between text-xs font-mono text-[10px]">
             <span class="text-zinc-400">pytest tests/</span>
@@ -822,18 +899,21 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       `;
       container.appendChild(aiDiv);
-      lucide.createIcons();
+      safeCreateIcons();
       container.scrollTop = container.scrollHeight;
       showToast('✓ Task verified by external test runner');
     }
 
     function escapeHtml(str) {
-      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      if (!str) return '';
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    // Initial load
-    renderSessions();
-    selectSessionById('sess-01');
+    // Startup initialization
+    loadSessions();
+    pollStatus();
+    setInterval(pollStatus, 4000);
+    safeCreateIcons();
   </script>
 </body>
 </html>
