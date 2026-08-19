@@ -492,17 +492,31 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
           </button>
         </div>
 
-        <div class="p-2.5 rounded bg-[var(--bg-app)] border border-[var(--border-main)] flex items-center justify-between">
-          <div>
-            <div class="font-medium text-[11px] flex items-center gap-1.5">
-              <span class="w-2 h-2 rounded-full bg-zinc-500" id="dotLlama"></span>
-              <span>llama-server Engine (:8080)</span>
+        <div class="p-2.5 rounded bg-[var(--bg-app)] border border-[var(--border-main)] space-y-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="font-medium text-[11px] flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-zinc-500" id="dotLlama"></span>
+                <span>llama-server Engine (:8080)</span>
+              </div>
+              <div class="text-[10px] text-zinc-500 font-mono" id="labelLlamaStatus">Checking...</div>
             </div>
-            <div class="text-[10px] text-zinc-500 font-mono" id="labelLlamaStatus">Checking...</div>
+            <button onclick="startServerEngine('llama_server')" id="btnStartLlama" class="px-2.5 py-1 rounded bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold text-[10px] transition">
+              Start
+            </button>
           </div>
-          <button onclick="startServerEngine('llama_server')" id="btnStartLlama" class="px-2.5 py-1 rounded bg-[var(--bg-card-subtle)] hover:bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold text-[10px] transition">
-            Start
-          </button>
+
+          <!-- Llama-Server Executable & Model Paths -->
+          <div class="space-y-1.5 pt-1.5 border-t border-[var(--border-main)] font-mono text-[10px]">
+            <div>
+              <label class="text-zinc-400 block mb-0.5">Binary Executable Path (D: Drive / Custom)</label>
+              <input id="inputLlamaBin" type="text" value="D:\\AI\\llama-server\\llama-server.exe" class="w-full bg-[var(--bg-card)] border border-[var(--border-main)] rounded px-2 py-1 text-[10px] text-cyan-400 outline-none focus:border-cyan-500">
+            </div>
+            <div>
+              <label class="text-zinc-400 block mb-0.5">Default Model (.gguf Path)</label>
+              <input id="inputLlamaModel" type="text" value="D:\\ui\\ui\\ComfyUI\\models\\lmstudio-community\\Qwen3.5-9B-GGUF\\Qwen3.5-9B-Q4_K_M.gguf" class="w-full bg-[var(--bg-card)] border border-[var(--border-main)] rounded px-2 py-1 text-[10px] text-[var(--text-main)] outline-none focus:border-cyan-500">
+            </div>
+          </div>
         </div>
       </div>
 
@@ -774,11 +788,18 @@ DESKTOP_HTML_TEMPLATE = """<!DOCTYPE html>
 
     async function startServerEngine(backend) {
       showToast(`Starting ${backend}...`);
+      const body = { backend };
+      if (backend === 'llama_server') {
+        const binInput = document.getElementById('inputLlamaBin');
+        const modelInput = document.getElementById('inputLlamaModel');
+        if (binInput && binInput.value) body.custom_path = binInput.value.trim();
+        if (modelInput && modelInput.value) body.model_path = modelInput.value.trim();
+      }
       try {
         const res = await fetch('/api/server/start', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ backend })
+          body: JSON.stringify(body)
         });
         const data = await res.json();
         if (data.status === 'started') {

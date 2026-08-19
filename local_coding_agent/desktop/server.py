@@ -304,6 +304,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
     def _handle_server_start(self) -> None:
         data = self._read_json_body()
         backend = data.get("backend", "ollama")
+        custom_path = data.get("custom_path")
+        model_path = data.get("model_path")
 
         if backend == "ollama":
             # Search possible Windows locations for Ollama
@@ -330,24 +332,80 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "failed", "error": str(error)})
 
         elif backend in ("llama_server", "llama.cpp"):
-            llama_bin = shutil.which("llama-server") or shutil.which("server")
+            llama_bin = self._find_llama_server_bin(custom_path)
             if not llama_bin:
-                self._send_json({"status": "failed", "error": "llama-server executable not found in system PATH. Build or download llama.cpp release."})
+                self._send_json({
+                    "status": "failed",
+                    "error": "llama-server executable not found. Enter path (e.g. D:\\AI\\llama-server\\llama-server.exe) or add to PATH.",
+                })
                 return
+
+            cmd = [llama_bin, "--port", "8080"]
+            gguf_path = self._find_gguf_model(model_path)
+            if gguf_path:
+                cmd.extend(["-m", gguf_path, "-c", "8192", "-ngl", "99"])
+
             try:
                 proc = subprocess.Popen(
-                    [llama_bin, "--port", "8080"],
+                    cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 self.server_inst.spawned_processes["llama_server"] = proc
                 time.sleep(0.5)
-                self._send_json({"status": "started", "backend": "llama_server", "pid": proc.pid})
+                self._send_json({
+                    "status": "started",
+                    "backend": "llama_server",
+                    "pid": proc.pid,
+                    "bin": llama_bin,
+                    "model": gguf_path or "unspecified",
+                })
             except Exception as error:
                 self._send_json({"status": "failed", "error": str(error)})
         else:
             self._send_json({"status": "failed", "error": f"Unknown backend: {backend}"})
+
+    def _find_llama_server_bin(self, custom: str | None = None) -> str | None:
+        if custom and Path(custom).is_file():
+            return str(Path(custom).resolve())
+
+        env_val = os.environ.get("LLAMA_SERVER_PATH")
+        if env_val and Path(env_val).is_file():
+            return str(Path(env_val).resolve())
+
+        in_path = shutil.which("llama-server") or shutil.which("server") or shutil.which("llama-server.exe")
+        if in_path:
+            return in_path
+
+        candidates = [
+            r"D:\AI\llama-server\llama-server.exe",
+            r"D:\llama.cpp\llama-server.exe",
+            r"D:\llama.cpp\build\bin\llama-server.exe",
+            r"D:\llama.cpp\build\bin\Release\llama-server.exe",
+            r"D:\llama-server\llama-server.exe",
+            r"D:\llama-server.exe",
+            r"C:\llama.cpp\llama-server.exe",
+            r"C:\llama.cpp\build\bin\Release\llama-server.exe",
+            r"C:\llama-server\llama-server.exe",
+        ]
+        for c in candidates:
+            if Path(c).is_file():
+                return c
+        return None
+
+    def _find_gguf_model(self, custom: str | None = None) -> str | None:
+        if custom and Path(custom).is_file():
+            return str(Path(custom).resolve())
+
+        candidates = [
+            r"D:\ui\ui\ComfyUI\models\lmstudio-community\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf",
+            r"D:\ui\ui\ComfyUI\models\DavidAU\Qwen3.5-9B-Claude-4.6-OS-Auto-Variable-HERETIC-UNCENSORED-THINKING-MAX-NEOCODE-Imatrix-GGUF\Qwen3.5-9B-Claude-4.6-OS-AV-H-UNCENSORED-THINK-D_AU-Q4_K_S-imat.gguf",
+        ]
+        for c in candidates:
+            if Path(c).is_file():
+                return c
+        return None
 
     def _handle_server_stop(self) -> None:
         data = self._read_json_body()
