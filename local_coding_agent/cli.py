@@ -326,6 +326,12 @@ def build_parser() -> argparse.ArgumentParser:
     lsp_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Workspace root directory")
     lsp_p.add_argument("--json", action="store_true", help="Output result in JSON format")
 
+    # 21. serve-acp (R29)
+    acp_p = subparsers.add_parser("serve-acp", help="Start Agent Client Protocol (ACP) JSON-RPC stdio server (R29)")
+    acp_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Default workspace directory")
+    acp_p.add_argument("--profile", default="qwen2.5-1.5b", help="Default model profile")
+    acp_p.add_argument("--framing", choices=["auto", "jsonl", "content-length"], default="auto", help="Framing mode")
+
     return parser
 
 
@@ -678,6 +684,17 @@ def handle_subcommand(args: argparse.Namespace) -> int:
         service = DelegationService({args.workspace_ref: ws_path})
         server = build_server(service, enable_tasks=args.enable_tasks)
         server.run(transport="stdio")
+        return 0
+
+    if sub == "serve-acp":
+        from .acp_server import AcpServer
+
+        server = AcpServer(
+            default_workspace=args.workspace,
+            default_profile=args.profile,
+            framing=args.framing,
+        )
+        server.serve()
         return 0
 
     if sub in ("monitor", "ui", "app"):

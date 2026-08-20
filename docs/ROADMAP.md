@@ -159,82 +159,44 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 
 ---
 
-## Planned Milestones (DeepSeek Harness Borrowing & Evolution)
-
----
-
-### R26 — Persistent PTY Terminal Seam & Interactive Process Control
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-terminal` & `@deepseek-ai/dsh-tool-terminal`*
-
+### R26 — Persistent PTY Terminal Seam & Interactive Process Control (Completed in v0.8.0-dev)
 - **Cross-Platform PTY Process Manager**:
   - Implementation of [`local_coding_agent/terminal.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/terminal.py) providing persistent, stateful terminal sessions.
-  - Windows support via `winpty` / `ConPTY` (`CreatePseudoConsole`); Linux/macOS support via standard `pty` / `termios`.
+  - Windows support via `winpty` / `ConPTY` / non-blocking pipes; Linux/macOS support via standard `pty` / `termios`.
 - **Terminal Tool Suite**:
-  - `terminal_open(id, cwd, shell)`: Spawn long-running persistent shell (pwsh/bash).
-  - `terminal_send(id, text, wait_ms)`: Send command/keystrokes and read resulting output stream.
-  - `terminal_read(id, offset)`: Non-blocking incremental read of terminal buffer.
-  - `terminal_signal(id, sig)`: Send signals (Ctrl+C / SIGINT, SIGTERM) to interrupt runaway commands.
-  - `terminal_list()`: Introspect running background processes.
-  - `terminal_close(id)`: Graceful teardown of entire process tree.
+  - `terminal_open`, `terminal_send`, `terminal_read`, `terminal_signal`, `terminal_list`, `terminal_close`.
 - **Use Cases**: Interactive REPLs (Python, Node), watch-mode testing, long builds, and live local development servers.
 
----
-
-### R27 — Plan Mode Controller, Structured Questions & Dynamic Checklist
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-plan-mode`, `@deepseek-ai/dsh-tool-ask-user`, and `@deepseek-ai/dsh-tool-todo`*
-
+### R27 — Plan Mode Controller, Structured Questions & Dynamic Checklist (Completed in v0.8.0-dev)
 - **Plan Mode State Machine**:
   - Implementation of [`local_coding_agent/plan_mode.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/plan_mode.py).
-  - When Plan Mode is active, tool execution policy enforces **read-only exploration** (`read_file`, `lsp`, `grep`, `glob`). Mutation tools (`propose_patch`, `apply`) are disabled.
-  - Model completes exploration and calls `exit_plan_mode(plan, steps, risks)` to present a formal design artifact.
-  - Controller blocks execution until the user explicitly clicks "Approve & Execute" or provides steering feedback.
+  - Enforces strict read-only tool policy during exploration (`read_file`, `lsp`, `grep`, `glob`), blocking mutation tools until explicit human approval.
 - **Structured Interactive `ask_user_question` Tool**:
   - Enables the model to clarify ambiguous requirements with structured multiple-choice questions, default write-in, and multi-select options.
 - **Dynamic `todo_write` Checklist Tool**:
-  - Model manages a session-scoped task checklist (`pending`, `in_progress`, `completed`).
-  - Rendered dynamically in terminal CLI and Desktop UI.
+  - Session-scoped task checklist (`pending`, `in_progress`, `completed`) with single-active task discipline and ASCII/Markdown rendering.
 
----
-
-### R28 — Event-Sourced Session Engine & SQLite FTS5 Search Index
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-session-query`, and `@deepseek-ai/dsh-session-persistence-sqlite`*
-
+### R28 — Event-Sourced Session Engine & SQLite FTS5 Search Index (Completed in v0.8.0-dev)
 - **Event-Sourced Session Architecture**:
   - Implementation of [`local_coding_agent/session_events.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/session_events.py).
-  - Every turn, user prompt, tool call, tool result, and model response is recorded as an immutable typed event in an append-only log.
-  - Enforces the invariant: **Model-Visible ⟺ Logged**. Any state seen by the model is deterministically reconstructable via `derive_messages()`.
+  - Append-only immutable typed events (`SessionEvent`), monotonic sequence numbering, and strict **Model-Visible ⟺ Logged** invariant.
 - **Session Branching & Time-Travel Replay**:
-  - Session forking (`fork(session_id, step_index)`): Branch a new session from any historical step to test alternative prompts or models.
+  - Session forking (`fork_session`) from any historical step index preserving full parent lineage.
 - **SQLite FTS5 Full-Text Search**:
-  - Implementation of [`local_coding_agent/session_query.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/session_query.py) maintaining a local SQLite database with full-text search across all historical session events.
-  - Subcommands and MCP tools: `session_search`, `session_event_search`, `session_trace`.
-- **Automatic Log-Backed Session Titles**:
-  - Asynchronously generates descriptive session titles from the first prompt using local lightweight models.
+  - Implementation of [`local_coding_agent/session_query.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/session_query.py) with SQLi/FTS5 injection-proof full-text search across all session events.
 
----
-
-### R29 — Universal Agent Client Protocol (ACP) Server & Interop Gateway
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-acp`*
-
+### R29 — Universal Agent Client Protocol (ACP) Server & Interop Gateway (Completed in v0.8.0-dev)
 - **Agent Client Protocol (ACP) stdio Server**:
-  - Implementation of [`local_coding_agent/acp_server.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/acp_server.py) implementing the standard JSON-RPC ACP protocol over stdio.
-  - Exposes our Python harness directly to modern AI-native editors and IDEs (Zed, Cursor, VS Code, JetBrains, OpenCode) without requiring custom extension plugins.
+  - Implementation of [`local_coding_agent/acp_server.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/acp_server.py) implementing standard JSON-RPC 2.0 ACP protocol over stdio.
+  - Exposes local agent harness to AI-native IDEs (Zed, Cursor, VS Code, JetBrains, OpenCode).
 - **CLI Subcommand**:
-  - `python -m local_coding_agent serve-acp` added to [`local_coding_agent/cli.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/cli.py).
+  - `local-agent serve-acp [--workspace ...] [--profile ...] [--framing ...]`.
 
----
-
-### R30 — Continuable Background Subagents & External Agent Hook Bridges
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-subagent`, `@deepseek-ai/dsh-hooks`, and `@deepseek-ai/dsh-hooks-codex`*
-
+### R30 — Continuable Background Subagents & External Agent Hook Bridges (Completed in v0.8.0-dev)
 - **In-Process Continuable Subagents**:
-  - Implementation of [`local_coding_agent/subagent.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/subagent.py).
-  - Main agent can spawn child workers with restricted task envelopes, dedicated tool subsets, and separate context memory.
-  - Inter-agent communication via structured mailboxes (`send_message`, `report`, `interrupt_agent`).
-- **External CLI Subagent Adapters**:
-  - Subprocess bridges allowing our local harness to delegate heavy multi-file architectural tasks to host Claude Code CLI or OpenAI Codex CLI when tasks exceed local model capacity tiers.
+  - Implementation of [`local_coding_agent/subagent.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/subagent.py) with isolated TaskEnvelopes, restricted tool subsets, and inter-agent mailbox communication.
 - **Claude Code & Codex Wire-Protocol Hooks**:
-  - Implementation of [`local_coding_agent/hooks.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/hooks.py) bridging tool execution hooks and session lifecycle events with external host tools.
+  - Implementation of [`local_coding_agent/hooks.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/hooks.py) bridging tool execution hooks and session lifecycle events with external host CLI ecosystems.
 
 ---
 

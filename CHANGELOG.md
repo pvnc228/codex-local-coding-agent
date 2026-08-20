@@ -23,6 +23,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-language server router (`pyright`, `typescript-language-server`, `rust-analyzer`, `gopls`) and built-in AST/regex fallback engine.
   - Operations: `definition`, `references`, `hover`, `symbols`.
   - CLI subcommand: `local-agent lsp --operation {definition|references|hover|symbols} --file <path> [--json]`.
+- **Persistent PTY Terminal Seam & Interactive Process Control (`local_coding_agent.terminal`) (R26)**:
+  - Persistent background interactive shell / process wrapper with circular scrollback buffers and non-blocking I/O.
+  - Cross-platform process tree termination and signal delivery (`SIGINT`/Ctrl+C, `SIGTERM`).
+  - Model tool suite: `terminal_open`, `terminal_send`, `terminal_read`, `terminal_signal`, `terminal_list`, `terminal_close`.
+- **Plan Mode Controller, Structured Questions & Dynamic Checklist (`local_coding_agent.plan_mode`) (R27)**:
+  - Formal Plan Mode state machine enforcing read-only tool policy during exploration until human approval.
+  - Interactive multiple-choice `ask_user_question` tool with default write-in and programmatic simulation.
+  - Dynamic `todo_write` checklist tool with single-active task discipline and ASCII/Markdown rendering.
+- **Event-Sourced Session Engine & SQLite FTS5 Search Index (`local_coding_agent.session_events`, `local_coding_agent.session_query`) (R28)**:
+  - Append-only immutable typed session events enforcing the **Model-Visible ⟺ Logged** invariant.
+  - Session forking (`fork_session`) for time-travel replay and causal branch pruning.
+  - SQLite FTS5 search index with injection-proof sanitization across historical session records.
+- **Universal Agent Client Protocol (ACP) Server (`local_coding_agent.acp_server`) (R29)**:
+  - Standard JSON-RPC 2.0 ACP stdio server with auto-detecting `Content-Length` and `JSONL` codec framing.
+  - Subcommand: `local-agent serve-acp [--workspace ...] [--profile ...] [--framing ...]`.
+- **Continuable Background Subagents & External Agent Hook Bridges (`local_coding_agent.subagent`, `local_coding_agent.hooks`) (R30)**:
+  - In-process continuable subagent worker loops with isolated `TaskEnvelope` sandboxes and structured mailboxes.
+  - External lifecycle hook bridges with full wire-protocol adapters for Claude Code and OpenAI Codex.
 
 ---
 
