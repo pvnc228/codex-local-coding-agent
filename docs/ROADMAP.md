@@ -124,25 +124,148 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 
 ---
 
-## Planned Milestones
+## Planned Milestones (DeepSeek Harness Borrowing & Evolution)
 
 ### R23 — Standalone Desktop AI Coding Harness (`local-agent desktop`)
-- **Dedicated Desktop Architecture**: Transitioning from a browser sandbox to a first-class desktop application (Tauri v2 / pywebview).
+- **Dedicated Desktop Architecture**: Transitioning from a browser sandbox to a first-class desktop application ([`local_coding_agent/desktop/app.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/desktop/app.py), [`local_coding_agent/desktop/server.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/desktop/server.py)).
 - **Native Workspace & Git Integration**: Native folder picker, active git diff tree, character-exact SEARCH/REPLACE diff visualizer, and file-tree context picker.
 - **Speculative Model Racing Arena**: Visual side-by-side execution split view between competing local model drafts.
-- **Hardware & VRAM Telemetry Hub**: Real-time GPU VRAM, context window token meters, and live model process management.
-- **AST Skeletonizer & Token Savings Studio**: Interactive preview of code compaction before LLM dispatch.
-- **Pinpointed Prescriptions Studio**: Visual repair assistant for model diff alignment errors.
-
-## Beyond Current Scope (Future Exploration)
-
-- `content`-JSON fallback for legacy models lacking native tool-calling capabilities.
-- Round-robin GPU queue scheduling across competing model profiles.
-- Distributed worker clusters with remote Ollama instances.
+- **Hardware & VRAM Telemetry Hub**: Real-time GPU VRAM (`nvidia-smi`), context window token meters, and live model process management.
+- **AST Skeletonizer & Token Savings Studio**: Interactive preview of code compaction before LLM dispatch ([`local_coding_agent/ast_compactor.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/ast_compactor.py)).
+- **Pinpointed Prescriptions Studio**: Visual repair assistant for model diff alignment errors ([`local_coding_agent/prescriptions.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/prescriptions.py)).
+- **Conversation Node UI Framework**: Modular frontend cards for Diffs, Terminal output, Todo checklists, and Plan review dialogs ([`local_coding_agent/desktop/ui.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/desktop/ui.py)).
 
 ---
 
-## Decisions (2026-08-18)
+### R24 — Tool Output Spill Store, Ripgrep & FS Observation Policy (Safety & Context Resilience)
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-spill`, `@deepseek-ai/dsh-tool-fs-search`, and `@deepseek-ai/dsh-fs-observation-policy`*
+
+- **Tool Output Spill Store**:
+  - Implementation of [`local_coding_agent/spill.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/spill.py) managing private session-scoped directories under `.local_agent/spill/<session_id>/` (with strict 0700 permissions and path traversal neutralizers).
+  - Hard byte/line thresholds (default: 30KB / 1,000 lines). Oversized tool outputs (large file reads, verbose test traces, huge grep results) are spilled to disk, returning a structured summary (head snippet + tail snippet + total line count + unique locator path).
+  - Model can retrieve or query specific lines without blowing up prompt attention.
+- **Packaged Ripgrep Discovery (`ripgrep.py`)**:
+  - Implementation of [`local_coding_agent/ripgrep.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/ripgrep.py) executing direct `rg` binary invocations for `glob` and `grep` with structured JSON parsing.
+  - Replaces fragile shell pipelines with direct subprocess spawns, eliminating Windows quoting/escaping vulnerabilities.
+  - Integrated into [`local_coding_agent/repository_tools.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/repository_tools.py).
+- **Filesystem Observation Policy Gate**:
+  - Enforce strict **read-before-edit** and **read-before-write** invariant in [`local_coding_agent/validators.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/validators.py).
+  - A model proposal modifying a file that was not observed (read or listed with hash) during the current session is immediately rejected before touching the workspace, preventing blind hallucinations.
+
+---
+
+### R25 — Generic LSP Stdio Code Intelligence Seam (Language Server Navigation)
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-lsp` & `@deepseek-ai/dsh-tool-lsp`*
+
+- **Language Server Protocol Stdio Client**:
+  - Implementation of [`local_coding_agent/lsp.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/lsp.py) providing async JSON-RPC stdio communication with active language servers (`pyright` / `basedpyright` for Python, `typescript-language-server` for TS/JS, `rust-analyzer` for Rust, `gopls` for Go).
+  - Process lifecycle management, automatic initialize handshake, capabilities negotiation, and serialized query queue.
+- **Model-Facing `lsp` Tool**:
+  - Added to [`local_coding_agent/repository_tools.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/repository_tools.py):
+    - `goToDefinition`: Navigate to exact symbol declaration across files.
+    - `findReferences`: Find all callers/references without full-workspace grep.
+    - `documentSymbol`: Extract file outline (classes, methods, functions).
+    - `workspaceSymbol`: Fast fuzzy symbol lookup.
+    - `hover`: Type signature and docstring preview.
+    - `diagnostics`: Real-time compilation/type errors directly from the compiler.
+- **High-Impact Value for Small Models**:
+  - Empowers 1.5B–14B models to perform precise cross-file refactoring without loading large file bodies into prompt context.
+
+---
+
+### R26 — Persistent PTY Terminal Seam & Interactive Process Control
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-terminal` & `@deepseek-ai/dsh-tool-terminal`*
+
+- **Cross-Platform PTY Process Manager**:
+  - Implementation of [`local_coding_agent/terminal.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/terminal.py) providing persistent, stateful terminal sessions.
+  - Windows support via `winpty` / `ConPTY` (`CreatePseudoConsole`); Linux/macOS support via standard `pty` / `termios`.
+- **Terminal Tool Suite**:
+  - `terminal_open(id, cwd, shell)`: Spawn long-running persistent shell (pwsh/bash).
+  - `terminal_send(id, text, wait_ms)`: Send command/keystrokes and read resulting output stream.
+  - `terminal_read(id, offset)`: Non-blocking incremental read of terminal buffer.
+  - `terminal_signal(id, sig)`: Send signals (Ctrl+C / SIGINT, SIGTERM) to interrupt runaway commands.
+  - `terminal_list()`: Introspect running background processes.
+  - `terminal_close(id)`: Graceful teardown of entire process tree.
+- **Use Cases**: Interactive REPLs (Python, Node), watch-mode testing, long builds, and live local development servers.
+
+---
+
+### R27 — Plan Mode Controller, Structured Questions & Dynamic Checklist
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-plan-mode`, `@deepseek-ai/dsh-tool-ask-user`, and `@deepseek-ai/dsh-tool-todo`*
+
+- **Plan Mode State Machine**:
+  - Implementation of [`local_coding_agent/plan_mode.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/plan_mode.py).
+  - When Plan Mode is active, tool execution policy enforces **read-only exploration** (`read_file`, `lsp`, `grep`, `glob`). Mutation tools (`propose_patch`, `apply`) are disabled.
+  - Model completes exploration and calls `exit_plan_mode(plan, steps, risks)` to present a formal design artifact.
+  - Controller blocks execution until the user explicitly clicks "Approve & Execute" or provides steering feedback.
+- **Structured Interactive `ask_user_question` Tool**:
+  - Enables the model to clarify ambiguous requirements with structured multiple-choice questions, default write-in, and multi-select options.
+- **Dynamic `todo_write` Checklist Tool**:
+  - Model manages a session-scoped task checklist (`pending`, `in_progress`, `completed`).
+  - Rendered dynamically in terminal CLI and Desktop UI.
+
+---
+
+### R28 — Event-Sourced Session Engine & SQLite FTS5 Search Index
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-session-query`, and `@deepseek-ai/dsh-session-persistence-sqlite`*
+
+- **Event-Sourced Session Architecture**:
+  - Implementation of [`local_coding_agent/session_events.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/session_events.py).
+  - Every turn, user prompt, tool call, tool result, and model response is recorded as an immutable typed event in an append-only log.
+  - Enforces the invariant: **Model-Visible ⟺ Logged**. Any state seen by the model is deterministically reconstructable via `derive_messages()`.
+- **Session Branching & Time-Travel Replay**:
+  - Session forking (`fork(session_id, step_index)`): Branch a new session from any historical step to test alternative prompts or models.
+- **SQLite FTS5 Full-Text Search**:
+  - Implementation of [`local_coding_agent/session_query.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/session_query.py) maintaining a local SQLite database with full-text search across all historical session events.
+  - Subcommands and MCP tools: `session_search`, `session_event_search`, `session_trace`.
+- **Automatic Log-Backed Session Titles**:
+  - Asynchronously generates descriptive session titles from the first prompt using local lightweight models.
+
+---
+
+### R29 — Universal Agent Client Protocol (ACP) Server & Interop Gateway
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-acp`*
+
+- **Agent Client Protocol (ACP) stdio Server**:
+  - Implementation of [`local_coding_agent/acp_server.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/acp_server.py) implementing the standard JSON-RPC ACP protocol over stdio.
+  - Exposes our Python harness directly to modern AI-native editors and IDEs (Zed, Cursor, VS Code, JetBrains, OpenCode) without requiring custom extension plugins.
+- **CLI Subcommand**:
+  - `python -m local_coding_agent serve-acp` added to [`local_coding_agent/cli.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/cli.py).
+
+---
+
+### R30 — Continuable Background Subagents & External Agent Hook Bridges
+*Adapted from DeepSeek Harness `@deepseek-ai/dsh-subagent`, `@deepseek-ai/dsh-hooks`, and `@deepseek-ai/dsh-hooks-codex`*
+
+- **In-Process Continuable Subagents**:
+  - Implementation of [`local_coding_agent/subagent.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/subagent.py).
+  - Main agent can spawn child workers with restricted task envelopes, dedicated tool subsets, and separate context memory.
+  - Inter-agent communication via structured mailboxes (`send_message`, `report`, `interrupt_agent`).
+- **External CLI Subagent Adapters**:
+  - Subprocess bridges allowing our local harness to delegate heavy multi-file architectural tasks to host Claude Code CLI or OpenAI Codex CLI when tasks exceed local model capacity tiers.
+- **Claude Code & Codex Wire-Protocol Hooks**:
+  - Implementation of [`local_coding_agent/hooks.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/hooks.py) bridging tool execution hooks and session lifecycle events with external host tools.
+
+---
+
+## Security Invariants & Defensive Controls (OWASP / MITRE ATLAS AML.T0053)
+
+To ensure bulletproof safety during autonomous tool execution, all planned capabilities adhere to strict security invariants:
+
+1. **Deny-by-Default Tool Allowlisting**:
+   - Every tool call is validated against strict Pydantic/dataclass JSON schemas before execution. Unknown tools or extra properties are immediately rejected.
+2. **Read-Before-Write Observation Gate**:
+   - No patch or write operation is accepted for files that were not previously observed in the session.
+3. **Strict Path Normalization & Traversal Defense**:
+   - All filesystem paths (`spill`, `fs`, `lsp`, `terminal`) are normalized against the registered workspace root. `../` and symlink escapes outside workspace boundaries trigger immediate `SECURITY_VIOLATION` errors.
+4. **Isolated Process Boundaries & Non-Blocking Streams**:
+   - All child processes (tests, LSP servers, persistent PTYs, ripgrep) run with bounded timeouts and continuous async pipe drainage to prevent deadlocks on full OS pipes.
+5. **Human-in-the-Loop (HITL) for High-Impact Actions**:
+   - Disk writes during mediated apply and Plan Mode exit require explicit human confirmation.
+
+---
+
+## Decisions & Architectural Rationale
 
 1. **Backend adapter → ship it (Option B)**: The OpenAI-compatible `llama-server` adapter is a first-class milestone, sequenced *before* R13. It is the whole point of the feature: enabling non-Ollama GGUF architectures (`ling-3.0-tiny-q6k` and future BailingMoE/KDA/MLA) through the real controller path.
 2. **Context budget → real token count (Option B)**: Replace `max_context_bytes` with an actual token budget mapped against `num_ctx`. Bytes were never the right unit; a byte-bounded task can silently exceed `num_ctx` and be truncated by the model. Use a per-model tokenizer or a tokens≈bytes/N approximation rather than raw bytes.
@@ -151,6 +274,10 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 5. **Polyglot → do it now (Option B)**: Ship Python/TypeScript/Rust/Go evaluation. This requires building external oracles/verifiers for the non-Python tiers first — no language tier is reported without a working verifier.
 6. **Gating evidence → gate only on verified tiers (recommended, Option A)**: `CAPABILITY_OVERLOAD` may only reject/warn on CI-confirmed tiers. Unverified tiers are reported as `unknown`, never used to cut a task.
 7. **Standalone Harness UI Architecture**: Embedded FastAPI/Starlette backend serving a lightweight modern static bundle (`diff2html`, Monaco, Tailwind, Chart.js) with zero Node.js runtime requirements for the user.
+8. **Spill Store vs Context Compression (Option A)**: Tool output spilling to `.local_agent/spill/` is strictly decoupled from LLM context summarization. The filesystem owns large blobs; the LLM receives only clean locators and summaries.
+9. **LSP Stdio Isolation (Option B)**: Language servers run in dedicated child processes isolated per workspace and serialized through an async queue, preventing server crashes from killing the agent controller.
+10. **Event-Sourced Monotonic Log (Option A)**: `SessionEvent` records are append-only. All UI views, telemetry, and message projections are derived views from this immutable event stream.
+
 
 
 
