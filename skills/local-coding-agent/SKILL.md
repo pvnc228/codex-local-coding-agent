@@ -224,8 +224,27 @@ local-agent desktop --port 8765
 local-agent desktop --browser
 ```
 
+### Tool Output Spill Store & Fast Ripgrep (R24):
+```bash
+# Read or paginate oversized spill artifact:
+local-agent spill-read locator:spill:session_123/456_output.txt --offset 0 --limit 100 --json
+
+# Fast ripgrep search across workspace:
+local-agent grep "def my_func" src/*.py --json
+```
+
+### LSP Code Intelligence & Navigation (R25):
+```bash
+# Extract document symbols (classes, functions, methods):
+local-agent lsp --operation symbols --file src/service.py --json
+
+# Jump to symbol definition:
+local-agent lsp --operation definition --file src/app.py --line 42 --char 15 --json
+```
+
 ### Install / Export Agent Skill:
 ```bash
 local-agent init-skill --write
 ```
+
 

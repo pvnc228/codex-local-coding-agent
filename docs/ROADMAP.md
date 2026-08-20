@@ -137,39 +137,29 @@ Historical milestones (M0–M6) are archived in [archive/ROADMAP_HISTORICAL.md](
 
 ---
 
-### R24 — Tool Output Spill Store, Ripgrep & FS Observation Policy (Safety & Context Resilience)
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-spill`, `@deepseek-ai/dsh-tool-fs-search`, and `@deepseek-ai/dsh-fs-observation-policy`*
-
+### R24 — Tool Output Spill Store, Ripgrep & FS Observation Policy (Completed in v0.8.0-dev)
 - **Tool Output Spill Store**:
   - Implementation of [`local_coding_agent/spill.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/spill.py) managing private session-scoped directories under `.local_agent/spill/<session_id>/` (with strict 0700 permissions and path traversal neutralizers).
-  - Hard byte/line thresholds (default: 30KB / 1,000 lines). Oversized tool outputs (large file reads, verbose test traces, huge grep results) are spilled to disk, returning a structured summary (head snippet + tail snippet + total line count + unique locator path).
-  - Model can retrieve or query specific lines without blowing up prompt attention.
+  - Hard byte/line thresholds (default: 30KB / 1,000 lines). Oversized tool outputs are spilled to disk, returning a structured summary (head snippet + tail snippet + total line count + unique locator path).
+  - Subcommand: `local-agent spill-read <locator> [--offset N] [--limit N] [--json]`.
 - **Packaged Ripgrep Discovery (`ripgrep.py`)**:
-  - Implementation of [`local_coding_agent/ripgrep.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/ripgrep.py) executing direct `rg` binary invocations for `glob` and `grep` with structured JSON parsing.
-  - Replaces fragile shell pipelines with direct subprocess spawns, eliminating Windows quoting/escaping vulnerabilities.
-  - Integrated into [`local_coding_agent/repository_tools.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/repository_tools.py).
+  - Implementation of [`local_coding_agent/ripgrep.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/ripgrep.py) executing direct `rg` binary invocations for `glob` and `grep` with structured JSON parsing, with pure Python fallback.
+  - Subcommand: `local-agent grep <query> [paths...] [--regex] [--json]`.
 - **Filesystem Observation Policy Gate**:
-  - Enforce strict **read-before-edit** and **read-before-write** invariant in [`local_coding_agent/validators.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/validators.py).
-  - A model proposal modifying a file that was not observed (read or listed with hash) during the current session is immediately rejected before touching the workspace, preventing blind hallucinations.
+  - Enforce strict **read-before-edit** and **read-before-write** invariant in [`local_coding_agent/observation_policy.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/observation_policy.py).
+  - A model proposal modifying a file that was not observed during the current session is immediately rejected before touching the workspace, preventing blind hallucinations.
+
+### R25 — Generic LSP Stdio Code Intelligence Seam (Completed in v0.8.0-dev)
+- **Language Server Protocol Stdio Client**:
+  - Implementation of [`local_coding_agent/lsp.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/lsp.py) providing JSON-RPC stdio communication with language servers (`pyright`, `typescript-language-server`, `rust-analyzer`, `gopls`) and built-in AST/regex fallback engine.
+  - Process lifecycle management, initialize handshake, capabilities negotiation, and timeout protection.
+- **Language Intelligence CLI & Tooling**:
+  - Operations: `definition`, `references`, `hover`, `symbols`.
+  - Subcommand: `local-agent lsp --operation {definition|references|hover|symbols} --file <path> [--line N] [--char N] [--json]`.
 
 ---
 
-### R25 — Generic LSP Stdio Code Intelligence Seam (Language Server Navigation)
-*Adapted from DeepSeek Harness `@deepseek-ai/dsh-lsp` & `@deepseek-ai/dsh-tool-lsp`*
-
-- **Language Server Protocol Stdio Client**:
-  - Implementation of [`local_coding_agent/lsp.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/lsp.py) providing async JSON-RPC stdio communication with active language servers (`pyright` / `basedpyright` for Python, `typescript-language-server` for TS/JS, `rust-analyzer` for Rust, `gopls` for Go).
-  - Process lifecycle management, automatic initialize handshake, capabilities negotiation, and serialized query queue.
-- **Model-Facing `lsp` Tool**:
-  - Added to [`local_coding_agent/repository_tools.py`](file:///c:/Users/mist8/Documents/Codex/2026-08-12/new-chat-2/codex-local-coding-agent/local_coding_agent/repository_tools.py):
-    - `goToDefinition`: Navigate to exact symbol declaration across files.
-    - `findReferences`: Find all callers/references without full-workspace grep.
-    - `documentSymbol`: Extract file outline (classes, methods, functions).
-    - `workspaceSymbol`: Fast fuzzy symbol lookup.
-    - `hover`: Type signature and docstring preview.
-    - `diagnostics`: Real-time compilation/type errors directly from the compiler.
-- **High-Impact Value for Small Models**:
-  - Empowers 1.5B–14B models to perform precise cross-file refactoring without loading large file bodies into prompt context.
+## Planned Milestones (DeepSeek Harness Borrowing & Evolution)
 
 ---
 

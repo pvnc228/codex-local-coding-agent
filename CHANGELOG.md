@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### 🚀 Headline Features
+- **Standalone Desktop AI Coding Harness (`local-agent desktop`) (R23)**:
+  - High-precision engineering cockpit with native WebView2 / system browser fallback.
+  - Interactive chat arena, delegated task queue, real-time hardware telemetry (`nvidia-smi`), and model management.
+- **Tool Output Spill Store, Ripgrep & FS Observation Policy (R24)**:
+  - `local_coding_agent.spill`: Session-scoped private storage (`.local_agent/spill/<session_id>/`) with automatic spilling for outputs exceeding 30KB / 1,000 lines.
+  - `local_coding_agent.ripgrep`: Direct `rg --json` subprocess execution with full quoting safety and transparent pure-Python stdlib fallback.
+  - `local_coding_agent.observation_policy`: Enforces strict **read-before-edit** invariant (`FS_NOT_OBSERVED`), preventing blind model hallucinations.
+  - CLI subcommands: `local-agent spill-read <locator> [--offset N] [--limit N] [--json]` and `local-agent grep <query> [paths...] [--regex] [--json]`.
+- **Generic LSP Stdio Code Intelligence Seam (`local_coding_agent.lsp`) (R25)**:
+  - Standard JSON-RPC stdio language server protocol client with Content-Length framing.
+  - Multi-language server router (`pyright`, `typescript-language-server`, `rust-analyzer`, `gopls`) and built-in AST/regex fallback engine.
+  - Operations: `definition`, `references`, `hover`, `symbols`.
+  - CLI subcommand: `local-agent lsp --operation {definition|references|hover|symbols} --file <path> [--json]`.
+
+---
+
 ## [0.7.0] - 2026-08-19
 
 ### 🚀 Headline Features

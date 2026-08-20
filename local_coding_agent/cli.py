@@ -299,6 +299,33 @@ def build_parser() -> argparse.ArgumentParser:
     desk_p.add_argument("--workspace", default=".", help="Target workspace path")
     desk_p.add_argument("--profile", default="qwen2.5-coder", help="Default model profile")
 
+    # 18. spill-read (R24)
+    spill_p = subparsers.add_parser("spill-read", help="Read or paginate a spilled tool output artifact (R24)")
+    spill_p.add_argument("locator", nargs="?", default=None, help="Spill locator token (e.g. locator:spill:... or path)")
+    spill_p.add_argument("--locator", dest="opt_locator", help="Explicit spill locator")
+    spill_p.add_argument("--offset", type=int, default=0, help="0-based line offset")
+    spill_p.add_argument("--limit", type=int, default=1000, help="Maximum number of lines to read")
+    spill_p.add_argument("--json", action="store_true", help="Output result in JSON format")
+
+    # 19. grep (R24)
+    grep_p = subparsers.add_parser("grep", help="Fast ripgrep / regex code search across workspace (R24)")
+    grep_p.add_argument("query", help="Search query string or regex pattern")
+    grep_p.add_argument("paths", nargs="*", default=[], help="Glob filters or file paths (e.g. *.py)")
+    grep_p.add_argument("--regex", action="store_true", help="Treat query as regular expression")
+    grep_p.add_argument("--case-sensitive", action="store_true", help="Perform case-sensitive matching")
+    grep_p.add_argument("--max-results", type=int, default=100, help="Maximum number of matching lines")
+    grep_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Workspace root directory")
+    grep_p.add_argument("--json", action="store_true", help="Output matches in JSON format")
+
+    # 20. lsp (R25)
+    lsp_p = subparsers.add_parser("lsp", help="Run LSP code intelligence query (R25)")
+    lsp_p.add_argument("--operation", choices=["definition", "references", "hover", "symbols"], required=True, help="LSP query operation")
+    lsp_p.add_argument("--file", type=Path, required=True, help="Target source file path")
+    lsp_p.add_argument("--line", type=int, default=0, help="0-based cursor line number")
+    lsp_p.add_argument("--char", type=int, default=0, help="0-based cursor column offset")
+    lsp_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Workspace root directory")
+    lsp_p.add_argument("--json", action="store_true", help="Output result in JSON format")
+
     return parser
 
 
@@ -878,6 +905,121 @@ def handle_subcommand(args: argparse.Namespace) -> int:
                 for p in report.prescriptions:
                     print(f"  - {p}")
         return 0 if report.valid else 1
+
+    if sub == "spill-read":
+        from .spill import read_spill
+
+        loc = args.opt_locator or args.locator
+        if not loc:
+            if getattr(args, "json", False):
+                print(json.dumps({"status": "failed", "error": "Spill locator is required"}, ensure_ascii=False, indent=2))
+            else:
+                print("Error: spill locator is required", file=sys.stderr)
+            return 2
+        try:
+            content = read_spill(loc, offset_line=args.offset, limit_lines=args.limit)
+            if getattr(args, "json", False):
+                print(
+                    json.dumps(
+                        {"locator": loc, "offset": args.offset, "limit": args.limit, "content": content},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                try:
+                    print(content)
+                except UnicodeEncodeError:
+                    if hasattr(sys.stdout, "buffer"):
+                        sys.stdout.buffer.write(content.encode("utf-8", errors="replace"))
+                        sys.stdout.buffer.write(b"\n")
+                        sys.stdout.buffer.flush()
+                    else:
+                        print(content.encode("ascii", errors="replace").decode("ascii"))
+            return 0
+        except Exception as error:
+            if getattr(args, "json", False):
+                print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False, indent=2))
+            else:
+                print(f"Error reading spill: {error}", file=sys.stderr)
+            return 1
+
+    if sub == "grep":
+        from .ripgrep import ripgrep_search
+
+        try:
+            globs = args.paths if args.paths else None
+            matches = ripgrep_search(
+                args.query,
+                root=args.workspace,
+                globs=globs,
+                is_regex=args.regex,
+                case_sensitive=args.case_sensitive,
+                max_results=args.max_results,
+            )
+            if getattr(args, "json", False):
+                print(
+                    json.dumps(
+                        {
+                            "query": args.query,
+                            "count": len(matches),
+                            "matches": [
+                                {"file": m.file, "line": m.line_number, "text": m.line_content}
+                                for m in matches
+                            ],
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                for m in matches:
+                    print(f"{m.file}:{m.line_number}: {m.line_content}")
+            return 0
+        except Exception as error:
+            if getattr(args, "json", False):
+                print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False, indent=2))
+            else:
+                print(f"Error during grep: {error}", file=sys.stderr)
+            return 1
+
+    if sub == "lsp":
+        from .lsp import LspManager, LspPosition
+
+        try:
+            manager = LspManager(workspace_root=args.workspace)
+            if args.operation == "definition":
+                res = manager.go_to_definition(args.file, line=args.line, character=args.char, workspace_root=args.workspace)
+                data = [r.to_dict() for r in res]
+            elif args.operation == "references":
+                res = manager.find_references(args.file, line=args.line, character=args.char, workspace_root=args.workspace)
+                data = [r.to_dict() for r in res]
+            elif args.operation == "hover":
+                h_res = manager.hover(args.file, line=args.line, character=args.char, workspace_root=args.workspace)
+                data = h_res.to_dict() if h_res else None
+            elif args.operation == "symbols":
+                syms = manager.document_symbols(args.file, workspace_root=args.workspace)
+                data = [s.to_dict() for s in syms]
+            else:
+                data = None
+
+            if getattr(args, "json", False):
+                print(
+                    json.dumps(
+                        {"operation": args.operation, "file": str(args.file), "result": data},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            return 0
+        except Exception as error:
+            if getattr(args, "json", False):
+                print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False, indent=2))
+            else:
+                print(f"Error during LSP query: {error}", file=sys.stderr)
+            return 1
 
     return -1
 

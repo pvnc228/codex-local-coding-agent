@@ -387,6 +387,37 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "ui")
         self.assertEqual(args.port, 9999)
 
+    def test_cli_spill_read_subcommand(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            from local_coding_agent.spill import SpillStore
+            store = SpillStore(root_dir=temp_dir)
+            ref = store.save_text("sess-cli", "hello\nworld\n", source_tool="test", suggested_name="data.txt")
+            args = build_parser().parse_args(["spill-read", ref.locator, "--json"])
+            self.assertEqual(args.subcommand, "spill-read")
+            from local_coding_agent.cli import handle_subcommand
+            code = handle_subcommand(args)
+            self.assertEqual(code, 0)
+
+    def test_cli_grep_subcommand(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            p = Path(temp_dir) / "sample.py"
+            p.write_text("def find_me_symbol():\n    return 42\n", encoding="utf-8")
+            args = build_parser().parse_args(["grep", "find_me_symbol", "--workspace", temp_dir, "--json"])
+            self.assertEqual(args.subcommand, "grep")
+            from local_coding_agent.cli import handle_subcommand
+            code = handle_subcommand(args)
+            self.assertEqual(code, 0)
+
+    def test_cli_lsp_subcommand(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            p = Path(temp_dir) / "mod.py"
+            p.write_text("class MyService:\n    def execute(self):\n        return True\n", encoding="utf-8")
+            args = build_parser().parse_args(["lsp", "--operation", "symbols", "--file", str(p), "--workspace", temp_dir, "--json"])
+            self.assertEqual(args.subcommand, "lsp")
+            from local_coding_agent.cli import handle_subcommand
+            code = handle_subcommand(args)
+            self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

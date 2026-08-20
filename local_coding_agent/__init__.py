@@ -26,6 +26,29 @@ from .mcp_config import generate_mcp_config_dict, get_client_config_path, integr
 from .mcp_server import build_server
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
 from .monitor import MonitorServer
+from .lsp import (
+    FallbackLspEngine,
+    LspClient,
+    LspConnectionError,
+    LspError,
+    LspHoverResult,
+    LspLocation,
+    LspManager,
+    LspPosition,
+    LspRange,
+    LspResponseError,
+    LspSymbol,
+    LspTimeoutError,
+    MockLspServer,
+)
+from .observation_policy import (
+    FsObservationError,
+    FsObservationGate,
+    is_observed,
+    observe_file,
+    reset_session,
+    verify_edit_intent,
+)
 from .ollama_adapter import (
     ModelProfile,
     OllamaClient,
@@ -33,6 +56,7 @@ from .ollama_adapter import (
     OpenAICompatibleClient,
     build_client,
 )
+from .ripgrep import RipgrepMatch, ripgrep_files, ripgrep_search
 from .semantic_linter import (
     LinterDiagnostic,
     LinterReport,
@@ -42,6 +66,15 @@ from .semantic_linter import (
 from .service import DelegationRequest, DelegationService
 from .smoke import run_smoke_test
 from .speculative_racing import SpeculativeRacer
+from .spill import (
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_LINES,
+    SpillRef,
+    SpillStore,
+    maybe_spill,
+    read_spill,
+    save_text,
+)
 from .stats import DelegationStats, JsonlStatsSink, TimedDelegationStats
 from .stdio import StdioDelegationAdapter
 from .task import TaskEnvelope
@@ -114,4 +147,33 @@ __all__ = [
     "lint_source_code",
     "lint_patch_in_memory",
     "SpeculativeRacer",
+    "FsObservationError",
+    "FsObservationGate",
+    "observe_file",
+    "is_observed",
+    "verify_edit_intent",
+    "reset_session",
+    "RipgrepMatch",
+    "ripgrep_search",
+    "ripgrep_files",
+    "DEFAULT_MAX_BYTES",
+    "DEFAULT_MAX_LINES",
+    "SpillRef",
+    "SpillStore",
+    "save_text",
+    "read_spill",
+    "maybe_spill",
+    "LspPosition",
+    "LspRange",
+    "LspLocation",
+    "LspHoverResult",
+    "LspSymbol",
+    "LspClient",
+    "MockLspServer",
+    "FallbackLspEngine",
+    "LspManager",
+    "LspError",
+    "LspTimeoutError",
+    "LspConnectionError",
+    "LspResponseError",
 ]

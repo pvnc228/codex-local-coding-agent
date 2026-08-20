@@ -100,6 +100,9 @@ The controller is runtime-agnostic and natively supports two local inference bac
 - **Manage VRAM & Memory**: `local-agent memory status --json`
 - **Check Health & Self-Healing**: `local-agent doctor --json` (or `local-agent doctor --fix`)
 - **Launch Desktop AI Coding Harness**: `local-agent desktop --port 8765`
+- **Tool Output Spill Store**: `local-agent spill-read <locator> --offset 0 --limit 100 --json`
+- **Fast Ripgrep Search**: `local-agent grep "pattern" src/*.py --json`
+- **LSP Code Navigation**: `local-agent lsp --operation symbols --file src/file.py --json`
 - **Install Skill**: `local-agent init-skill --write`
 """
 
