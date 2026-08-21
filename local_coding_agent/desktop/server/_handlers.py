@@ -742,9 +742,30 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "failed", "error": "Prompt cannot be empty"})
             return
 
-        # Friendly conversational greeting handling
-        greetings = {"hi", "hello", "hey", "привет", "здравствуйте", "yo", "sup", "help", "test"}
-        if prompt.lower().strip("!.,? ") in greetings:
+        # Friendly conversational / small-talk handling. The Controller tool-loop
+        # demands structured JSON that small models can't reliably emit for
+        # non-coding prompts, so route small talk to a plain completion.
+        greetings = {"hi", "hello", "hey", "привет", "здравствуйте", "yo", "sup", "help", "test", "ok", "thanks", "спасибо"}
+        greeting_phrases = ("how are you", "what's up", "whats up", "wassup", "how are u")
+        lowered = prompt.lower().strip("!.,? ")
+        tokens = lowered.split()
+        is_small_talk = (
+            lowered in greetings
+            or any(phrase in lowered for phrase in greeting_phrases)
+            or (len(tokens) <= 4 and any(tok.strip("!.,?") in greetings for tok in tokens))
+        )
+        if is_small_talk:
+            reply = None
+            try:
+                profile = resolve_model_profile(profile_name)
+                client = build_client(profile)
+                resp = client.chat([
+                    {"role": "system", "content": "You are a concise local coding assistant."},
+                    {"role": "user", "content": prompt},
+                ])
+                reply = (resp.get("message") or {}).get("content")
+            except Exception:
+                reply = None
             self._send_json({
                 "status": "completed",
                 "task_id": f"greet-{int(time.time())}",
@@ -752,12 +773,13 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "profile": profile_name,
                 "file": "workspace",
                 "patch": "",
-                "thinking": "Conversational intent detected. Harness is ready for code instructions.",
+                "thinking": "Conversational intent detected.",
                 "testResult": "READY",
                 "checks": [],
-                "message": (
+                "message": reply or (
                     f"Hello! Connected to `{profile_name}`. "
-                    "Please give me a specific coding task, bug fix, or refactoring goal (e.g. 'Fix off-by-one in sliding window' or 'Write unit tests for tax logic')."
+                    "Please give me a specific coding task, bug fix, or refactoring goal "
+                    "(e.g. 'Fix off-by-one in sliding window' or 'Write unit tests for tax logic')."
                 ),
             })
             return
@@ -848,6 +870,18 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             patch_content = result.get("patch", "")
             target_file = files[0] if files else "src/main.py"
 
+            summary = result.get("summary") or ""
+            error = result.get("error")
+            err_kind = error.get("kind") if isinstance(error, dict) else None
+            if err_kind == "duplicate_tool_call":
+                friendly = "The model got stuck repeating the same step. Try a simpler single-step task, or a larger model."
+            elif err_kind == "retry_budget_exhausted":
+                friendly = "The model couldn't produce a valid result after several attempts. Simplify the request or switch to a larger model."
+            elif result.get("status") == "failed":
+                friendly = f"The task could not be completed: {summary}"
+            else:
+                friendly = summary
+
             session_record = {
                 "id": task_id,
                 "type": "user",
@@ -867,10 +901,10 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "profile": profile_name,
                 "file": target_file,
                 "patch": patch_content,
-                "thinking": result.get("summary") or "AST context compacted, generated candidate patch, ran external tests.",
+                "thinking": friendly or "AST context compacted, generated candidate patch, ran external tests.",
                 "testResult": "PASSED" if result.get("status") == "accepted" else "FAILED",
                 "checks": result.get("checks", []),
-                "message": result.get("summary") or f"Task processed for '{prompt}'.",
+                "message": friendly or f"Task processed for '{prompt}'.",
             })
         except Exception as error:
             kind = _classify_backend_error(error)
