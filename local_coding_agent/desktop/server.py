@@ -249,6 +249,12 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._handle_doctor_fix()
         elif path in {"/api/sessions", "/sessions"}:
             self._handle_create_session()
+        elif path in {"/api/models/scan", "/models/scan"}:
+            self._handle_model_scan()
+        elif path in {"/api/models/add_dir", "/models/add_dir"}:
+            self._handle_model_add_dir()
+        elif path in {"/api/models/remove_dir", "/models/remove_dir"}:
+            self._handle_model_remove_dir()
         else:
             self._send_response(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"404 Not Found\n")
 
@@ -279,9 +285,9 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        # Check server endpoints
-        ollama_online = self._probe_port("http://127.0.0.1:11434/api/tags")
-        llama_online = self._probe_port("http://127.0.0.1:8080/v1/models")
+        # Check server endpoints with loading / ready distinction
+        ollama_online, ollama_status = self._probe_server_status("http://127.0.0.1:11434/api/tags")
+        llama_online, llama_status = self._probe_server_status("http://127.0.0.1:8080/v1/models")
 
         # 1. First priority: Real Hardware readings from nvidia-smi
         gpu_telemetry = get_nvidia_gpu_telemetry()
@@ -316,8 +322,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             "git_branch": branch,
             "profile": self.server_inst.default_profile,
             "servers": {
-                "ollama": {"online": ollama_online, "endpoint": "http://127.0.0.1:11434"},
-                "llama_server": {"online": llama_online, "endpoint": "http://127.0.0.1:8080"},
+                "ollama": {"online": ollama_online, "status": ollama_status, "endpoint": "http://127.0.0.1:11434"},
+                "llama_server": {"online": llama_online, "status": llama_status, "endpoint": "http://127.0.0.1:8080"},
             },
             "vram": vram_info,
             "stats": self.server_inst.stats.snapshot() if self.server_inst.stats else {},
@@ -343,10 +349,10 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "num_ctx": prof.num_ctx,
             })
 
-        ollama_online = self._probe_port("http://127.0.0.1:11434/api/tags")
+        ollama_online, _ = self._probe_server_status("http://127.0.0.1:11434/api/tags")
         ollama_models = discover_local_ollama_models()
 
-        llama_online = self._probe_port("http://127.0.0.1:8080/v1/models")
+        llama_online, _ = self._probe_server_status("http://127.0.0.1:8080/v1/models")
         llama_models: list[str] = []
         if llama_online:
             try:
@@ -354,11 +360,17 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=0.3) as resp:
                     if resp.status == 200:
                         models_data = json.loads(resp.read().decode("utf-8"))
-                        for m in models_data.get("data", []):
+                        raw_list = models_data.get("data") or models_data.get("models") or []
+                        for m in raw_list:
                             if isinstance(m, dict) and "id" in m:
                                 llama_models.append(m["id"])
+                            elif isinstance(m, dict) and "name" in m:
+                                llama_models.append(m["name"])
             except Exception:
                 pass
+
+        from ..model_scanner import get_model_registry
+        discovered_ggufs = [m.to_dict() for m in get_model_registry().get_models(auto_scan=True)]
 
         self._send_json({
             "profiles": profiles_data,
@@ -366,8 +378,34 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             "backends": {
                 "ollama": {"online": ollama_online, "endpoint": "http://127.0.0.1:11434", "models": ollama_models},
                 "llama_server": {"online": llama_online, "endpoint": "http://127.0.0.1:8080", "models": llama_models},
+                "local_gguf": {"models": discovered_ggufs},
             },
         })
+
+    def _handle_model_scan(self) -> None:
+        from ..model_scanner import get_model_registry
+        data = self._read_json_body()
+        deep = bool(data.get("deep", False))
+        registry = get_model_registry()
+        models = registry.scan(deep=deep)
+        self._send_json({"status": "ok", "total_models": len(models), "models": [m.to_dict() for m in models]})
+
+    def _handle_model_add_dir(self) -> None:
+        from ..model_scanner import get_model_registry
+        data = self._read_json_body()
+        path_val = data.get("path", "").strip()
+        if not path_val or not Path(path_val).is_dir():
+            self._send_json({"status": "failed", "error": f"Directory does not exist: {path_val}"})
+            return
+        added = get_model_registry().add_custom_directory(path_val)
+        self._send_json({"status": "added" if added else "already_present", "path": path_val})
+
+    def _handle_model_remove_dir(self) -> None:
+        from ..model_scanner import get_model_registry
+        data = self._read_json_body()
+        path_val = data.get("path", "").strip()
+        removed = get_model_registry().remove_custom_directory(path_val)
+        self._send_json({"status": "removed" if removed else "not_found", "path": path_val})
 
     def _handle_workspace_files(self) -> None:
         workspace = Path(self.server_inst.workspace)
@@ -822,12 +860,22 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"status": "ok", "report": report})
 
     def _probe_port(self, url: str) -> bool:
+        online, _ = self._probe_server_status(url)
+        return online
+
+    def _probe_server_status(self, url: str) -> tuple[bool, str]:
         try:
             req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=0.2) as resp:
-                return resp.status == 200
+            with urllib.request.urlopen(req, timeout=0.3) as resp:
+                if resp.status == 200:
+                    return True, "ready"
+                return True, "loading"
+        except urllib.error.HTTPError as e:
+            if e.code == 503:
+                return True, "loading"
+            return False, "offline"
         except Exception:
-            return False
+            return False, "offline"
 
     def _detect_relevant_files(self, workspace: str, prompt: str) -> list[str]:
         ws_path = Path(workspace)
@@ -940,9 +988,16 @@ class DesktopServer:
     def stop(self) -> None:
         for name, proc in list(self.spawned_processes.items()):
             try:
-                proc.terminate()
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
+                else:
+                    proc.terminate()
+                    proc.wait(timeout=2.0)
             except Exception:
-                pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         self.spawned_processes.clear()
 
         if self._thread is None:

@@ -354,7 +354,8 @@ def _normalize_tool_call(call: dict[str, Any]) -> dict[str, Any]:
             function["arguments"] = json.loads(function["arguments"])
         except json.JSONDecodeError:
             pass
-    return {**call, "function": function}
+    call_id = call.get("id") or f"call_{int(time.time() * 1000)}"
+    return {**call, "id": call_id, "function": function}
 
 
 def _as_int(value: Any) -> int:

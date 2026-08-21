@@ -332,6 +332,15 @@ def build_parser() -> argparse.ArgumentParser:
     acp_p.add_argument("--profile", default="qwen2.5-1.5b", help="Default model profile")
     acp_p.add_argument("--framing", choices=["auto", "jsonl", "content-length"], default="auto", help="Framing mode")
 
+    # 22. scan-models
+    scan_p = subparsers.add_parser("scan-models", help="Discover and index local GGUF models across drives")
+    scan_p.add_argument("--deep", action="store_true", help="Perform deep filesystem scan across all system drives")
+    scan_p.add_argument("--drives", help="Comma-separated drive letters to target (e.g. C,D,Q)")
+    scan_p.add_argument("--add-dir", dest="add_dir", help="Add custom directory to persistent model registry")
+    scan_p.add_argument("--remove-dir", dest="remove_dir", help="Remove custom directory from registry")
+    scan_p.add_argument("--list-dirs", action="store_true", help="List all registered custom model directories")
+    scan_p.add_argument("--json", action="store_true", help="Output discovered models in JSON format")
+
     return parser
 
 
@@ -732,6 +741,37 @@ def handle_subcommand(args: argparse.Namespace) -> int:
             default_profile=args.profile,
             browser=getattr(args, "browser", False),
         )
+
+    if sub == "scan-models":
+        from .model_scanner import get_model_registry
+
+        registry = get_model_registry()
+        if getattr(args, "add_dir", None):
+            added = registry.add_custom_directory(args.add_dir)
+            res = {"status": "added" if added else "already_present", "directory": args.add_dir}
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return 0
+        if getattr(args, "remove_dir", None):
+            removed = registry.remove_custom_directory(args.remove_dir)
+            res = {"status": "removed" if removed else "not_found", "directory": args.remove_dir}
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return 0
+        if getattr(args, "list_dirs", False):
+            dirs = registry.list_custom_directories()
+            res = {"custom_directories": dirs}
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return 0
+
+        target_drives = [d.strip() for d in args.drives.split(",") if d.strip()] if getattr(args, "drives", None) else None
+        discovered = registry.scan(deep=getattr(args, "deep", False), target_drives=target_drives)
+        models_data = [m.to_dict() for m in discovered]
+        if getattr(args, "json", False):
+            print(json.dumps({"total_models": len(models_data), "models": models_data}, indent=2, ensure_ascii=False))
+        else:
+            print(f"--- Discovered Local GGUF Models ({len(models_data)}) ---")
+            for m in models_data:
+                print(f"[{m['backend'].upper()}] {m['name']} ({m['size_gb']} GB) -> {m['path']}")
+        return 0
 
     if sub == "benchmark":
         overrides = {}

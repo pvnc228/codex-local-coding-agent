@@ -151,3 +151,43 @@ def test_cli_desktop_parser():
     assert args.port == 9876
     assert args.browser is True
     assert args.profile == "qwen3-8b-q6k"
+
+
+def test_desktop_server_model_scanner_endpoints(tmp_path):
+    with DesktopServer() as server:
+        # 1. Test POST /api/models/add_dir
+        add_req = urllib.request.Request(
+            f"{server.url}/api/models/add_dir",
+            data=json.dumps({"path": str(tmp_path)}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(add_req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] in ("added", "already_present")
+
+        # 2. Test POST /api/models/scan
+        scan_req = urllib.request.Request(
+            f"{server.url}/api/models/scan",
+            data=json.dumps({"deep": False}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(scan_req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "ok"
+            assert "models" in data
+
+        # 3. Test POST /api/models/remove_dir
+        remove_req = urllib.request.Request(
+            f"{server.url}/api/models/remove_dir",
+            data=json.dumps({"path": str(tmp_path)}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(remove_req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] in ("removed", "not_found")
