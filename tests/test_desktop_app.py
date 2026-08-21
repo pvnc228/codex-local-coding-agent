@@ -235,7 +235,7 @@ def test_resolve_model_profile_gguf_gives_openai_endpoint_without_v1():
     assert prof.provider == "openai"
     assert prof.endpoint == "http://127.0.0.1:8080"
     assert not prof.endpoint.endswith("/v1")
-    assert prof.model == "custom-llama-9b-q4.gguf"
+    assert prof.model == "custom-llama-9b-q4"
 
 
 def test_resolve_model_profile_known_profile_returns_get_profile():

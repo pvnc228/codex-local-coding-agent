@@ -84,7 +84,7 @@ def resolve_model_profile(name: str, registry: Any = None) -> ModelProfile:
         if clean_name.lower() in (discovered.name.lower(), discovered.display_name.lower()):
             return ModelProfile(
                 name=clean_name,
-                model=discovered.name,
+                model=discovered.display_name,
                 provider="openai",
                 endpoint="http://127.0.0.1:8080",
                 num_ctx=8192,

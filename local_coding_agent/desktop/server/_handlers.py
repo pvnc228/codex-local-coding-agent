@@ -367,8 +367,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "failed", "error": f"{error}\nLog tail:\n{self._read_log_tail('ollama')}"})
 
         elif backend in ("llama_server", "llama.cpp"):
-            llama_online, _ = self._probe_server_status("http://127.0.0.1:8080/v1/models")
-            if llama_online:
+            if self._probe_models_loaded("http://127.0.0.1:8080/v1/models"):
                 self._send_json({
                     "status": "already_running",
                     "backend": "llama_server",
@@ -387,10 +386,12 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            cmd = [llama_bin, "--port", "8080"]
+            self._kill_llama_on_port(8080)
             gguf_path = self._find_gguf_model(model_path)
+            cmd = [llama_bin, "--port", "8080"]
             if gguf_path:
-                cmd.extend(["-m", gguf_path, "-c", "8192", "-ngl", "99"])
+                alias = Path(gguf_path).stem
+                cmd.extend(["-m", gguf_path, "-c", "8192", "--alias", alias])
 
             try:
                 log_handle = open(self._server_log_file("llama_server"), "ab")
@@ -402,7 +403,10 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 )
                 log_handle.close()
                 self.server_inst.spawned_processes["llama_server"] = proc
-                result = self._wait_for_ready("http://127.0.0.1:8080/v1/models", proc, "llama_server")
+                if gguf_path:
+                    result = self._wait_for_model_loaded(proc, "llama_server")
+                else:
+                    result = self._wait_for_ready("http://127.0.0.1:8080/v1/models", proc, "llama_server")
                 if result.get("status") == "started":
                     self._send_json({
                         "status": "started",
@@ -454,7 +458,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                     try:
                         warmup = ModelProfile(
                             name=gguf.get("display_name") or model_name,
-                            model=gguf.get("name") or model_name,
+                            model=gguf.get("display_name") or model_name,
                             provider="openai",
                             endpoint="http://127.0.0.1:8080",
                             num_ctx=8192,
@@ -516,7 +520,14 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "failed", "error": str(error)})
 
     def _launch_llama_model(self, gguf_path: str, model_label: str) -> dict:
-        """Launch llama-server with a specific GGUF file (single-model server)."""
+        """Launch llama-server with a specific GGUF file (single-model server).
+
+        Uses ``--alias`` so the model id exposed by ``/v1/models`` is the clean
+        stem (e.g. ``Ling-3.0-tiny-Q6_K``) rather than the on-disk filename.
+        ``-ngl`` is intentionally omitted: forcing ``-ngl 99`` aborts the load
+        when free VRAM cannot fit every layer, whereas the default auto-fit
+        spills only the overflow to CPU.
+        """
         llama_bin = self._find_llama_server_bin(None)
         if not llama_bin:
             return {
@@ -527,7 +538,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 ),
             }
         self._stop_backend("llama_server")
-        cmd = [llama_bin, "--port", "8080", "-m", gguf_path, "-c", "8192", "-ngl", "99"]
+        self._kill_llama_on_port(8080)
+        cmd = [llama_bin, "--port", "8080", "-m", gguf_path, "-c", "8192", "--alias", model_label]
         try:
             log_handle = open(self._server_log_file("llama_server"), "ab")
             proc = subprocess.Popen(
@@ -538,12 +550,112 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             )
             log_handle.close()
             self.server_inst.spawned_processes["llama_server"] = proc
-            result = self._wait_for_ready("http://127.0.0.1:8080/v1/models", proc, "llama_server")
+            result = self._wait_for_model_loaded(proc, "llama_server")
             if result.get("status") == "started":
                 result.update({"backend": "llama_server", "pid": proc.pid, "model": model_label})
             return result
         except Exception as error:
             return {"status": "failed", "error": f"{error}\nLog tail:\n{self._read_log_tail('llama_server')}"}
+
+    def _wait_for_model_loaded(self, proc: subprocess.Popen, backend: str, timeout: float = 90.0) -> dict:
+        """Wait until llama-server actually exposes a loaded model in /v1/models."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._probe_models_loaded("http://127.0.0.1:8080/v1/models"):
+                return {"ok": True, "status": "started"}
+            if proc.poll() is not None:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error": f"Server exited during startup (code {proc.returncode}). Log tail:\n{self._read_log_tail(backend)}",
+                }
+            time.sleep(1.0)
+        if proc.poll() is not None:
+            return {
+                "ok": False,
+                "status": "failed",
+                "error": f"Server exited during startup (code {proc.returncode}). Log tail:\n{self._read_log_tail(backend)}",
+            }
+        return {"ok": False, "status": "loading", "message": "server started but model not loaded yet"}
+
+    def _probe_models_loaded(self, url: str) -> bool:
+        """Return True only when the backend lists at least one loaded model."""
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                if resp.status != 200:
+                    return False
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return False
+        models = data.get("data") or data.get("models") or []
+        return isinstance(models, list) and len(models) > 0
+
+    def _find_pid_on_port(self, port: int) -> int | None:
+        if os.name == "nt":
+            try:
+                out = subprocess.run(
+                    ["netstat", "-ano", "-p", "tcp"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                ).stdout
+                for line in out.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 5 and f":{port}" in parts[1] and parts[3].upper() == "LISTENING":
+                        try:
+                            return int(parts[4])
+                        except ValueError:
+                            continue
+            except Exception:
+                pass
+        else:
+            try:
+                out = subprocess.run(
+                    ["lsof", "-ti", f":{port}"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                ).stdout
+                pid = out.strip().splitlines()[0] if out.strip() else ""
+                if pid.isdigit():
+                    return int(pid)
+            except Exception:
+                pass
+        return None
+
+    def _looks_like_llama(self, pid: int) -> bool:
+        if os.name == "nt":
+            try:
+                out = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                ).stdout
+                return "llama" in out.lower()
+            except Exception:
+                return False
+        return True
+
+    def _kill_llama_on_port(self, port: int) -> None:
+        pid = self._find_pid_on_port(port)
+        if pid is None or pid == os.getpid() or not self._looks_like_llama(pid):
+            return
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                subprocess.run(["kill", "-9", str(pid)], capture_output=True, check=False)
+        except Exception:
+            pass
 
     def _stop_backend(self, name: str) -> None:
         proc = self.server_inst.spawned_processes.pop(name, None)
