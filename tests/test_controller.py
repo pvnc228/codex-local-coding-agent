@@ -226,6 +226,47 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["error"]["kind"], "duplicate_tool_call")
         self.assertEqual(len(model.requests), 2)
 
+    def test_controller_recovers_from_malformed_tool_call_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "allowed.py").write_text("VALUE = 42\n", encoding="utf-8")
+            task = TaskEnvelope(id="tool-json", goal="проверить значение", files=("allowed.py",))
+            valid = json.dumps(
+                {"status": "candidate", "summary": "ok", "patch": "", "checks": [], "risks": []}
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": '{"path": "allowed.py"',  # truncated JSON
+                                    },
+                                }
+                            ],
+                        }
+                    },
+                    {"message": {"role": "assistant", "content": valid}},
+                ]
+            )
+
+            result = Controller(model, workspace).run(task)
+
+        # Not a hard policy failure: the malformed tool call was fed back as a
+        # prescription and the model recovered on the next turn.
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(len(model.requests), 2)
+        # The feedback message must be a tool message with an invalid_json payload.
+        tool_msg = model.requests[1]["messages"][3]
+        self.assertEqual(tool_msg["role"], "tool")
+        payload = json.loads(tool_msg["content"])
+        self.assertEqual(payload["error_code"], "invalid_json")
+        self.assertIn("hint", payload)
+
     def test_controller_retries_invalid_json_with_changed_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)

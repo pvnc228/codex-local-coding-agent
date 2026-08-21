@@ -602,7 +602,7 @@ DESKTOP_CLIENT_JS = """
         const res = await fetch('/api/apply', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ patch: activeSession.patch, checks: activeSession.checks || ['pytest'] })
+          body: JSON.stringify({ patch: activeSession.patch, checks: activeSession.checks || ['pytest'], files: (activeSession.files && activeSession.files.length) ? activeSession.files : (activeSession.file ? [activeSession.file] : []) })
         });
         const data = await res.json();
         if (data.status === 'applied') {
@@ -748,6 +748,7 @@ DESKTOP_CLIENT_JS = """
           if (activeSession) {
             activeSession.patch = data.patch;
             activeSession.file = data.file || 'patch.diff';
+            activeSession.files = (data.files && data.files.length) ? data.files : (data.file ? [data.file] : []);
           }
         }
         loadSessions();

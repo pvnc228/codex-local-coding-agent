@@ -230,6 +230,8 @@ class Controller:
             if tool_calls:
                 messages.append(message)
                 for call in tool_calls:
+                    name = None
+                    call_id = None
                     try:
                         name, arguments, call_id = self._decode_tool_call(call)
                         signature_arguments = arguments
@@ -307,7 +309,38 @@ class Controller:
                         messages.append(tool_message)
                         audit.append({"event": "tool_result", "name": name, "turn": turn})
                     except (ValueError, TypeError, json.JSONDecodeError) as error:
-                        return self._failure("failed", "policy", str(error), audit)
+                        # Malformed tool-call arguments (e.g. truncated JSON) are
+                        # fed back as a structured prescription so the model can
+                        # re-issue a valid tool call within the turn budget,
+                        # mirroring the ToolPolicyError branch above — never a
+                        # raw parser error surfaced to the caller.
+                        audit.append({
+                            "event": "tool_json_error",
+                            "name": name,
+                            "error": str(error),
+                            "turn": turn,
+                        })
+                        tool_payload = {
+                            "ok": False,
+                            "status": "error",
+                            "error_code": "invalid_json",
+                            "error": str(error),
+                            "hint": (
+                                "Твой tool-call не удалось разобрать как валидный JSON. "
+                                'Верни аргументы как СТРОГО один JSON-объект, например '
+                                '{"file": "src/main.py", "search": "...", "replace": "..."}. '
+                                "Без текста до и после, без markdown-разметки."
+                            ),
+                        }
+                        tool_message: dict[str, Any] = {
+                            "role": "tool",
+                            "tool_name": name or "unknown",
+                            "content": json.dumps(tool_payload, ensure_ascii=False),
+                        }
+                        if call_id is not None:
+                            tool_message["tool_call_id"] = call_id
+                        messages.append(tool_message)
+                        audit.append({"event": "tool_result", "name": name or "unknown", "turn": turn})
                     except ToolCancelled:
                         return self._failure("failed", "cancelled", "task was cancelled", audit)
                 continue
@@ -645,6 +678,9 @@ class Controller:
     def _decode_tool_call(call: Any) -> tuple[str, dict[str, Any], str | None]:
         if not isinstance(call, dict):
             raise ValueError("tool call must be an object")
+        call_id = call.get("id")
+        if call_id is not None and not isinstance(call_id, str):
+            raise ValueError("tool call id must be a string")
         function = call.get("function")
         if not isinstance(function, dict):
             raise ValueError("tool call has no function object")
@@ -656,9 +692,6 @@ class Controller:
             arguments = json.loads(arguments)
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
-        call_id = call.get("id")
-        if call_id is not None and not isinstance(call_id, str):
-            raise ValueError("tool call id must be a string")
         return name, arguments, call_id
 
     @staticmethod

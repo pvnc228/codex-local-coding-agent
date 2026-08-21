@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -21,7 +22,12 @@ from ...model_scanner import discover_llama_server_binary, get_live_system_path
 from ...ollama_adapter import OllamaError, build_client
 from ...profiles import ModelProfile, get_profile, list_profiles
 from ...task import TaskEnvelope
-from ...validators import apply_patch, check_patch_applies
+from ...validators import (
+    _normalize_task_path,
+    apply_patch,
+    check_patch_applies,
+    parse_unified_diff,
+)
 from ..ui import DESKTOP_HTML_TEMPLATE
 from ._models import (
     _classify_backend_error,
@@ -900,6 +906,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "prompt": prompt,
                 "profile": profile_name,
                 "file": target_file,
+                "files": list(files),
                 "patch": patch_content,
                 "thinking": friendly or "AST context compacted, generated candidate patch, ran external tests.",
                 "testResult": "PASSED" if result.get("status") == "accepted" else "FAILED",
@@ -935,12 +942,44 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_apply(self) -> None:
         data = self._read_json_body()
-        patch_str = data.get("patch", "").strip()
+        patch_str = data.get("patch", "")
         checks = data.get("checks", [])
+        files = data.get("files", [])
         workspace = Path(self.server_inst.workspace)
 
-        if not patch_str:
+        if not isinstance(patch_str, str) or not patch_str.strip():
             self._send_json({"status": "failed", "error": "No patch content provided to apply"})
+            return
+        if not isinstance(files, list):
+            self._send_json({"status": "rejected", "error": "files must be a list"})
+            return
+        if not all(isinstance(f, str) for f in files):
+            self._send_json({"status": "rejected", "error": "files entries must be strings"})
+            return
+        if not isinstance(checks, list):
+            self._send_json({"status": "rejected", "error": "checks must be a list"})
+            return
+
+        # Strict Scope Boundary (server-enforced, mirrors validate_candidate):
+        # the caller must declare the allowlist, and the patch must touch only
+        # files within it. The boundary lives on the server, not the client.
+        if not files:
+            self._send_json({
+                "status": "rejected",
+                "error": "No declared file scope; refusing to apply a patch with an empty allowlist",
+            })
+            return
+        changed, parse_issues = parse_unified_diff(patch_str)
+        if parse_issues:
+            self._send_json({"status": "rejected", "error": "; ".join(parse_issues)})
+            return
+        allowed = {_normalize_task_path(f) for f in files}
+        out_of_scope = [p for p in changed if _normalize_task_path(p) not in allowed]
+        if out_of_scope:
+            self._send_json({
+                "status": "rejected",
+                "error": f"Patch touches files outside the declared scope: {', '.join(out_of_scope)}",
+            })
             return
 
         applies, err = check_patch_applies(workspace, patch_str)
@@ -948,62 +987,90 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "rejected", "error": f"Patch cannot apply cleanly: {err}"})
             return
 
-        applied, detail = apply_patch(workspace, patch_str)
-        if not applied:
-            self._send_json({"status": "failed", "error": f"Apply failed: {detail}"})
-            return
+        # Mediated apply under the lock: record only the files the patch actually
+        # changes (not the declared allowlist), so a later rollback never wipes
+        # unrelated work. Holding the lock across apply->checks->(reverse) closes
+        # the race on last_applied_files.
+        with self.server_inst.apply_lock:
+            applied, detail = apply_patch(workspace, patch_str)
+            if not applied:
+                self._send_json({"status": "failed", "error": f"Apply failed: {detail}"})
+                return
 
-        check_results = []
-        checks_passed = True
-        for cmd in checks:
-            try:
-                cp = subprocess.run(
-                    cmd,
-                    shell=True,
-                    cwd=workspace,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                passed = cp.returncode == 0
-                check_results.append({
-                    "command": cmd,
-                    "passed": passed,
-                    "evidence": (cp.stdout + cp.stderr).strip()[:400],
-                })
-                if not passed:
+            self.server_inst.last_applied_files = list(changed)
+            self.server_inst.last_applied_patch = patch_str
+
+            check_results = []
+            checks_passed = True
+            for cmd in checks:
+                if not isinstance(cmd, str) or not cmd.strip():
+                    check_results.append({"command": cmd, "passed": False, "evidence": "invalid check command"})
                     checks_passed = False
                     break
-            except Exception as e:
-                check_results.append({"command": cmd, "passed": False, "evidence": str(e)})
-                checks_passed = False
-                break
+                try:
+                    # ponytail: split ourselves (shell=False) so client-supplied
+                    # checks can't smuggle shell metacharacters. `posix` is False
+                    # on Windows so backslash path separators survive splitting.
+                    cp = subprocess.run(
+                        shlex.split(cmd, posix=(os.name != "nt")),
+                        cwd=workspace,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    passed = cp.returncode == 0
+                    check_results.append({
+                        "command": cmd,
+                        "passed": passed,
+                        "evidence": (cp.stdout + cp.stderr).strip()[:400],
+                    })
+                    if not passed:
+                        checks_passed = False
+                        break
+                except Exception as e:
+                    check_results.append({"command": cmd, "passed": False, "evidence": str(e)})
+                    checks_passed = False
+                    break
 
-        if not checks_passed:
-            apply_patch(workspace, patch_str, reverse=True)
-            self._send_json({
-                "status": "rejected",
-                "error": "Targeted checks failed after applying patch. Changes were automatically rolled back.",
-                "checks": check_results,
-                "rolled_back": True,
-            })
-            return
+            if not checks_passed:
+                reverted, revert_detail = apply_patch(workspace, patch_str, reverse=True)
+                if reverted:
+                    self.server_inst.last_applied_files = []
+                    self.server_inst.last_applied_patch = ""
+                self._send_json({
+                    "status": "rejected",
+                    "error": "Targeted checks failed after applying patch. Changes were automatically rolled back."
+                    if reverted else f"Targeted checks failed; rollback also failed: {revert_detail}",
+                    "checks": check_results,
+                    "rolled_back": reverted,
+                })
+                return
 
-        self._send_json({"status": "applied", "checks": check_results})
+            self._send_json({"status": "applied", "checks": check_results})
 
     def _handle_rollback(self) -> None:
-        workspace = self.server_inst.workspace
-        try:
-            res = subprocess.run(
-                ["git", "restore", "."],
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self._send_json({"status": "rolled_back", "code": res.returncode})
-        except Exception as error:
-            self._send_json({"status": "failed", "error": str(error)})
+        workspace = Path(self.server_inst.workspace)
+        with self.server_inst.apply_lock:
+            targets = list(self.server_inst.last_applied_files)
+            patch = self.server_inst.last_applied_patch
+            if not targets or not patch:
+                self._send_json({"status": "rolled_back", "restored": []})
+                return
+            # Scoped rollback via reverse-apply of the stored patch: handles both
+            # modified (tracked) and newly-created (untracked) files uniformly,
+            # unlike `git restore` which cannot remove untracked files. Restores
+            # only the files this apply touched — never unrelated work.
+            reverted, detail = apply_patch(workspace, patch, reverse=True)
+            if not reverted:
+                self._send_json({
+                    "status": "failed",
+                    "error": f"Rollback failed: {detail}",
+                    "restored": [],
+                })
+                return
+            self.server_inst.last_applied_files = []
+            self.server_inst.last_applied_patch = ""
+            self._send_json({"status": "rolled_back", "restored": targets})
 
     def _handle_doctor_fix(self) -> None:
         report = diagnose_environment(fix=True)

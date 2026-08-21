@@ -33,6 +33,12 @@ class DesktopServer:
         self.stats = stats or DelegationStats()
         self.started_at = time.monotonic()
         self.spawned_processes: dict[str, subprocess.Popen[Any]] = {}
+        # ponytail: single-slot "last apply" tracking — a second apply overwrites
+        # the first, so rollback undoes only the most recent apply, not a full
+        # undo stack.
+        self.last_applied_files: list[str] = []
+        self.last_applied_patch: str = ""
+        self.apply_lock = threading.Lock()
         self.sessions_file = Path(self.workspace) / ".local_agent_sessions.json"
         self._httpd = ThreadingHTTPServer((host, port), DesktopRequestHandler)
         self._httpd.desktop_server = self  # type: ignore[attr-defined]

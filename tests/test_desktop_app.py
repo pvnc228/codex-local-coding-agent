@@ -164,6 +164,285 @@ def test_desktop_server_apply_no_patch(tmp_path):
             assert "No patch content" in data["error"]
 
 
+def test_desktop_server_apply_rejects_out_of_scope(tmp_path):
+    # ponytail: verify Strict Scope Boundary on the desktop apply seam — a
+    # patch touching a file outside the declared `files` list must be rejected
+    # before touching the workspace.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+        cwd=tmp_path,
+        check=False,
+    )
+    patch = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    with DesktopServer(workspace=tmp_path) as server:
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": ["a.py"], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "applied"
+            assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = 2\n"
+
+    # Out-of-scope: declare only b.py, patch touches a.py -> rejected
+    with DesktopServer(workspace=tmp_path) as server:
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": ["b.py"], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "rejected"
+            assert "outside the declared scope" in data["error"]
+
+
+def test_desktop_server_rollback_is_scoped_to_applied_files(tmp_path):
+    # ponytail: rollback must only restore files this session applied, not
+    # wipe unrelated uncommitted work (was `git restore .`).
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "unrelated.py").write_text("keep = True\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+        cwd=tmp_path,
+        check=False,
+    )
+    patch = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    with DesktopServer(workspace=tmp_path) as server:
+        # apply with declared scope
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": ["a.py"], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert json.loads(resp.read().decode("utf-8"))["status"] == "applied"
+
+        # dirty an unrelated file
+        (tmp_path / "unrelated.py").write_text("keep = False\n", encoding="utf-8")
+
+        # rollback
+        req = urllib.request.Request(
+            f"{server.url}/api/rollback",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "rolled_back"
+            assert "a.py" in data["restored"]
+
+        assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+        # unrelated uncommitted change must survive scoped rollback
+        assert (tmp_path / "unrelated.py").read_text(encoding="utf-8") == "keep = False\n"
+
+
+def test_desktop_server_rollback_uses_changed_set_not_allowlist(tmp_path):
+    # ponytail: last_applied_files must hold the files the patch ACTUALLY
+    # changed, not the declared allowlist. Declaring [a.py, b.py] while the
+    # patch only touches a.py must not let rollback wipe a dirty b.py.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("y = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+        cwd=tmp_path,
+        check=False,
+    )
+    patch = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    with DesktopServer(workspace=tmp_path) as server:
+        # Declare BOTH a.py and b.py in scope; patch touches only a.py
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": ["a.py", "b.py"], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert json.loads(resp.read().decode("utf-8"))["status"] == "applied"
+
+        # b.py is dirty (uncommitted work the patch never touched)
+        (tmp_path / "b.py").write_text("y = 999\n", encoding="utf-8")
+
+        req = urllib.request.Request(
+            f"{server.url}/api/rollback",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "rolled_back"
+            assert data["restored"] == ["a.py"]
+
+        assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+        # b.py dirty work must survive (it was not in the changed set)
+        assert (tmp_path / "b.py").read_text(encoding="utf-8") == "y = 999\n"
+
+
+def test_desktop_server_apply_requires_declared_scope(tmp_path):
+    # ponytail: scope boundary is server-enforced — apply with an empty
+    # allowlist is rejected rather than applied to anything.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+        cwd=tmp_path,
+        check=False,
+    )
+    patch = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    with DesktopServer(workspace=tmp_path) as server:
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": [], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "rejected"
+            assert "No declared file scope" in data["error"]
+        # a.py untouched
+        assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_desktop_server_rollback_removes_new_file(tmp_path):
+    # ponytail: reverse-apply rollback must also clean up newly-created
+    # (untracked) files — `git restore` alone cannot remove them.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+        cwd=tmp_path,
+        check=False,
+    )
+    patch = (
+        "diff --git a/new.py b/new.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/new.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+created\n"
+    )
+    with DesktopServer(workspace=tmp_path) as server:
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": ["new.py"], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert json.loads(resp.read().decode("utf-8"))["status"] == "applied"
+        assert (tmp_path / "new.py").read_text(encoding="utf-8") == "created\n"
+
+        req = urllib.request.Request(
+            f"{server.url}/api/rollback",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "rolled_back"
+            assert data["restored"] == ["new.py"]
+
+        assert not (tmp_path / "new.py").exists()
+
+
+def test_desktop_server_rollback_failure_preserves_state(tmp_path, monkeypatch):
+    # ponytail: if the rollback (reverse-apply) cannot be applied, the server
+    # must report failed and keep last_applied_* so a retry is possible.
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=False)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+        cwd=tmp_path,
+        check=False,
+    )
+    patch = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    with DesktopServer(workspace=tmp_path) as server:
+        req = urllib.request.Request(
+            f"{server.url}/api/apply",
+            data=json.dumps({"patch": patch, "files": ["a.py"], "checks": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            assert json.loads(resp.read().decode("utf-8"))["status"] == "applied"
+
+        # Force reverse-apply to fail (e.g. file changed so it can't revert)
+        import local_coding_agent.desktop.server._handlers as h
+        monkeypatch.setattr(
+            h, "apply_patch", lambda ws, p, reverse=False: (False, "boom") if reverse else (True, "")
+        )
+        req = urllib.request.Request(
+            f"{server.url}/api/rollback",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["status"] == "failed"
+            assert "Rollback failed" in data["error"]
+
+        # state preserved for a retry
+        assert server.last_applied_files == ["a.py"]
+        assert server.last_applied_patch == patch
+
+
 def test_cli_desktop_parser():
     parser = build_parser()
     args = parser.parse_args(["desktop", "--port", "9876", "--browser", "--profile", "qwen3-8b-q6k"])
