@@ -477,6 +477,48 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         self.server_inst.save_session(session)
         self._send_json({"status": "created", "session": session})
 
+    def _server_log_file(self, backend: str) -> Path:
+        log_dir = Path(self.server_inst.workspace) / ".local_agent" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return log_dir / f"{backend}.log"
+
+    def _read_log_tail(self, backend: str, n: int = 40) -> str:
+        log_file = self._server_log_file(backend)
+        if not log_file.exists():
+            return ""
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+            return "".join(lines[-n:])
+        except Exception:
+            return ""
+
+    def _wait_for_ready(self, url: str, proc: subprocess.Popen, backend: str, timeout: float = 30.0) -> dict:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            online, status = self._probe_server_status(url)
+            if online:
+                return {"ok": True, "status": "started"}
+            if proc.poll() is not None:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "error": f"Server exited during startup (code {proc.returncode}). Log tail:\n{self._read_log_tail(backend)}",
+                }
+            time.sleep(0.5)
+
+        if proc.poll() is not None:
+            return {
+                "ok": False,
+                "status": "failed",
+                "error": f"Server exited during startup (code {proc.returncode}). Log tail:\n{self._read_log_tail(backend)}",
+            }
+        return {
+            "ok": False,
+            "status": "loading",
+            "message": "server started but not ready yet",
+        }
+
     def _handle_server_start(self) -> None:
         data = self._read_json_body()
         backend = data.get("backend", "ollama")
@@ -496,19 +538,32 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "failed", "error": "Ollama executable not found. Please install Ollama from ollama.com"})
                 return
             try:
+                log_handle = open(self._server_log_file("ollama"), "ab")
                 proc = subprocess.Popen(
                     [ollama_bin, "serve"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_handle,
+                    stderr=log_handle,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 self.server_inst.spawned_processes["ollama"] = proc
-                time.sleep(0.5)
-                self._send_json({"status": "started", "backend": "ollama", "pid": proc.pid})
+                result = self._wait_for_ready("http://127.0.0.1:11434/api/tags", proc, "ollama")
+                if result.get("status") == "started":
+                    self._send_json({"status": "started", "backend": "ollama", "pid": proc.pid})
+                else:
+                    self._send_json(result)
             except Exception as error:
-                self._send_json({"status": "failed", "error": str(error)})
+                self._send_json({"status": "failed", "error": f"{error}\nLog tail:\n{self._read_log_tail('ollama')}"})
 
         elif backend in ("llama_server", "llama.cpp"):
+            llama_online, _ = self._probe_server_status("http://127.0.0.1:8080/v1/models")
+            if llama_online:
+                self._send_json({
+                    "status": "already_running",
+                    "backend": "llama_server",
+                    "endpoint": "http://127.0.0.1:8080",
+                })
+                return
+
             llama_bin = self._find_llama_server_bin(custom_path)
             if not llama_bin:
                 self._send_json({
@@ -526,23 +581,27 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 cmd.extend(["-m", gguf_path, "-c", "8192", "-ngl", "99"])
 
             try:
+                log_handle = open(self._server_log_file("llama_server"), "ab")
                 proc = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_handle,
+                    stderr=log_handle,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 self.server_inst.spawned_processes["llama_server"] = proc
-                time.sleep(0.5)
-                self._send_json({
-                    "status": "started",
-                    "backend": "llama_server",
-                    "pid": proc.pid,
-                    "bin": llama_bin,
-                    "model": gguf_path or "unspecified",
-                })
+                result = self._wait_for_ready("http://127.0.0.1:8080/v1/models", proc, "llama_server")
+                if result.get("status") == "started":
+                    self._send_json({
+                        "status": "started",
+                        "backend": "llama_server",
+                        "pid": proc.pid,
+                        "bin": llama_bin,
+                        "model": gguf_path or "unspecified",
+                    })
+                else:
+                    self._send_json(result)
             except Exception as error:
-                self._send_json({"status": "failed", "error": str(error)})
+                self._send_json({"status": "failed", "error": f"{error}\nLog tail:\n{self._read_log_tail('llama_server')}"})
         else:
             self._send_json({"status": "failed", "error": f"Unknown backend: {backend}"})
 
@@ -567,7 +626,15 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         for name, proc in list(self.server_inst.spawned_processes.items()):
             if backend in (name, "all"):
                 try:
-                    proc.terminate()
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                            capture_output=True,
+                            check=False,
+                        )
+                    else:
+                        proc.terminate()
+                        proc.wait(timeout=2.0)
                     stopped.append(name)
                     del self.server_inst.spawned_processes[name]
                 except Exception:

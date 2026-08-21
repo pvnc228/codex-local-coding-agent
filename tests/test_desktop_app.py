@@ -1,12 +1,14 @@
 """Unit tests for Desktop AI Coding Harness (R23)."""
 
 import json
+import subprocess
 import urllib.request
 import pytest
 from pathlib import Path
 from unittest.mock import patch
 
 from local_coding_agent.desktop.server import (
+    DesktopRequestHandler,
     DesktopServer,
     _classify_backend_error,
     profile_model_is_available,
@@ -265,3 +267,67 @@ def test_select_available_profile_falls_back_to_ollama():
     with patch("local_coding_agent.desktop.server.discover_local_ollama_models", return_value=["qwen2.5:1.5b"]):
         with patch("local_coding_agent.desktop.server.profile_model_is_available", return_value=False):
             assert select_available_profile("qwen2.5-coder") == "qwen2.5:1.5b"
+
+
+def _make_handler(server: DesktopServer) -> DesktopRequestHandler:
+    handler = DesktopRequestHandler.__new__(DesktopRequestHandler)
+    handler.server = server._httpd
+    handler.headers = {"Content-Length": "0"}
+    return handler
+
+
+def test_server_log_file_creates_parent_and_path(tmp_path):
+    with DesktopServer(workspace=tmp_path) as server:
+        handler = _make_handler(server)
+        log_path = handler._server_log_file("ollama")
+        assert log_path == Path(tmp_path) / ".local_agent" / "logs" / "ollama.log"
+        assert log_path.parent.is_dir()
+
+
+def test_read_log_tail_missing_file_returns_empty(tmp_path):
+    with DesktopServer(workspace=tmp_path) as server:
+        handler = _make_handler(server)
+        assert handler._read_log_tail("ollama") == ""
+
+
+def test_read_log_tail_returns_last_lines(tmp_path):
+    with DesktopServer(workspace=tmp_path) as server:
+        handler = _make_handler(server)
+        log_file = handler._server_log_file("ollama")
+        log_file.write_text("\n".join(f"line{i}" for i in range(10)), encoding="utf-8")
+        tail = handler._read_log_tail("ollama", n=3)
+        assert tail.strip().splitlines() == ["line7", "line8", "line9"]
+
+
+def test_handle_server_stop_uses_taskkill_on_windows(tmp_path, monkeypatch):
+    with DesktopServer(workspace=tmp_path) as server:
+        handler = _make_handler(server)
+        monkeypatch.setattr(handler, "_send_json", lambda d: None)
+        fake_proc = subprocess.Popen.__new__(subprocess.Popen)
+        fake_proc.pid = 12345
+        server.spawned_processes["ollama"] = fake_proc
+        monkeypatch.setattr("local_coding_agent.desktop.server.os.name", "nt")
+        runs = []
+        monkeypatch.setattr(
+            "local_coding_agent.desktop.server.subprocess.run",
+            lambda *a, **k: runs.append((a, k)) or subprocess.CompletedProcess(a[0], 0),
+        )
+        handler._handle_server_stop()
+        assert server.spawned_processes == {}
+        assert runs and runs[0][0][0] == ["taskkill", "/F", "/T", "/PID", "12345"]
+
+
+def test_handle_server_stop_uses_terminate_on_posix(tmp_path, monkeypatch):
+    with DesktopServer(workspace=tmp_path) as server:
+        handler = _make_handler(server)
+        monkeypatch.setattr(handler, "_send_json", lambda d: None)
+        fake_proc = subprocess.Popen.__new__(subprocess.Popen)
+        fake_proc.pid = 12345
+        calls = {"terminate": 0, "wait": 0}
+        fake_proc.terminate = lambda: calls.__setitem__("terminate", calls["terminate"] + 1)
+        fake_proc.wait = lambda timeout: calls.__setitem__("wait", calls["wait"] + 1)
+        server.spawned_processes["ollama"] = fake_proc
+        monkeypatch.setattr("local_coding_agent.desktop.server.os.name", "posix")
+        handler._handle_server_stop()
+        assert server.spawned_processes == {}
+        assert calls == {"terminate": 1, "wait": 1}
