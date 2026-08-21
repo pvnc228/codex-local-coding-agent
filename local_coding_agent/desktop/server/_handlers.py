@@ -18,11 +18,17 @@ from ...doctor import diagnose_environment
 from ...memory import ModelMemoryManager
 from ...model_scanner import discover_llama_server_binary, get_live_system_path
 from ...ollama_adapter import OllamaError, build_client
-from ...profiles import get_profile, list_profiles
+from ...profiles import ModelProfile, get_profile, list_profiles
 from ...task import TaskEnvelope
 from ...validators import apply_patch, check_patch_applies
 from ..ui import DESKTOP_HTML_TEMPLATE
-from ._models import _classify_backend_error, discover_local_ollama_models, resolve_model_profile, select_available_profile
+from ._models import (
+    _classify_backend_error,
+    discover_local_ollama_models,
+    find_discovered_gguf,
+    resolve_model_profile,
+    select_available_profile,
+)
 from ._telemetry import get_nvidia_gpu_telemetry
 
 
@@ -302,7 +308,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             online, status = self._probe_server_status(url)
-            if online:
+            if online and status == "ready":
                 return {"ok": True, "status": "started"}
             if proc.poll() is not None:
                 return {
@@ -430,22 +436,10 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         backend = data.get("backend", "all")
         stopped = []
 
-        for name, proc in list(self.server_inst.spawned_processes.items()):
+        for name in list(self.server_inst.spawned_processes):
             if backend in (name, "all"):
-                try:
-                    if os.name == "nt":
-                        subprocess.run(
-                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                            capture_output=True,
-                            check=False,
-                        )
-                    else:
-                        proc.terminate()
-                        proc.wait(timeout=2.0)
-                    stopped.append(name)
-                    del self.server_inst.spawned_processes[name]
-                except Exception:
-                    pass
+                self._stop_backend(name)
+                stopped.append(name)
 
         self._send_json({"status": "stopped", "backends": stopped})
 
@@ -453,6 +447,31 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         data = self._read_json_body()
         model_name = data.get("model") or self.server_inst.default_profile
         try:
+            gguf = find_discovered_gguf(model_name)
+            if gguf and gguf.get("path"):
+                result = self._launch_llama_model(gguf["path"], gguf.get("display_name") or gguf.get("name") or model_name)
+                if result.get("status") == "started":
+                    try:
+                        warmup = ModelProfile(
+                            name=gguf.get("display_name") or model_name,
+                            model=gguf.get("name") or model_name,
+                            provider="openai",
+                            endpoint="http://127.0.0.1:8080",
+                            num_ctx=8192,
+                        )
+                        build_client(warmup).complete("warmup", system="warmup", max_tokens=1)
+                    except Exception:
+                        pass
+                    self._send_json({
+                        "status": "loaded",
+                        "model": model_name,
+                        "backend": "llama_server",
+                        "path": gguf["path"],
+                    })
+                else:
+                    self._send_json(result)
+                return
+
             prof = resolve_model_profile(model_name)
             client = build_client(prof)
             if prof.provider == "ollama":
@@ -486,7 +505,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             else:
                 if hasattr(client, "complete"):
                     client.complete("warmup", system="warmup", max_tokens=1)
-            self._send_json({"status": "loaded", "model": model_name})
+            self._send_json({"status": "loaded", "model": model_name, "backend": prof.provider})
         except Exception as error:
             kind = _classify_backend_error(error)
             if kind == "offline":
@@ -495,6 +514,56 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "failed", "error": f"{backend_name} is OFFLINE. Start it in Local Inference Servers."})
             else:
                 self._send_json({"status": "failed", "error": str(error)})
+
+    def _launch_llama_model(self, gguf_path: str, model_label: str) -> dict:
+        """Launch llama-server with a specific GGUF file (single-model server)."""
+        llama_bin = self._find_llama_server_bin(None)
+        if not llama_bin:
+            return {
+                "status": "failed",
+                "error": (
+                    "llama-server executable not found in PATH. "
+                    "Add your llama-server directory to PATH or set LLAMA_SERVER_PATH."
+                ),
+            }
+        self._stop_backend("llama_server")
+        cmd = [llama_bin, "--port", "8080", "-m", gguf_path, "-c", "8192", "-ngl", "99"]
+        try:
+            log_handle = open(self._server_log_file("llama_server"), "ab")
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_handle,
+                stderr=log_handle,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            log_handle.close()
+            self.server_inst.spawned_processes["llama_server"] = proc
+            result = self._wait_for_ready("http://127.0.0.1:8080/v1/models", proc, "llama_server")
+            if result.get("status") == "started":
+                result.update({"backend": "llama_server", "pid": proc.pid, "model": model_label})
+            return result
+        except Exception as error:
+            return {"status": "failed", "error": f"{error}\nLog tail:\n{self._read_log_tail('llama_server')}"}
+
+    def _stop_backend(self, name: str) -> None:
+        proc = self.server_inst.spawned_processes.pop(name, None)
+        if proc is None:
+            return
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                proc.terminate()
+                proc.wait(timeout=2.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     def _handle_model_unload(self) -> None:
         data = self._read_json_body()
@@ -803,6 +872,13 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         for p in ws_path.glob("*.py"):
             if not p.name.startswith("test_"):
                 return [p.name]
+        # Fallback: any real Python file anywhere in the workspace (skip venvs/dirs)
+        for p in ws_path.rglob("*.py"):
+            if p.is_file() and not any(
+                part.startswith(".") or part in ("__pycache__", "venv", ".venv", "build", "dist", "node_modules")
+                for part in p.parts
+            ):
+                return [str(p.relative_to(ws_path).as_posix())]
         return ["src/main.py"]
 
     def _detect_test_checks(self, workspace: str) -> list[str]:

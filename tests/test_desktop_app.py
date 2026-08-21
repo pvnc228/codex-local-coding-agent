@@ -109,7 +109,17 @@ def test_desktop_server_sessions_api():
             assert "agent" in types
 
 
-def test_desktop_server_chat_api():
+def test_desktop_server_chat_api(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            raise RuntimeError("no model in test")
+
+        def complete(self, *a, **k):
+            raise RuntimeError("no model in test")
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
     with DesktopServer() as server:
         payload = json.dumps({"prompt": "Fix bug in window.py", "profile": "qwen2.5-coder"}).encode("utf-8")
         req = urllib.request.Request(

@@ -70,11 +70,11 @@ DESKTOP_CLIENT_JS = """
         const localGgufs = (data.backends && data.backends.local_gguf && data.backends.local_gguf.models) || [];
         if (localGgufs.length > 0) {
           const optGroup = document.createElement('optgroup');
-          optGroup.label = '⚡ Local GGUF Models (System Drives & Custom Dirs)';
+          optGroup.label = '⚡ Local GGUF → launches llama-server (:8080)';
           localGgufs.forEach(g => {
             const opt = document.createElement('option');
             opt.value = g.name;
-            opt.textContent = `GGUF: ${g.display_name} (${g.size_gb} GB)`;
+            opt.textContent = `GGUF → llama-server: ${g.display_name} (${g.size_gb} GB)`;
             optGroup.appendChild(opt);
           });
           select.appendChild(optGroup);
@@ -483,8 +483,9 @@ DESKTOP_CLIENT_JS = """
         });
         const data = await res.json();
         if (data.status === 'loaded') {
-          showToast(`✓ Model ${data.model || activeProfile} loaded in VRAM`);
-          if (statusLabel) statusLabel.innerHTML = `<span class="text-emerald-400">✓ Loaded in VRAM</span>`;
+          const back = data.backend === 'llama_server' ? 'via llama-server' : (data.backend === 'ollama' ? 'via Ollama' : '');
+          showToast(`✓ Model ${data.model || activeProfile} loaded ${back}`.trim());
+          if (statusLabel) statusLabel.innerHTML = `<span class="text-emerald-400">✓ Loaded in VRAM${data.backend === 'llama_server' ? ' (llama-server)' : ''}</span>`;
         } else {
           showToast(`⚠️ Load issue: ${data.error || 'failed'}`);
           if (statusLabel) statusLabel.innerHTML = `<span class="text-amber-400">Offline / Error</span>`;

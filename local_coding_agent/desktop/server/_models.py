@@ -165,3 +165,14 @@ def _is_known_profile(name: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def find_discovered_gguf(name: str, registry: Any = None) -> dict[str, Any] | None:
+    """Return the registry entry (incl. on-disk path) for a discovered GGUF model."""
+    if registry is None:
+        registry = get_model_registry()
+    clean = name.strip()
+    for discovered in registry.get_models(auto_scan=True):
+        if clean.lower() in (discovered.name.lower(), discovered.display_name.lower()):
+            return discovered.to_dict()
+    return None
