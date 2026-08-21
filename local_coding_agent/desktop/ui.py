@@ -49,7 +49,7 @@ def render_desktop_html() -> str:
         DESKTOP_CSS,
         "  </style>",
         "</head>",
-        '<body class="h-screen flex flex-col font-sans tracking-tight overflow-hidden select-none">',
+        '<body class="h-screen flex flex-col font-sans tracking-tight overflow-hidden">',
         render_header(),
         '  <main class="flex-1 flex overflow-hidden relative">',
         render_sidebar(),

@@ -408,53 +408,6 @@ DESKTOP_CLIENT_JS = """
       } catch (e) {}
     }
 
-    async function startServerEngine(backend, triggerBtn = null) {
-      showToast(`Starting ${backend}...`);
-      const body = { backend };
-      if (backend === 'llama_server') {
-        const binInput = document.getElementById('inputLlamaBin');
-        const modelInput = document.getElementById('inputLlamaModel');
-        if (binInput && binInput.value) body.custom_path = binInput.value.trim();
-        if (modelInput && modelInput.value) body.model_path = modelInput.value.trim();
-      }
-
-      const modalBtn = backend === 'ollama' ? document.getElementById('btnStartOllama') : document.getElementById('btnStartLlama');
-      const label = backend === 'ollama' ? document.getElementById('labelOllamaStatus') : document.getElementById('labelLlamaStatus');
-      const targetBtn = triggerBtn || modalBtn;
-      const oldBtnHtml = targetBtn ? targetBtn.innerHTML : '';
-
-      if (targetBtn) {
-        targetBtn.innerHTML = `<span class="inline-flex items-center gap-1">${spinnerSvg(11, backend === 'ollama' ? 'text-zinc-950' : 'text-zinc-200')} Starting...</span>`;
-        targetBtn.disabled = true;
-      }
-      if (label) {
-        label.innerHTML = `<span class="text-amber-400 inline-flex items-center gap-1">${spinnerSvg(10, 'text-amber-400')} Launching process...</span>`;
-      }
-
-      try {
-        const res = await fetch('/api/server/start', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body)
-        });
-        const data = await res.json();
-        if (data.status === 'started') {
-          showToast(`✓ ${backend} started (PID ${data.pid})`);
-        } else {
-          showToast(`⚠️ ${data.error || 'Could not start server'}`);
-        }
-      } catch (e) {
-        showToast('Error starting server');
-      } finally {
-        if (targetBtn) {
-          targetBtn.innerHTML = oldBtnHtml || 'Start';
-          targetBtn.disabled = false;
-        }
-        await pollStatus();
-        safeCreateIcons();
-      }
-    }
-
     async function warmupActiveModel() {
       showToast(`Preloading ${activeProfile} into VRAM...`);
       const btn1 = document.getElementById('btnPreloadModel');
@@ -822,11 +775,11 @@ DESKTOP_CLIENT_JS = """
           <div class="p-3.5 rounded-lg bg-amber-950/20 border border-amber-500/30 text-xs text-amber-200 leading-relaxed space-y-2">
             <div>${escapeHtml(errorMsg)}</div>
             <div class="flex items-center gap-2 pt-1">
-              <button onclick="startServerEngine('${backend}', this)" class="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-[11px] transition">
-                ▶ Start ${backend === 'ollama' ? 'Ollama' : 'llama-server'}
+              <button onclick="warmupActiveModel()" class="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-[11px] transition">
+                ⚡ Load Model &amp; Start
               </button>
-              <button onclick="changeProfile('${backend === 'ollama' ? 'ling-3.0-tiny-q6k' : 'qwen2.5-coder'}')" class="px-2 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-zinc-300 text-[10px] transition">
-                Switch Engine
+              <button onclick="openModal('modelModal')" class="px-2 py-1 rounded bg-[var(--bg-card)] hover:border-zinc-500 border border-[var(--border-main)] text-zinc-300 text-[10px] transition">
+                Change Model
               </button>
             </div>
           </div>

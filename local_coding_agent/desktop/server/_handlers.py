@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import time
 import urllib.request
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -337,14 +338,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         model_path = data.get("model_path")
 
         if backend == "ollama":
-            # Search possible Windows locations for Ollama
-            live_path = get_live_system_path()
-            ollama_bin = shutil.which("ollama", path=live_path) or shutil.which("ollama.exe", path=live_path)
-            if not ollama_bin:
-                appdata_ollama = Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"))
-                if appdata_ollama.exists():
-                    ollama_bin = str(appdata_ollama)
-
+            ollama_bin = self._find_ollama_bin()
             if not ollama_bin:
                 self._send_json({"status": "failed", "error": "Ollama executable not found. Please install Ollama from ollama.com"})
                 return
@@ -425,6 +419,38 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
     def _find_llama_server_bin(self, custom: str | None = None) -> str | None:
         return discover_llama_server_binary(custom)
 
+    def _find_ollama_bin(self) -> str | None:
+        live_path = get_live_system_path()
+        ollama_bin = shutil.which("ollama", path=live_path) or shutil.which("ollama.exe", path=live_path)
+        if not ollama_bin:
+            appdata_ollama = Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"))
+            if appdata_ollama.exists():
+                ollama_bin = str(appdata_ollama)
+        return ollama_bin
+
+    def _ensure_ollama_running(self) -> bool:
+        """Start ollama serve if offline; return True when the API is reachable."""
+        online, _ = self._probe_server_status("http://127.0.0.1:11434/api/tags")
+        if online:
+            return True
+        ollama_bin = self._find_ollama_bin()
+        if not ollama_bin:
+            return False
+        try:
+            log_handle = open(self._server_log_file("ollama"), "ab")
+            proc = subprocess.Popen(
+                [ollama_bin, "serve"],
+                stdout=log_handle,
+                stderr=log_handle,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            log_handle.close()
+            self.server_inst.spawned_processes["ollama"] = proc
+        except Exception:
+            return False
+        result = self._wait_for_ready("http://127.0.0.1:11434/api/tags", proc, "ollama")
+        return result.get("status") == "started"
+
     def _find_gguf_model(self, custom: str | None = None) -> str | None:
         if custom and custom.strip() and Path(custom.strip()).is_file():
             return str(Path(custom.strip()).resolve())
@@ -479,6 +505,9 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             prof = resolve_model_profile(model_name)
             client = build_client(prof)
             if prof.provider == "ollama":
+                if not self._ensure_ollama_running():
+                    self._send_json({"status": "failed", "error": "Ollama (port 11434) could not be started. Start it manually or check PATH."})
+                    return
                 if hasattr(client, "_request_json"):
                     try:
                         client._request_json("POST", "/api/generate", {"model": prof.model, "prompt": "", "keep_alive": "10m"})
@@ -746,6 +775,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         if any(prompt.lower().startswith(p) for p in info_prefixes):
             try:
                 profile = resolve_model_profile(profile_name)
+                if profile.num_predict < 2048:
+                    profile = replace(profile, num_predict=2048)
                 client = build_client(profile)
                 target_file = files[0] if files else "src/main.py"
                 target_path = Path(workspace) / target_file
