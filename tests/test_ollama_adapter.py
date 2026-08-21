@@ -297,6 +297,44 @@ class OllamaClientTests(unittest.TestCase):
             client.chat([{"role": "user", "content": "hi"}])
         self.assertEqual(ctx.exception.kind, "timeout")
 
+    def test_streaming_parses_multiple_ndjson_lines_in_one_chunk(self):
+        profile = ModelProfile(name="small-coder", model="qwen2.5:1.5b")
+        chunk = (
+            json.dumps({"message": {"role": "assistant", "content": "Hel"}}).encode("utf-8")
+            + b"\n"
+            + json.dumps({"message": {"role": "assistant", "content": "lo"}}).encode("utf-8")
+            + b"\n"
+            + json.dumps(
+                {"message": {"role": "assistant", "content": ""}, "done": True}
+            ).encode("utf-8")
+            + b"\n"
+        )
+        client = OllamaClient(profile, transport=StreamingFakeTransport([chunk]))
+
+        result = client.chat([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result["message"]["content"], "Hello")
+
+    def test_streaming_uses_idle_timeout_as_socket_timeout(self):
+        profile = ModelProfile(
+            name="small-coder",
+            model="qwen2.5:1.5b",
+            timeout_seconds=7,
+            stream_idle_timeout_seconds=5.0,
+        )
+        chunks = [
+            json.dumps({"message": {"role": "assistant", "content": "ok"}, "done": True}).encode("utf-8")
+            + b"\n"
+        ]
+        transport = StreamingFakeTransport(chunks)
+        client = OllamaClient(profile, transport=transport)
+
+        client.chat([{"role": "user", "content": "hi"}])
+
+        method, path, body, headers, timeout = transport.requests[0]
+        self.assertEqual(timeout, 5.0)
+        self.assertNotEqual(timeout, 7)
+
 
 if __name__ == "__main__":
     unittest.main()

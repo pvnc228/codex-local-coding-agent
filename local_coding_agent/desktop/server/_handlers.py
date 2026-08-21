@@ -350,6 +350,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                     stderr=log_handle,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
+                log_handle.close()
                 self.server_inst.spawned_processes["ollama"] = proc
                 result = self._wait_for_ready("http://127.0.0.1:11434/api/tags", proc, "ollama")
                 if result.get("status") == "started":
@@ -393,6 +394,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                     stderr=log_handle,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
+                log_handle.close()
                 self.server_inst.spawned_processes["llama_server"] = proc
                 result = self._wait_for_ready("http://127.0.0.1:8080/v1/models", proc, "llama_server")
                 if result.get("status") == "started":

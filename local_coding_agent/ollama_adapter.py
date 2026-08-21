@@ -186,7 +186,7 @@ class OllamaClient:
             "/api/chat",
             body,
             headers,
-            self.profile.timeout_seconds,
+            self.profile.stream_idle_timeout_seconds,
         )
         content_parts: list[str] = []
         tool_calls: dict[int, dict[str, Any]] = {}
@@ -206,36 +206,39 @@ class OllamaClient:
             if now - last > idle:
                 raise OllamaError("Ollama stream idle timeout", kind="timeout")
             last = now
-            line = chunk.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(obj, dict):
-                continue
-            message = obj.get("message")
-            if isinstance(message, dict):
-                content = message.get("content")
-                if isinstance(content, str) and content:
-                    content_parts.append(content)
-                for call in message.get("tool_calls") or []:
-                    if isinstance(call, dict):
-                        idx = call.get("index")
-                        if idx is None:
-                            continue
-                        idx = int(idx)
-                        if idx in tool_calls:
-                            self._merge_ollama_tool_call(tool_calls[idx], call)
-                        else:
-                            tool_calls[idx] = self._make_ollama_tool_call(call)
-            for key in stats:
-                value = obj.get(key)
-                if value is not None:
-                    stats[key] = value
-            if obj.get("done"):
-                done = True
+            for line in chunk.decode("utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                message = obj.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    if isinstance(content, str) and content:
+                        content_parts.append(content)
+                    for call in message.get("tool_calls") or []:
+                        if isinstance(call, dict):
+                            idx = call.get("index")
+                            if idx is None:
+                                continue
+                            idx = int(idx)
+                            if idx in tool_calls:
+                                self._merge_ollama_tool_call(tool_calls[idx], call)
+                            else:
+                                tool_calls[idx] = self._make_ollama_tool_call(call)
+                for key in stats:
+                    value = obj.get(key)
+                    if value is not None:
+                        stats[key] = value
+                if obj.get("done"):
+                    done = True
+                    break
+            if done:
                 break
         if not done:
             raise OllamaError("Ollama stream closed before completion", kind="stream_closed")
@@ -423,7 +426,7 @@ class OpenAICompatibleClient:
             "/v1/chat/completions",
             body,
             headers,
-            self.profile.timeout_seconds,
+            self.profile.stream_idle_timeout_seconds,
         )
         content_parts: list[str] = []
         tool_calls: dict[int, dict[str, Any]] = {}
