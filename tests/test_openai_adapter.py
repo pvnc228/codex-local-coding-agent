@@ -194,6 +194,86 @@ class OpenAICompatibleClientTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.kind, "unsupported")
 
+    def test_model_not_found_404_triggers_resolve(self):
+        transport = FakeTransport(
+            [
+                (404, b'{"error":"model \'ling-3.0-tiny-q6k\' not found"}'),
+                (200, b'{"data":[{"id":"ling-3.0-tiny-q6k"}]}'),
+                (
+                    200,
+                    json.dumps(
+                        {
+                            "choices": [
+                                {"message": {"role": "assistant", "content": "done"}}
+                            ],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                        }
+                    ).encode("utf-8"),
+                ),
+            ]
+        )
+        client = OpenAICompatibleClient(openai_profile(), transport=transport)
+
+        result = client.chat([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result["message"]["content"], "done")
+        self.assertEqual(client._active_model_name, "ling-3.0-tiny-q6k")
+        # requests: chat(404) -> available_models -> chat(retry)
+        self.assertEqual(len(transport.requests), 3)
+        self.assertEqual(transport.requests[1]["path"], "/v1/models")
+        retry_payload = json.loads(transport.requests[2]["body"].decode("utf-8"))
+        self.assertEqual(retry_payload["model"], "ling-3.0-tiny-q6k")
+
+    def test_model_not_found_resolves_to_matching_base(self):
+        transport = FakeTransport(
+            [
+                (404, b'{"error":"model not found"}'),
+                (200, b'{"data":[{"id":"ling-3.0-tiny-q6k"}]}'),
+                (
+                    200,
+                    json.dumps(
+                        {
+                            "choices": [
+                                {"message": {"role": "assistant", "content": "done"}}
+                            ],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                        }
+                    ).encode("utf-8"),
+                ),
+            ]
+        )
+        client = OpenAICompatibleClient(
+            openai_profile(model="ling-3.0-tiny-q6k.gguf"), transport=transport
+        )
+
+        client.chat([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(client._active_model_name, "ling-3.0-tiny-q6k")
+        retry_payload = json.loads(transport.requests[2]["body"].decode("utf-8"))
+        self.assertEqual(retry_payload["model"], "ling-3.0-tiny-q6k")
+
+    def test_bad_request_400_without_model_word_does_not_switch(self):
+        transport = FakeTransport([(400, b'{"error":"invalid request body"}')])
+        client = OpenAICompatibleClient(openai_profile(), transport=transport)
+
+        with self.assertRaises(OllamaError) as ctx:
+            client.chat([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(ctx.exception.kind, "http")
+        self.assertEqual(ctx.exception.status_code, 400)
+        # only the original chat request; no fallback, no available_models
+        self.assertEqual(len(transport.requests), 1)
+
+    def test_ollama_error_carries_status_code(self):
+        transport = FakeTransport([(500, b'{"error":"boom"}')])
+        client = OpenAICompatibleClient(openai_profile(), transport=transport)
+
+        with self.assertRaises(OllamaError) as ctx:
+            client.chat([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(ctx.exception.kind, "http")
+        self.assertEqual(ctx.exception.status_code, 500)
+
     def test_nonfinite_timings_do_not_raise(self):
         transport = FakeTransport(
             [

@@ -12,9 +12,10 @@ from urllib.request import Request, urlopen
 class OllamaError(RuntimeError):
     """A normalized error returned by the Ollama adapter."""
 
-    def __init__(self, message: str, *, kind: str) -> None:
+    def __init__(self, message: str, *, kind: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.kind = kind
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,7 @@ class OllamaClient:
         if status < 200 or status >= 300:
             detail = self._error_detail(raw_body)
             suffix = f": {detail}" if detail else ""
-            raise OllamaError(f"Ollama HTTP {status}{suffix}", kind="http")
+            raise OllamaError(f"Ollama HTTP {status}{suffix}", kind="http", status_code=status)
         try:
             decoded = json.loads(raw_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -240,21 +241,21 @@ class OpenAICompatibleClient:
         try:
             decoded = self._request_json("POST", "/v1/chat/completions", payload)
         except OllamaError as err:
-            # If backend rejected specific model name, try auto-resolving to actively loaded llama-server model
-            if "not found" in str(err).lower() or "400" in str(err) or "404" in str(err):
-                try:
-                    avail = self.available_models()
-                    models_list = [m["name"] for m in avail.get("models", []) if isinstance(m, dict) and "name" in m]
-                    if models_list:
-                        self._active_model_name = models_list[0]
-                        payload["model"] = self._active_model_name
-                        decoded = self._request_json("POST", "/v1/chat/completions", payload)
-                    else:
-                        raise
-                except Exception:
-                    raise err
-            else:
+            # Only retry when the backend rejected the model name (404, or 400 that mentions the model).
+            # ponytail: single retry with a name-prefix heuristic; extend if multi-model resolution needed.
+            if not _is_model_resolvable_error(err):
                 raise
+            avail = self.available_models()
+            models_list = [m["name"] for m in avail.get("models", []) if isinstance(m, dict) and "name" in m]
+            resolved = _resolve_model_id(models_list, self.profile.model)
+            if not resolved:
+                raise err
+            self._active_model_name = resolved
+            payload["model"] = self._active_model_name
+            try:
+                decoded = self._request_json("POST", "/v1/chat/completions", payload)
+            except OllamaError:
+                raise err from None
 
         choice = _first_choice(decoded)
         message = choice.get("message") if isinstance(choice, dict) else None
@@ -311,7 +312,7 @@ class OpenAICompatibleClient:
         if status < 200 or status >= 300:
             detail = _openai_error_detail(raw_body)
             suffix = f": {detail}" if detail else ""
-            raise OllamaError(f"backend HTTP {status}{suffix}", kind="http")
+            raise OllamaError(f"backend HTTP {status}{suffix}", kind="http", status_code=status)
         try:
             decoded = json.loads(raw_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -319,6 +320,42 @@ class OpenAICompatibleClient:
         if not isinstance(decoded, dict):
             raise OllamaError("backend returned a non-object JSON value", kind="invalid_json")
         return decoded
+
+
+_MODEL_HINT_WORDS = ("model", "not found", "unknown", "does not exist", "no such")
+
+
+def _is_model_resolvable_error(err: OllamaError) -> bool:
+    """True when an http error plausibly means the model name was rejected."""
+    if err.kind != "http":
+        return False
+    if err.status_code == 404:
+        return True
+    if err.status_code == 400:
+        lower = str(err).lower()
+        return any(word in lower for word in _MODEL_HINT_WORDS)
+    return False
+
+
+def _model_base(model_id: str) -> str:
+    # strip a :tag, a /path, or a .gguf suffix — whichever comes first
+    for sep in (":", "/", ".gguf"):
+        idx = model_id.find(sep)
+        if idx != -1:
+            return model_id[:idx]
+    return model_id
+
+
+def _resolve_model_id(models: list[str], requested: str) -> str | None:
+    if not models:
+        return None
+    if requested in models:
+        return requested
+    base = _model_base(requested)
+    for model in models:
+        if _model_base(model) == base:
+            return model
+    return models[0]
 
 
 def _openai_error_detail(raw_body: bytes) -> str:

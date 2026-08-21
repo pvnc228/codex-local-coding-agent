@@ -22,8 +22,9 @@ from urllib.parse import urlparse
 
 from ..doctor import diagnose_environment
 from ..memory import ModelMemoryManager
-from ..ollama_adapter import OllamaError, build_client
-from ..profiles import get_profile, list_profiles
+from ..model_scanner import discover_llama_server_binary, get_live_system_path, get_model_registry
+from ..ollama_adapter import OllamaError, OpenAICompatibleClient, build_client
+from ..profiles import ModelProfile, get_profile, list_profiles
 from ..stats import DelegationStats
 from ..task import TaskEnvelope
 from ..validators import apply_patch, check_patch_applies
@@ -72,32 +73,6 @@ def get_nvidia_gpu_telemetry() -> dict[str, Any] | None:
     return None
 
 
-def get_live_system_path() -> str:
-    """Read fresh Windows User and System PATH from Registry so dynamically added paths work immediately."""
-    paths: list[str] = []
-    if os.name == "nt":
-        try:
-            import winreg
-            for root, subkey in [
-                (winreg.HKEY_CURRENT_USER, r"Environment"),
-                (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-            ]:
-                try:
-                    with winreg.OpenKey(root, subkey) as key:
-                        val, _ = winreg.QueryValueEx(key, "Path")
-                        if val:
-                            paths.extend(val.split(";"))
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    current_p = os.environ.get("PATH", "")
-    paths.extend(current_p.split(os.pathsep))
-    cleaned = [p.strip() for p in paths if p.strip() and Path(p.strip()).exists()]
-    return os.pathsep.join(list(dict.fromkeys(cleaned)))
-
-
 def discover_local_ollama_models() -> list[str]:
     """Query live Ollama API and scan local disk manifests for installed models."""
     models: list[str] = []
@@ -135,53 +110,43 @@ def discover_local_ollama_models() -> list[str]:
     return sorted(list(set(models)))
 
 
-def resolve_model_profile(name: str) -> Any:
-    """Resolve a profile or dynamically create a profile matching discovered models."""
-    from ..profiles import ModelProfile
-
+def resolve_model_profile(name: str, registry: Any = None) -> ModelProfile:
+    """Resolve a profile by known profile name, installed Ollama tag, or discovered GGUF model."""
+    if registry is None:
+        registry = get_model_registry()
     clean_name = name.strip()
 
-    # 1. If explicitly a llama-server model or profile
-    if "ling" in clean_name.lower() or "llama" in clean_name.lower() or "8080" in clean_name or clean_name.endswith(".gguf"):
-        return ModelProfile(
-            name=clean_name,
-            model=clean_name,
-            provider="openai",
-            endpoint="http://127.0.0.1:8080/v1",
-            num_ctx=8192,
-        )
+    # 1. Exact known profile (carries correct provider/endpoint)
+    try:
+        return get_profile(clean_name)
+    except ValueError:
+        pass
 
-    # 2. If exact match in local Ollama manifests/tags
+    # 2. Installed Ollama tag
     ollama_models = discover_local_ollama_models()
-    if clean_name in ollama_models:
+    base = clean_name.split(":", 1)[0].split("/", 1)[0]
+    if clean_name in ollama_models or base in ollama_models:
+        matched = clean_name if clean_name in ollama_models else base
         return ModelProfile(
             name=clean_name,
-            model=clean_name,
+            model=matched,
             provider="ollama",
             endpoint="http://127.0.0.1:11434",
             num_ctx=8192,
         )
 
-    # 3. Check if standard profile exists in _PROFILES
-    try:
-        prof = get_profile(clean_name)
-        if prof.provider == "ollama" and ollama_models:
-            if prof.model not in ollama_models:
-                base = clean_name.split(":")[0].replace("codex-", "")
-                matched = next((m for m in ollama_models if m.startswith(base) or base in m), None)
-                if matched:
-                    return ModelProfile(
-                        name=clean_name,
-                        model=matched,
-                        provider="ollama",
-                        endpoint=prof.endpoint,
-                        num_ctx=prof.num_ctx,
-                    )
-        return prof
-    except Exception:
-        pass
+    # 3. Discovered GGUF model
+    for discovered in registry.get_models(auto_scan=True):
+        if clean_name.lower() in (discovered.name.lower(), discovered.display_name.lower()):
+            return ModelProfile(
+                name=clean_name,
+                model=discovered.name,
+                provider="openai",
+                endpoint="http://127.0.0.1:8080",
+                num_ctx=8192,
+            )
 
-    # 4. Fallback profile
+    # 4. Fallback to Ollama profile using name as model
     return ModelProfile(
         name=clean_name,
         model=clean_name,
@@ -189,6 +154,71 @@ def resolve_model_profile(name: str) -> Any:
         endpoint="http://127.0.0.1:11434",
         num_ctx=8192,
     )
+
+
+def _classify_backend_error(error: Exception) -> str | None:
+    """Classify a backend error by normalized kind instead of OS-specific text."""
+    if isinstance(error, OllamaError):
+        if error.kind == "transport":
+            return "offline"
+        if error.kind == "http":
+            return "server_error"
+    return None
+
+
+def profile_model_is_available(profile: ModelProfile) -> bool:
+    """Return True if the profile's model is actually installed/available on a live backend."""
+    try:
+        if profile.provider == "ollama":
+            ollama_models = discover_local_ollama_models()
+            target = profile.model
+            if target in ollama_models:
+                return True
+            return target.split(":", 1)[0] in ollama_models
+        if profile.provider == "openai":
+            try:
+                avail = OpenAICompatibleClient(profile).available_models()
+                live_names = {m["name"] for m in avail.get("models", []) if isinstance(m, dict) and "name" in m}
+                if profile.model in live_names:
+                    return True
+            except Exception:
+                pass
+            gguf_names = {m.display_name for m in get_model_registry().get_models(auto_scan=True)}
+            gguf_names.update(m.name for m in get_model_registry().get_models(auto_scan=True))
+            return profile.model in gguf_names
+        return False
+    except Exception:
+        return False
+
+
+def select_available_profile(preferred: str) -> str:
+    """Return a profile name whose model is actually installed, falling back to discovered models."""
+    try:
+        if _is_known_profile(preferred) and profile_model_is_available(resolve_model_profile(preferred)):
+            return preferred
+    except Exception:
+        pass
+    try:
+        ollama_models = discover_local_ollama_models()
+        if ollama_models:
+            return ollama_models[0]
+    except Exception:
+        pass
+    try:
+        discovered = get_model_registry().get_models(auto_scan=True)
+        if discovered:
+            return discovered[0].display_name
+    except Exception:
+        pass
+    return preferred
+
+
+def _is_known_profile(name: str) -> bool:
+    try:
+        get_profile(name)
+        return True
+    except ValueError:
+        return False
 
 
 class DesktopRequestHandler(BaseHTTPRequestHandler):
@@ -517,20 +547,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "failed", "error": f"Unknown backend: {backend}"})
 
     def _find_llama_server_bin(self, custom: str | None = None) -> str | None:
-        if custom and custom.strip() and Path(custom.strip()).is_file():
-            return str(Path(custom.strip()).resolve())
-
-        env_val = os.environ.get("LLAMA_SERVER_PATH")
-        if env_val and Path(env_val.strip()).is_file():
-            return str(Path(env_val.strip()).resolve())
-
-        live_path = get_live_system_path()
-        return (
-            shutil.which("llama-server", path=live_path)
-            or shutil.which("llama-server.exe", path=live_path)
-            or shutil.which("server", path=live_path)
-            or shutil.which("server.exe", path=live_path)
-        )
+        return discover_llama_server_binary(custom)
 
     def _find_gguf_model(self, custom: str | None = None) -> str | None:
         if custom and custom.strip() and Path(custom.strip()).is_file():
@@ -570,7 +587,18 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                         client._request_json("POST", "/api/generate", {"model": prof.model, "prompt": "", "keep_alive": "10m"})
                     except OllamaError as oe:
                         if "not found" in str(oe).lower():
-                            alt = prof.model.split(":")[0] if ":" in prof.model else f"{prof.model}:latest"
+                            base = prof.model.split(":", 1)[0]
+                            candidates = [prof.model, f"{base}:latest", base]
+                            avail = set()
+                            try:
+                                for m in client.available_models().get("models", []):
+                                    if isinstance(m, dict) and "name" in m:
+                                        avail.add(m["name"])
+                            except Exception:
+                                avail = set(discover_local_ollama_models())
+                            alt = next((c for c in candidates if c in avail), None)
+                            if alt is None:
+                                raise
                             client._request_json("POST", "/api/generate", {"model": alt, "prompt": "", "keep_alive": "10m"})
                         else:
                             raise
@@ -586,13 +614,13 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                     client.complete("warmup", system="warmup", max_tokens=1)
             self._send_json({"status": "loaded", "model": model_name})
         except Exception as error:
-            err_msg = str(error)
-            if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg or "timed out" in err_msg.lower():
-                is_llama = "8080" in err_msg or "ling" in model_name.lower() or "llama" in model_name.lower()
+            kind = _classify_backend_error(error)
+            if kind == "offline":
+                is_llama = prof.provider == "openai"
                 backend_name = "llama-server (port 8080)" if is_llama else "Ollama (port 11434)"
                 self._send_json({"status": "failed", "error": f"{backend_name} is OFFLINE. Start it in Local Inference Servers."})
             else:
-                self._send_json({"status": "failed", "error": err_msg})
+                self._send_json({"status": "failed", "error": str(error)})
 
     def _handle_model_unload(self) -> None:
         data = self._read_json_body()
@@ -621,6 +649,8 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         data = self._read_json_body()
         prompt = str(data.get("prompt", "")).strip()
         profile_name = data.get("profile", self.server_inst.default_profile)
+        if profile_name == self.server_inst.default_profile:
+            profile_name = select_available_profile(profile_name)
         files = data.get("files") or []
         checks = data.get("checks") or []
 
@@ -704,15 +734,15 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 })
                 return
             except Exception as error:
-                err_msg = str(error)
-                if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg:
-                    is_llama = "8080" in err_msg or "ling" in profile_name
+                kind = _classify_backend_error(error)
+                if kind == "offline":
+                    is_llama = profile.provider == "openai"
                     server_name = "llama-server on port 8080" if is_llama else "Ollama on port 11434"
                     prescript = f"Local backend server ({server_name}) is currently OFFLINE. Click 'Start {('llama-server' if is_llama else 'Ollama')}' or launch your local engine."
                     self._send_json({"status": "failed", "error": prescript, "offline_server": "llama_server" if is_llama else "ollama"})
                     return
                 else:
-                    self._send_json({"status": "failed", "error": err_msg})
+                    self._send_json({"status": "failed", "error": str(error)})
                     return
 
         task = TaskEnvelope(
@@ -757,14 +787,14 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 "message": result.get("summary") or f"Task processed for '{prompt}'.",
             })
         except Exception as error:
-            err_msg = str(error)
-            if "10061" in err_msg or "Connection refused" in err_msg or "Failed to connect" in err_msg:
-                is_llama = "8080" in err_msg or "ling" in profile_name
+            kind = _classify_backend_error(error)
+            if kind == "offline":
+                is_llama = profile.provider == "openai"
                 server_name = "llama-server on port 8080" if is_llama else "Ollama on port 11434"
                 prescript = f"Local backend server ({server_name}) is currently OFFLINE. Click 'Start {('llama-server' if is_llama else 'Ollama')}' or launch your local engine."
                 self._send_json({"status": "failed", "error": prescript, "offline_server": "llama_server" if is_llama else "ollama"})
             else:
-                self._send_json({"status": "failed", "error": err_msg})
+                self._send_json({"status": "failed", "error": str(error)})
 
     def _handle_delegate(self) -> None:
         data = self._read_json_body()
@@ -775,7 +805,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         try:
             from ..controller import Controller
             task = TaskEnvelope.from_mapping(raw_task)
-            profile = get_profile(profile_name)
+            profile = resolve_model_profile(profile_name)
             client = build_client(profile)
             controller = Controller(client, self.server_inst.workspace)
             result = controller.run(task, apply=apply_flag)
