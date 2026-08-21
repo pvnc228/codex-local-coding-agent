@@ -1,129 +1,32 @@
-"""Bounded tool loop between a task envelope and an Ollama-compatible model."""
-
 from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from threading import Event, Thread
 
-from typing import Any, Protocol
+from typing import Any
 
-from .atomizer import TaskBudget, preflight
-from .context_manager import (
+from .. import controller as _controller_pkg
+from ..atomizer import TaskBudget, preflight
+from ..context_manager import (
     ContextAssembler,
     HarnessState,
     compact_tool_exchanges,
     purge_diff_residues,
 )
-from .prescriptions import json_syntax_prescription, prescribe_all, tool_policy_prescription
-from .repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
-from .task import TaskEnvelope
-from .validators import apply_patch, validate_candidate
+from ..prescriptions import json_syntax_prescription, prescribe_all, tool_policy_prescription
+from ..repository_tools import BoundedRepositoryTools, ToolCancelled, ToolPolicyError
+from ..task import TaskEnvelope
+from ..validators import validate_candidate
+from ._constants import SYSTEM_CONTRACT, TOOL_DEFINITIONS, ModelClient
+from ._post_apply import run_post_apply_checks
 
 
-SYSTEM_CONTRACT = """Ты локальный coding-subagent для одной атомарной задачи.
-Работай только в пределах task envelope.
-Не выдумывай отсутствующий контекст.
-Не утверждай, что запускал тесты или менял файлы без результата инструмента.
-Используй только предоставленные инструменты.
-Для файлов используй только относительные пути из task allowlist; абсолютные пути и '..' запрещены.
-Если данных не хватает, задай один точный вопрос.
-Патч должен быть минимальным и затрагивать только разрешённые файлы.
-Для propose_patch предпочтителен SEARCH/REPLACE (edits: file+search+replace, номера строк не нужны) либо полный unified diff с корректными hunk headers. Применимость проверяют validator и git. В search копируй старый код точно, включая ведущие пробелы каждой строки.
-После завершения верни один JSON без markdown: {"status":"candidate","summary":"...","patch":"<diff>","checks":[],"risks":[]}. Вместо "patch" можно "edits":[{"file","search","replace"}]. Патч из propose_patch можно не дублировать."""
-
-
-TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files",
-            "description": "List bounded files below a workspace-relative directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read one UTF-8 file from the task allowlist.",
-            "parameters": {
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_text",
-            "description": "Search text in bounded allowlisted files.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "paths": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_patch",
-            "description": (
-                "Return a complete change proposal without writing files. "
-                "Prefer SEARCH/REPLACE: a list of edits, each with file+search+replace "
-                "(no line numbers needed). Copy search BYTE-FOR-BYTE from the file "
-                "including every leading space/indent of each line. Example: "
-                "{\"edits\":[{\"file\":\"src/a.py\",\"search\":\"def f(x):\\n    return x+1\","
-                "\"replace\":\"def f(x):\\n    return x+2\"}]}. "
-                "Alternatively provide one unified diff with diff --git, ---, +++ and "
-                "valid hunk headers. Use real newlines and relative allowlisted paths. "
-                "Applicability is checked by the controller-owned validator and git."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patch": {"type": "string"},
-                    "edits": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "file": {"type": "string"},
-                                "search": {"type": "string"},
-                                "replace": {"type": "string"},
-                            },
-                            "required": ["file", "search", "replace"],
-                        },
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_tests",
-            "description": "Run exactly one command from the task checks allowlist.",
-            "parameters": {
-                "type": "object",
-                "properties": {"command": {"type": "string"}},
-                "required": ["command"],
-            },
-        },
-    },
-]
-
-
-class ModelClient(Protocol):
-    def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]]) -> dict[str, Any]: ...
+# apply_patch is resolved through the package namespace at call time so that
+# tests patching `local_coding_agent.controller.apply_patch` keep working
+# (the name is re-exported by the package __init__).
+def _apply_patch(*args, **kwargs):
+    return _controller_pkg.apply_patch(*args, **kwargs)
 
 
 class Controller:
@@ -533,7 +436,7 @@ class Controller:
                     )
                     audit.append({"event": "apply_rejected", "reason": "apply_requires_checks"})
                 else:
-                    applied, apply_detail = apply_patch(self.workspace_root, patch)
+                    applied, apply_detail = _apply_patch(self.workspace_root, patch)
                     if not applied:
                         result["status"] = "rejected"
                         self._add_risk(
@@ -549,7 +452,7 @@ class Controller:
                                 task, tools, active_cancel, audit
                             )
                         except ToolCancelled:
-                            rollback_ok, rollback_detail = apply_patch(
+                            rollback_ok, rollback_detail = _apply_patch(
                                 self.workspace_root, patch, reverse=True
                             )
                             result["status"] = "failed"
@@ -563,7 +466,7 @@ class Controller:
                                     {"event": "rollback_failed", "detail": rollback_detail}
                                 )
                         except ToolPolicyError as error:
-                            rollback_ok, rollback_detail = apply_patch(
+                            rollback_ok, rollback_detail = _apply_patch(
                                 self.workspace_root, patch, reverse=True
                             )
                             result["status"] = "rejected"
@@ -587,7 +490,7 @@ class Controller:
                                 result["applied"] = True
                                 audit.append({"event": "post_apply_checks_passed"})
                             else:
-                                rollback_ok, rollback_detail = apply_patch(
+                                rollback_ok, rollback_detail = _apply_patch(
                                     self.workspace_root, patch, reverse=True
                                 )
                                 result["status"] = "rejected"
@@ -860,45 +763,3 @@ class Controller:
             },
             "audit": audit,
         }
-
-
-def run_post_apply_checks(
-    task: TaskEnvelope,
-    tools: BoundedRepositoryTools,
-    *,
-    active_cancel: Event | None,
-    audit: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool]:
-    """Run each allowlisted check against the already-applied workspace.
-
-    Module-level so the mediated apply path in ``DelegationService`` reuses the
-    exact same evidence contract without re-entering the model loop. Raises
-    ``ToolCancelled`` when cancellation is requested between checks.
-    """
-    checks: list[dict[str, Any]] = []
-    if not task.checks:
-        raise ToolPolicyError("at least one targeted check is required before apply")
-    for command in task.checks:
-        if active_cancel is not None and active_cancel.is_set():
-            raise ToolCancelled("task was cancelled")
-        check = tools.execute("run_tests", {"command": command})
-        observed = {
-            "command": command,
-            "passed": check["passed"],
-            "evidence": check["evidence"],
-            "stdout": check.get("stdout", ""),
-            "stderr": check.get("stderr", ""),
-            "exit_code": check.get("exit_code"),
-        }
-        checks.append(observed)
-        audit.append(
-            {
-                "event": "post_apply_check",
-                "command": command,
-                "passed": check["passed"],
-                "exit_code": check.get("exit_code"),
-                "stdout": check.get("stdout", ""),
-                "stderr": check.get("stderr", ""),
-            }
-        )
-    return checks, all(check["passed"] for check in checks)

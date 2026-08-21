@@ -1,9 +1,4 @@
-"""Desktop API and Webview HTTP Server for Local AI Coding Harness.
-
-Provides real hardware GPU telemetry directly from nvidia-smi, multi-backend probing
-(Ollama & llama-server), live model discovery, server process controls, model load/unload
-VRAM management, real workspace file introspection, and mediated execution with auto-rollback.
-"""
+"""HTTP request handler serving the Desktop UI and REST endpoints."""
 
 from __future__ import annotations
 
@@ -11,214 +6,24 @@ import json
 import os
 import shutil
 import subprocess
-import threading
 import time
 import urllib.request
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ..doctor import diagnose_environment
-from ..memory import ModelMemoryManager
-from ..model_scanner import discover_llama_server_binary, get_live_system_path, get_model_registry
-from ..ollama_adapter import OllamaError, OpenAICompatibleClient, build_client
-from ..profiles import ModelProfile, get_profile, list_profiles
-from ..stats import DelegationStats
-from ..task import TaskEnvelope
-from ..validators import apply_patch, check_patch_applies
-from .ui import DESKTOP_HTML_TEMPLATE
-
-
-def get_nvidia_gpu_telemetry() -> dict[str, Any] | None:
-    """Query live GPU hardware metrics directly from nvidia-smi."""
-    try:
-        res = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=memory.used,memory.total,utilization.gpu,name,temperature.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=1.5,
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            first_line = res.stdout.strip().splitlines()[0]
-            parts = [p.strip() for p in first_line.split(",")]
-            if len(parts) >= 4:
-                used_mb = float(parts[0])
-                total_mb = float(parts[1])
-                util_gpu = float(parts[2])
-                name = parts[3]
-                temp_c = float(parts[4]) if len(parts) > 4 else None
-                used_gb = round(used_mb / 1024, 1)
-                total_gb = round(total_mb / 1024, 1)
-                percent = round((used_mb / total_mb) * 100, 1) if total_mb > 0 else 0.0
-                return {
-                    "gpu_name": name,
-                    "used_mb": round(used_mb, 1),
-                    "total_mb": round(total_mb, 1),
-                    "used_gb": used_gb,
-                    "total_gb": total_gb,
-                    "percent": percent,
-                    "utilization_pct": util_gpu,
-                    "temp_c": temp_c,
-                    "source": "nvidia-smi",
-                }
-    except Exception:
-        pass
-    return None
-
-
-def discover_local_ollama_models() -> list[str]:
-    """Query live Ollama API and scan local disk manifests for installed models."""
-    models: list[str] = []
-    # 1. Probe live endpoint
-    try:
-        req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
-        with urllib.request.urlopen(req, timeout=0.3) as resp:
-            if resp.status == 200:
-                tags_data = json.loads(resp.read().decode("utf-8"))
-                for m in tags_data.get("models", []):
-                    if isinstance(m, dict) and "name" in m:
-                        models.append(m["name"])
-                if models:
-                    return sorted(list(set(models)))
-    except Exception:
-        pass
-
-    # 2. Disk manifests inspection in ~/.ollama/models/manifests
-    manifest_root = Path.home() / ".ollama" / "models" / "manifests"
-    if manifest_root.exists():
-        try:
-            for reg in manifest_root.iterdir():
-                if reg.is_dir():
-                    for user_or_lib in reg.iterdir():
-                        if user_or_lib.is_dir():
-                            for model_dir in user_or_lib.iterdir():
-                                if model_dir.is_dir():
-                                    for tag_file in model_dir.iterdir():
-                                        if tag_file.is_file():
-                                            prefix = "" if user_or_lib.name == "library" else f"{user_or_lib.name}/"
-                                            models.append(f"{prefix}{model_dir.name}:{tag_file.name}")
-        except Exception:
-            pass
-
-    return sorted(list(set(models)))
-
-
-def resolve_model_profile(name: str, registry: Any = None) -> ModelProfile:
-    """Resolve a profile by known profile name, installed Ollama tag, or discovered GGUF model."""
-    if registry is None:
-        registry = get_model_registry()
-    clean_name = name.strip()
-
-    # 1. Exact known profile (carries correct provider/endpoint)
-    try:
-        return get_profile(clean_name)
-    except ValueError:
-        pass
-
-    # 2. Installed Ollama tag
-    ollama_models = discover_local_ollama_models()
-    base = clean_name.split(":", 1)[0].split("/", 1)[0]
-    if clean_name in ollama_models or base in ollama_models:
-        matched = clean_name if clean_name in ollama_models else base
-        return ModelProfile(
-            name=clean_name,
-            model=matched,
-            provider="ollama",
-            endpoint="http://127.0.0.1:11434",
-            num_ctx=8192,
-        )
-
-    # 3. Discovered GGUF model
-    for discovered in registry.get_models(auto_scan=True):
-        if clean_name.lower() in (discovered.name.lower(), discovered.display_name.lower()):
-            return ModelProfile(
-                name=clean_name,
-                model=discovered.name,
-                provider="openai",
-                endpoint="http://127.0.0.1:8080",
-                num_ctx=8192,
-            )
-
-    # 4. Fallback to Ollama profile using name as model
-    return ModelProfile(
-        name=clean_name,
-        model=clean_name,
-        provider="ollama",
-        endpoint="http://127.0.0.1:11434",
-        num_ctx=8192,
-    )
-
-
-def _classify_backend_error(error: Exception) -> str | None:
-    """Classify a backend error by normalized kind instead of OS-specific text."""
-    if isinstance(error, OllamaError):
-        if error.kind == "transport":
-            return "offline"
-        if error.kind == "http":
-            return "server_error"
-    return None
-
-
-def profile_model_is_available(profile: ModelProfile) -> bool:
-    """Return True if the profile's model is actually installed/available on a live backend."""
-    try:
-        if profile.provider == "ollama":
-            ollama_models = discover_local_ollama_models()
-            target = profile.model
-            if target in ollama_models:
-                return True
-            return target.split(":", 1)[0] in ollama_models
-        if profile.provider == "openai":
-            try:
-                avail = OpenAICompatibleClient(profile).available_models()
-                live_names = {m["name"] for m in avail.get("models", []) if isinstance(m, dict) and "name" in m}
-                if profile.model in live_names:
-                    return True
-            except Exception:
-                pass
-            gguf_names = {m.display_name for m in get_model_registry().get_models(auto_scan=True)}
-            gguf_names.update(m.name for m in get_model_registry().get_models(auto_scan=True))
-            return profile.model in gguf_names
-        return False
-    except Exception:
-        return False
-
-
-def select_available_profile(preferred: str) -> str:
-    """Return a profile name whose model is actually installed, falling back to discovered models."""
-    try:
-        if _is_known_profile(preferred) and profile_model_is_available(resolve_model_profile(preferred)):
-            return preferred
-    except Exception:
-        pass
-    try:
-        ollama_models = discover_local_ollama_models()
-        if ollama_models:
-            return ollama_models[0]
-    except Exception:
-        pass
-    try:
-        discovered = get_model_registry().get_models(auto_scan=True)
-        if discovered:
-            return discovered[0].display_name
-    except Exception:
-        pass
-    return preferred
-
-
-def _is_known_profile(name: str) -> bool:
-    try:
-        get_profile(name)
-        return True
-    except ValueError:
-        return False
+from ...doctor import diagnose_environment
+from ...memory import ModelMemoryManager
+from ...model_scanner import discover_llama_server_binary, get_live_system_path
+from ...ollama_adapter import OllamaError, build_client
+from ...profiles import get_profile, list_profiles
+from ...task import TaskEnvelope
+from ...validators import apply_patch, check_patch_applies
+from ..ui import DESKTOP_HTML_TEMPLATE
+from ._models import _classify_backend_error, discover_local_ollama_models, resolve_model_profile, select_available_profile
+from ._telemetry import get_nvidia_gpu_telemetry
 
 
 class DesktopRequestHandler(BaseHTTPRequestHandler):
@@ -399,7 +204,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        from ..model_scanner import get_model_registry
+        from ...model_scanner import get_model_registry
         discovered_ggufs = [m.to_dict() for m in get_model_registry().get_models(auto_scan=True)]
 
         self._send_json({
@@ -413,7 +218,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_model_scan(self) -> None:
-        from ..model_scanner import get_model_registry
+        from ...model_scanner import get_model_registry
         data = self._read_json_body()
         deep = bool(data.get("deep", False))
         registry = get_model_registry()
@@ -421,7 +226,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"status": "ok", "total_models": len(models), "models": [m.to_dict() for m in models]})
 
     def _handle_model_add_dir(self) -> None:
-        from ..model_scanner import get_model_registry
+        from ...model_scanner import get_model_registry
         data = self._read_json_body()
         path_val = data.get("path", "").strip()
         if not path_val or not Path(path_val).is_dir():
@@ -431,7 +236,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"status": "added" if added else "already_present", "path": path_val})
 
     def _handle_model_remove_dir(self) -> None:
-        from ..model_scanner import get_model_registry
+        from ...model_scanner import get_model_registry
         data = self._read_json_body()
         path_val = data.get("path", "").strip()
         removed = get_model_registry().remove_custom_directory(path_val)
@@ -820,7 +625,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            from ..controller import Controller
+            from ...controller import Controller
             profile = resolve_model_profile(profile_name)
             client = build_client(profile)
             controller = Controller(client, workspace)
@@ -870,7 +675,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
         apply_flag = bool(data.get("apply", False))
 
         try:
-            from ..controller import Controller
+            from ...controller import Controller
             task = TaskEnvelope.from_mapping(raw_task)
             profile = resolve_model_profile(profile_name)
             client = build_client(profile)
@@ -1020,93 +825,3 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         del format, args
-
-
-class DesktopServer:
-    """Desktop Harness embedded HTTP server with persistent storage and process orchestration."""
-
-    def __init__(
-        self,
-        host: str = "127.0.0.1",
-        port: int = 0,
-        workspace: str | Path = ".",
-        default_profile: str = "qwen2.5-coder",
-        stats: DelegationStats | None = None,
-    ) -> None:
-        self.host = host
-        self.port = port
-        self.workspace = str(Path(workspace).resolve())
-        self.default_profile = default_profile
-        self.stats = stats or DelegationStats()
-        self.started_at = time.monotonic()
-        self.spawned_processes: dict[str, subprocess.Popen[Any]] = {}
-        self.sessions_file = Path(self.workspace) / ".local_agent_sessions.json"
-        self._httpd = ThreadingHTTPServer((host, port), DesktopRequestHandler)
-        self._httpd.desktop_server = self  # type: ignore[attr-defined]
-        self._thread: threading.Thread | None = None
-
-    @property
-    def actual_port(self) -> int:
-        return self._httpd.server_address[1]
-
-    @property
-    def url(self) -> str:
-        return f"http://{self.host}:{self.actual_port}"
-
-    def load_sessions(self) -> list[dict[str, Any]]:
-        if self.sessions_file.exists():
-            try:
-                data = json.loads(self.sessions_file.read_text(encoding="utf-8"))
-                if isinstance(data, list):
-                    return data
-            except Exception:
-                pass
-        return []
-
-    def save_session(self, session: dict[str, Any]) -> None:
-        sessions = self.load_sessions()
-        sessions = [s for s in sessions if s.get("id") != session.get("id")]
-        sessions.insert(0, session)
-        try:
-            self.sessions_file.write_text(json.dumps(sessions[:50], indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
-
-    def start(self) -> None:
-        if self._thread is not None:
-            return
-        self._thread = threading.Thread(
-            target=self._httpd.serve_forever,
-            name="local-agent-desktop-http",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def stop(self) -> None:
-        for name, proc in list(self.spawned_processes.items()):
-            try:
-                if os.name == "nt":
-                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
-                else:
-                    proc.terminate()
-                    proc.wait(timeout=2.0)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-        self.spawned_processes.clear()
-
-        if self._thread is None:
-            return
-        self._httpd.shutdown()
-        self._httpd.server_close()
-        self._thread.join(timeout=3.0)
-        self._thread = None
-
-    def __enter__(self) -> DesktopServer:
-        self.start()
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        self.stop()

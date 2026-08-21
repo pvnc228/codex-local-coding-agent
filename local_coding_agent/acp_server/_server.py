@@ -1,297 +1,40 @@
-"""Universal Agent Client Protocol (ACP) Server & Interop Gateway (R29).
-
-Adapted from DeepSeek Harness @deepseek-ai/dsh-acp.
-Implements the standard JSON-RPC 2.0 Agent Client Protocol over stdio with
-both Content-Length header and newline-delimited JSONL framing support.
-Exposes session lifecycle, prompting, cancellation, and repo tools to
-external AI-native editors (Zed, Cursor, VS Code, JetBrains, OpenCode).
-"""
+"""ACP Server implementation (JSON-RPC 2.0 stdio event loop and handlers)."""
 
 from __future__ import annotations
 
-import io
 import json
-import os
 import subprocess
 import sys
 import threading
-import time
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Mapping, Sequence, TextIO
+from typing import Any, BinaryIO, Callable, TextIO
 
-from .ast_compactor import skeletonize_file
-from .controller import Controller
-from .lsp import LspManager
-from .ollama_adapter import ModelProfile, OllamaError, build_client
-from .profiles import get_profile
-from .ripgrep import ripgrep_search
-from .semantic_linter import lint_patch_in_memory
-from .spill import read_spill
-from .task import TaskEnvelope
-from .validators import check_patch_applies
+from ..ast_compactor import skeletonize_file
+from ..controller import Controller
+from ..lsp import LspManager
+from ..ollama_adapter import ModelProfile, OllamaError, build_client  # noqa: F401
+from ..profiles import get_profile
+from ..ripgrep import ripgrep_search
+from ..semantic_linter import lint_patch_in_memory
+from ..spill import read_spill
+from ..task import TaskEnvelope
+from ..validators import check_patch_applies
 
+from ._codec import AcpCodec
+from ._protocol import (
+    JSONRPC_INTERNAL_ERROR,
+    JSONRPC_INVALID_PARAMS,
+    JSONRPC_INVALID_REQUEST,
+    JSONRPC_METHOD_NOT_FOUND,
+    JSONRPC_PARSE_ERROR,
+    PROTOCOL_VERSION,
+    SERVER_NAME,
+    SERVER_VERSION,
+)
+from ._session import AcpSession
+from ._tools import ACP_TOOLS
 
-# ============================================================================
-# Protocol Constants & Error Codes
-# ============================================================================
-
-PROTOCOL_VERSION: str = "2026-08-20"
-SERVER_NAME: str = "local-coding-agent-acp"
-SERVER_VERSION: str = "0.8.0"
-
-JSONRPC_PARSE_ERROR: int = -32700
-JSONRPC_INVALID_REQUEST: int = -32600
-JSONRPC_METHOD_NOT_FOUND: int = -32601
-JSONRPC_INVALID_PARAMS: int = -32602
-JSONRPC_INTERNAL_ERROR: int = -32603
-
-
-# ============================================================================
-# Tool Catalog Schemas
-# ============================================================================
-
-ACP_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "spill_read",
-        "description": "Read or paginate a spilled tool output artifact (R24).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "locator": {"type": "string", "description": "Spill locator token (e.g. locator:spill:... or path)"},
-                "offset": {"type": "integer", "description": "0-based line offset", "default": 0},
-                "limit": {"type": "integer", "description": "Maximum number of lines to read", "default": 1000},
-            },
-            "required": ["locator"],
-        },
-    },
-    {
-        "name": "grep",
-        "description": "Fast ripgrep / regex code search across workspace (R24).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query or regex pattern"},
-                "paths": {"type": "array", "items": {"type": "string"}, "description": "Optional glob filters or paths"},
-                "regex": {"type": "boolean", "description": "Treat query as regular expression", "default": False},
-                "case_sensitive": {"type": "boolean", "description": "Perform case-sensitive matching", "default": False},
-                "max_results": {"type": "integer", "description": "Maximum match results", "default": 100},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "lsp",
-        "description": "Run LSP code intelligence query (definition, references, hover, symbols) (R25).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["definition", "references", "hover", "symbols"],
-                    "description": "LSP operation",
-                },
-                "file": {"type": "string", "description": "Target source file path"},
-                "line": {"type": "integer", "description": "0-based line number", "default": 0},
-                "char": {"type": "integer", "description": "0-based character/column offset", "default": 0},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-            },
-            "required": ["operation", "file"],
-        },
-    },
-    {
-        "name": "skeletonize",
-        "description": "Parse and skeletonize code symbols using AST compactor (R17).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "file": {"type": "string", "description": "Target source file path"},
-                "symbols": {"type": "array", "items": {"type": "string"}, "description": "Target symbols to retain in full"},
-            },
-            "required": ["file"],
-        },
-    },
-    {
-        "name": "lint_patch",
-        "description": "Fast pre-test semantic linter checking patch in memory (R18).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "patch": {"type": "string", "description": "Unified diff or SEARCH/REPLACE patch to check"},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-            },
-            "required": ["patch"],
-        },
-    },
-    {
-        "name": "read_file",
-        "description": "Read one UTF-8 file from workspace.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path relative to workspace"},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "list_files",
-        "description": "List files below workspace directory.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Directory path relative to workspace", "default": "."},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-            },
-        },
-    },
-    {
-        "name": "run_tests",
-        "description": "Run test or shell check command in workspace.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell command to execute"},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-                "timeout": {"type": "number", "description": "Timeout in seconds", "default": 60},
-            },
-            "required": ["command"],
-        },
-    },
-    {
-        "name": "propose_patch",
-        "description": "Validate whether a patch applies cleanly to the workspace.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "patch": {"type": "string", "description": "Patch content to validate"},
-                "workspace": {"type": "string", "description": "Workspace root directory override"},
-            },
-            "required": ["patch"],
-        },
-    },
-]
-
-
-# ============================================================================
-# Stdio Framing Codec (Content-Length / JSONL)
-# ============================================================================
-
-class AcpCodec:
-    """Header & line framing codec for JSON-RPC 2.0 stdio."""
-
-    @staticmethod
-    def read_message(stream: Any, max_bytes: int = 10 * 1024 * 1024) -> tuple[dict[str, Any] | None, str]:
-        """Read a single JSON-RPC message from a binary or text stream.
-
-        Returns:
-            (message_dict, framing_type) where framing_type is "content-length" or "jsonl".
-            Returns (None, "") on EOF.
-        """
-        while True:
-            line = stream.readline()
-            if not line:
-                return None, ""
-            if isinstance(line, bytes):
-                line_str = line.decode("utf-8", errors="replace").strip()
-            else:
-                line_str = str(line).strip()
-            if line_str:
-                break
-
-        # Check for Content-Length header
-        if line_str.lower().startswith("content-length:"):
-            try:
-                parts = line_str.split(":", 1)
-                if len(parts) < 2:
-                    raise ValueError(f"Invalid Content-Length header: {line_str}")
-                content_length = int(parts[1].strip())
-            except ValueError:
-                raise ValueError(f"Invalid Content-Length header: {line_str}")
-
-            if content_length < 0:
-                raise ValueError(f"Content-Length must be non-negative: {content_length}")
-            if content_length > max_bytes:
-                raise ValueError(f"Content-Length {content_length} exceeds max allowed {max_bytes} bytes")
-
-            # Read remaining headers until empty line (bounded against header floods)
-            header_count = 0
-            while True:
-                header_line = stream.readline()
-                if not header_line:
-                    break
-                header_count += 1
-                if header_count > 50:
-                    raise ValueError("Too many header lines in request (max 50)")
-                if isinstance(header_line, bytes):
-                    h_str = header_line.decode("utf-8", errors="replace").strip()
-                else:
-                    h_str = str(header_line).strip()
-                if not h_str:
-                    break
-
-            # Read exact content_length bytes
-            body = stream.read(content_length)
-            if isinstance(body, bytes):
-                if len(body) < content_length:
-                    raise ValueError(f"Unexpected EOF reading message body: expected {content_length} bytes, got {len(body)}")
-                body_str = body.decode("utf-8", errors="replace")
-            else:
-                body_str = str(body)
-                if len(body_str.encode("utf-8")) < content_length and len(body_str) < content_length:
-                    raise ValueError(f"Unexpected EOF reading message body: expected {content_length} bytes")
-
-            parsed = json.loads(body_str)
-            if not isinstance(parsed, dict):
-                raise ValueError("JSON-RPC message must be an object")
-            return parsed, "content-length"
-        else:
-            # JSONL framing
-            if len(line_str.encode("utf-8")) > max_bytes:
-                raise ValueError(f"JSONL line exceeds max allowed {max_bytes} bytes")
-            parsed = json.loads(line_str)
-            if not isinstance(parsed, dict):
-                raise ValueError("JSON-RPC message must be an object")
-            return parsed, "jsonl"
-
-    @staticmethod
-    def format_message(message: dict[str, Any], framing: str = "jsonl") -> bytes:
-        """Format a JSON-RPC message dictionary into framed bytes."""
-        raw_json = json.dumps(message, ensure_ascii=False)
-        encoded = raw_json.encode("utf-8")
-        if framing == "content-length":
-            header = f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii")
-            return header + encoded
-        else:
-            return encoded + b"\n"
-
-
-# ============================================================================
-# Session Model
-# ============================================================================
-
-@dataclass
-class AcpSession:
-    """An active Agent Client Protocol session."""
-
-    session_id: str
-    workspace_path: Path
-    profile: str
-    history: list[dict[str, Any]] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    cancel_event: threading.Event = field(default_factory=threading.Event)
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    active_prompt: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-# ============================================================================
-# ACP Server Implementation
-# ============================================================================
 
 class AcpServer:
     """Standard JSON-RPC 2.0 ACP Server & Interop Gateway."""
