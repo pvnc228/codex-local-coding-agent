@@ -38,6 +38,13 @@ from ._models import (
 )
 from ._telemetry import get_nvidia_gpu_telemetry
 
+# Bounded recent-prompt history feeding the hybrid mode router's isolated
+# context. Kept module-level (not on server state) so DesktopServer.__init__
+# needs no change. Mutations are guarded by server_inst.apply_lock; a deque
+# could replace the list if it ever needs to grow past a small bound.
+_MAX_RECENT_PROMPTS = 6
+_recent_prompts: list[str] = []
+
 
 class DesktopRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler serving the Desktop UI and REST endpoints."""
@@ -748,6 +755,135 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "failed", "error": "Prompt cannot be empty"})
             return
 
+        from ...mode_router import MODES, classify_mode
+
+        # Resolve the user-selected interaction mode. Invalid / missing falls
+        # back to "hybrid" (auto-classify to chat/build/plan).
+        raw_mode = data.get("mode")
+        mode = raw_mode if raw_mode in MODES else "hybrid"
+        if mode == "hybrid":
+            # Keep a bounded recent-prompt history for the router's isolated context.
+            with self.server_inst.apply_lock:
+                _recent_prompts.append(prompt)
+                del _recent_prompts[:-_MAX_RECENT_PROMPTS]
+                recent_snapshot = list(_recent_prompts)
+            router = None
+            try:
+                from ...mode_router import build_mode_router
+
+                # Small default profile in the isolated context, never the main profile.
+                router = build_mode_router()
+            except Exception:
+                router = None  # ponytail: deterministic fallback, never break chat
+            mode = classify_mode(
+                prompt,
+                current_mode=None,
+                router=router,
+                n_every=3,
+                counter=self.server_inst.hybrid_counter,
+                recent_prompts=recent_snapshot,
+            )
+            with self.server_inst.apply_lock:
+                self.server_inst.hybrid_counter += 1
+
+        # Plain conversational completion for chat mode — never runs the Controller.
+        if mode == "chat":
+            reply = None
+            try:
+                profile = resolve_model_profile(profile_name)
+                client = build_client(profile)
+                resp = client.chat([
+                    {"role": "system", "content": "You are a concise local coding assistant."},
+                    {"role": "user", "content": prompt},
+                ])
+                reply = (resp.get("message") or {}).get("content")
+            except Exception:
+                reply = None
+            self._send_json({
+                "status": "completed",
+                "mode": "chat",
+                "task_id": f"greet-{int(time.time())}",
+                "prompt": prompt,
+                "profile": profile_name,
+                "file": "workspace",
+                "patch": "",
+                "thinking": "Conversational intent detected.",
+                "testResult": "READY",
+                "checks": [],
+                "message": reply or (
+                    f"Hello! Connected to `{profile_name}`. "
+                    "Please give me a specific coding task, bug fix, or refactoring goal "
+                    "(e.g. 'Fix off-by-one in sliding window' or 'Write unit tests for tax logic')."
+                ),
+            })
+            return
+
+        workspace = self.server_inst.workspace
+        if not files:
+            files = self._detect_relevant_files(workspace, prompt)
+        if not checks:
+            checks = self._detect_test_checks(workspace)
+
+        task_id = f"task-{int(time.time())}"
+
+        # Read-only planning for plan mode — never produces a patch, always
+        # returns a PlanArtifact. Failures degrade to an empty plan, never raise.
+        if mode == "plan":
+            try:
+                from ...plan_mode import PlanArtifact
+                from ...controller import Controller
+                profile = resolve_model_profile(profile_name)
+                client = build_client(profile)
+                task = TaskEnvelope(
+                    id=task_id,
+                    goal=prompt,
+                    files=tuple(files),
+                    checks=tuple(checks),
+                )
+                # Read-only enforcement at the tool-policy layer: block the two
+                # tools that mutate the workspace so plan mode cannot patch.
+                controller = Controller(
+                    client, workspace,
+                    blocked_tools={"propose_patch", "run_tests"},
+                )
+                result = controller.run(task, apply=False)
+
+                summary = result.get("summary") or ""
+                steps = [summary] if summary else []
+                risks = result.get("risks") or []
+                files_to_modify = list(files)
+                plan = PlanArtifact(
+                    goal=prompt,
+                    steps=[str(s) for s in steps],
+                    risks=[str(r) if isinstance(r, str) else str(r.get("message", "")) for r in risks],
+                    files_to_modify=[str(f) for f in files_to_modify],
+                )
+                plan_dict = plan.to_dict()
+                message = summary or f"Plan generated for '{prompt}'."
+            except Exception as error:
+                plan_dict = {
+                    "goal": prompt,
+                    "steps": [],
+                    "risks": [],
+                    "files_to_modify": list(files),
+                }
+                message = f"Could not generate a detailed plan: {error}"
+            self._send_json({
+                "status": "completed",
+                "mode": "plan",
+                "task_id": task_id,
+                "prompt": prompt,
+                "profile": profile_name,
+                "plan": plan_dict,
+                "file": "workspace",
+                "patch": "",
+                "thinking": "Plan mode: read-only exploration produced a plan.",
+                "testResult": "READY",
+                "checks": [],
+                "message": message,
+            })
+            return
+
         # Friendly conversational / small-talk handling. The Controller tool-loop
         # demands structured JSON that small models can't reliably emit for
         # non-coding prompts, so route small talk to a plain completion.
@@ -774,6 +910,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 reply = None
             self._send_json({
                 "status": "completed",
+                "mode": mode,
                 "task_id": f"greet-{int(time.time())}",
                 "prompt": prompt,
                 "profile": profile_name,
@@ -790,14 +927,6 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
-        workspace = self.server_inst.workspace
-        if not files:
-            files = self._detect_relevant_files(workspace, prompt)
-        if not checks:
-            checks = self._detect_test_checks(workspace)
-
-        task_id = f"task-{int(time.time())}"
-
         # Informational / Code Inquiry Handling (e.g. "read main.py and tell me what it does", "explain foo")
         info_prefixes = ("read ", "explain ", "what ", "how ", "tell me ", "show ", "опиши ", "прочитай ", "что делает ", "как ", "покажи ")
         if any(prompt.lower().startswith(p) for p in info_prefixes):
@@ -807,13 +936,17 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                     profile = replace(profile, num_predict=2048)
                 client = build_client(profile)
                 target_file = files[0] if files else "src/main.py"
-                target_path = Path(workspace) / target_file
+                # Strict Scope Boundary (server-enforced, mirrors apply): normalize
+                # and verify the resolved path stays inside the workspace before
+                # reading. An absolute path or `../` escapes the workspace -> skip.
+                workspace_root = Path(workspace).resolve()
                 content_snippet = ""
-                if target_path.is_file():
-                    try:
-                        content_snippet = target_path.read_text(encoding="utf-8", errors="replace")[:6000]
-                    except Exception:
-                        pass
+                try:
+                    resolved = (workspace_root / target_file).resolve()
+                    if resolved.is_relative_to(workspace_root) and resolved.is_file():
+                        content_snippet = resolved.read_text(encoding="utf-8", errors="replace")[:6000]
+                except Exception:
+                    pass
 
                 messages = [
                     {"role": "system", "content": f"You are a helpful coding assistant. Workspace target file: {target_file}\nFile content:\n```\n{content_snippet}\n```"},
@@ -825,6 +958,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
                 session_record = {
                     "id": task_id,
                     "type": "user",
+                    "mode": mode,
                     "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
                     "file": target_file,
                     "patch": "",
@@ -836,6 +970,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
                 self._send_json({
                     "status": "completed",
+                    "mode": mode,
                     "task_id": task_id,
                     "prompt": prompt,
                     "profile": profile_name,
@@ -891,6 +1026,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
             session_record = {
                 "id": task_id,
                 "type": "user",
+                "mode": mode,
                 "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
                 "file": target_file,
                 "patch": patch_content,
@@ -902,6 +1038,7 @@ class DesktopRequestHandler(BaseHTTPRequestHandler):
 
             self._send_json({
                 "status": result.get("status", "completed"),
+                "mode": mode,
                 "task_id": task_id,
                 "prompt": prompt,
                 "profile": profile_name,

@@ -103,6 +103,7 @@ The controller is runtime-agnostic and natively supports two local inference bac
 - **Tool Output Spill Store**: `local-agent spill-read <locator> --offset 0 --limit 100 --json`
 - **Fast Ripgrep Search**: `local-agent grep "pattern" src/*.py --json`
 - **LSP Code Navigation**: `local-agent lsp --operation symbols --file src/file.py --json`
+- **Interactive Chat with Mode Routing**: `local-agent chat "fix off-by-one" --json` (hybrid auto-router to chat/build/plan); `--mode chat|build|plan` to force.
 - **Install Skill**: `local-agent init-skill --write`
 """
 

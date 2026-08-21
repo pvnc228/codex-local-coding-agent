@@ -1,6 +1,6 @@
 """Bounded controller components for delegating small coding tasks."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 
 from .acp_server import (
@@ -31,6 +31,15 @@ from .doctor import (
 from .mcp_config import generate_mcp_config_dict, get_client_config_path, integrate_mcp_config
 from .mcp_server import build_server
 from .memory import LoadedModel, MemoryBudgetError, MemorySnapshot, ModelMemoryManager
+from .mode_router import (
+    DEFAULT_MODE_ROUTER_PROFILE,
+    MODES,
+    VALID_ROUTED,
+    ModeName,
+    build_mode_router,
+    classify_fast,
+    classify_mode,
+)
 from .monitor import MonitorServer
 from .lsp import (
     FallbackLspEngine,
@@ -178,6 +187,13 @@ __all__ = [
     "MemoryBudgetError",
     "MemorySnapshot",
     "ModelMemoryManager",
+    "ModeName",
+    "MODES",
+    "VALID_ROUTED",
+    "build_mode_router",
+    "DEFAULT_MODE_ROUTER_PROFILE",
+    "classify_fast",
+    "classify_mode",
     "ModelProfile",
     "OllamaClient",
     "OllamaError",

@@ -363,6 +363,54 @@ class RepositoryToolsTests(unittest.TestCase):
         self.assertTrue(tools.audit_events[0]["success"])
         self.assertFalse(tools.audit_events[1]["success"])
 
+    def test_blocked_tools_raise_policy_error_in_read_only_mode(self):
+        tools = BoundedRepositoryTools(
+            self.workspace, self.task, blocked_tools={"propose_patch", "run_tests"}
+        )
+
+        with self.assertRaisesRegex(ToolPolicyError, "blocked in read-only mode"):
+            tools.execute("propose_patch", {"patch": "diff"})
+        with self.assertRaisesRegex(ToolPolicyError, "blocked in read-only mode"):
+            tools.execute("run_tests", {"command": "exit 0"})
+
+        result = tools.execute("read_file", {"path": "src/allowed.py"})
+        self.assertEqual(result["path"], "src/allowed.py")
+
+    def test_blocked_tool_calls_are_recorded_as_audit_events(self):
+        tools = BoundedRepositoryTools(
+            self.workspace, self.task, blocked_tools={"propose_patch"}
+        )
+
+        with self.assertRaises(ToolPolicyError):
+            tools.execute("propose_patch", {"patch": "diff"})
+
+        event = tools.audit_events[-1]
+        self.assertEqual(event["name"], "propose_patch")
+        self.assertFalse(event["success"])
+        self.assertIn("blocked in read-only mode", event["error"])
+
+    def test_write_tools_still_work_without_blocked_tools(self):
+        patch = (
+            "diff --git a/src/allowed.py b/src/allowed.py\n"
+            "--- a/src/allowed.py\n"
+            "+++ b/src/allowed.py\n"
+            "@@ -1 +1 @@\n"
+            "-VALUE = 42\n"
+            "+VALUE = 43\n"
+        )
+        task = TaskEnvelope(
+            id="unblocked-write",
+            goal="проверить запись",
+            files=("src/allowed.py",),
+            checks=("exit 0",),
+        )
+        tools = BoundedRepositoryTools(self.workspace, task)
+
+        propose = tools.execute("propose_patch", {"patch": patch})
+        self.assertEqual(propose["files"], ["src/allowed.py"])
+        run = tools.execute("run_tests", {"command": "exit 0"})
+        self.assertTrue(run["passed"])
+
 
 if __name__ == "__main__":
     unittest.main()

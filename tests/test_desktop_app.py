@@ -135,6 +135,198 @@ def test_desktop_server_chat_api(monkeypatch):
             assert "thinking" in data
 
 
+def _post_chat(server: DesktopServer, payload: dict):
+    req = urllib.request.Request(
+        f"{server.url}/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=3.0) as resp:
+        assert resp.status == 200
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def test_desktop_chat_mode_chat_does_not_run_controller(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    calls = {"chat": 0}
+    controller_runs = []
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            calls["chat"] += 1
+            return {"message": {"content": "hello from fake"}}
+
+    class _FakeController:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, task, **k):
+            controller_runs.append(task)
+            return {"status": "accepted", "summary": "should not run", "patch": "", "checks": []}
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    monkeypatch.setattr("local_coding_agent.controller.Controller", _FakeController)
+    with DesktopServer() as server:
+        data = _post_chat(server, {"prompt": "hello there", "profile": "qwen2.5-coder", "mode": "chat"})
+    assert data["mode"] == "chat"
+    assert data["message"] == "hello from fake"
+    assert calls["chat"] == 1
+    assert controller_runs == []  # Controller must NOT run for chat mode
+
+
+def test_desktop_chat_mode_build_runs_controller(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    controller_runs = []
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            return {"message": {"content": "x"}}
+
+    class _FakeController:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, task, **k):
+            controller_runs.append(task)
+            return {"status": "accepted", "summary": "built", "patch": "diff", "checks": []}
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    monkeypatch.setattr("local_coding_agent.controller.Controller", _FakeController)
+    with DesktopServer() as server:
+        data = _post_chat(server, {"prompt": "fix the bug", "profile": "qwen2.5-coder", "mode": "build"})
+    assert data["mode"] == "build"
+    assert len(controller_runs) == 1
+
+
+def test_desktop_chat_mode_plan_returns_plan_artifact(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    ctor_kwargs = []
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            return {"message": {"content": "x"}}
+
+    class _FakeController:
+        def __init__(self, *a, **k):
+            ctor_kwargs.append(k)
+
+        def run(self, task, **k):
+            return {
+                "status": "candidate",
+                "summary": "refactor steps",
+                "patch": "",
+                "checks": [],
+                "risks": [{"kind": "k", "message": "risk1"}],
+            }
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    monkeypatch.setattr("local_coding_agent.controller.Controller", _FakeController)
+    with DesktopServer() as server:
+        data = _post_chat(server, {
+            "prompt": "plan the refactor", "profile": "qwen2.5-coder", "mode": "plan",
+            "files": ["a.py"],
+        })
+    assert data["mode"] == "plan"
+    # Read-only guarantee must be enforced at the tool-policy layer.
+    assert ctor_kwargs and ctor_kwargs[0]["blocked_tools"] == {"propose_patch", "run_tests"}
+    plan = data["plan"]
+    assert set(plan) >= {"goal", "steps", "risks", "files_to_modify"}
+    assert plan["goal"] == "plan the refactor"
+    assert plan["risks"] == ["risk1"]
+    assert plan["files_to_modify"] == ["a.py"]
+
+
+def test_desktop_chat_mode_hybrid_resolves(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            return {"message": {"content": "x"}}
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    with DesktopServer() as server:
+        # no mode -> hybrid -> classifier resolves to a concrete mode
+        data = _post_chat(server, {"prompt": "hello there", "profile": "qwen2.5-coder"})
+    assert data["mode"] in {"chat", "build", "plan"}
+    assert data["mode"] != "hybrid"
+
+
+def test_desktop_chat_invalid_mode_falls_back_to_hybrid(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            return {"message": {"content": "x"}}
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    with DesktopServer() as server:
+        data = _post_chat(server, {"prompt": "hello there", "profile": "qwen2.5-coder", "mode": "bogus"})
+    assert data["mode"] in {"chat", "build", "plan"}
+    assert data["mode"] != "hybrid"
+
+
+def test_desktop_chat_hybrid_uses_small_model_router(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    controller_runs = []
+    router_calls = []
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            return {"message": {"content": "x"}}
+
+    class _FakeController:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, task, **k):
+            controller_runs.append(task)
+            return {"status": "accepted", "summary": "built", "patch": "diff", "checks": []}
+
+    def fake_build_router(*args, **kwargs):
+        # Must be called with NO positional profile — the small default profile.
+        assert args == ()
+        router_calls.append(None)
+
+        def fake_router(recent_prompts=None):
+            return "chat"
+
+        return fake_router
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    monkeypatch.setattr("local_coding_agent.controller.Controller", _FakeController)
+    monkeypatch.setattr("local_coding_agent.mode_router.build_mode_router", fake_build_router)
+    with DesktopServer() as server:
+        data = _post_chat(server, {"prompt": "hello there", "profile": "qwen2.5-coder"})
+    assert data["mode"] == "chat"  # router wins over heuristic
+    assert data["message"] == "x"
+    assert len(router_calls) == 1
+    assert controller_runs == []  # Controller must NOT run for chat
+
+
+def test_desktop_chat_hybrid_router_build_failure_falls_back(monkeypatch):
+    import local_coding_agent.desktop.server._handlers as h
+
+    class _FakeClient:
+        def chat(self, *a, **k):
+            return {"message": {"content": "x"}}
+
+    def broken_build_router(profile_name, *, client=None):
+        raise RuntimeError("no router model available")
+
+    monkeypatch.setattr(h, "build_client", lambda profile: _FakeClient())
+    monkeypatch.setattr("local_coding_agent.mode_router.build_mode_router", broken_build_router)
+    with DesktopServer() as server:
+        data = _post_chat(server, {"prompt": "hello there", "profile": "qwen2.5-coder"})
+    assert data["status"] == "completed"
+    assert data["mode"] in {"chat", "build", "plan"}
+    assert data["mode"] != "hybrid"
+
+
 def test_desktop_server_rollback_api(tmp_path):
     with DesktopServer(workspace=tmp_path) as server:
         req = urllib.request.Request(

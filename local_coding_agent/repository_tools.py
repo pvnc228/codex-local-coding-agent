@@ -136,6 +136,7 @@ class BoundedRepositoryTools:
 
         test_timeout_seconds: float = 60,
         cancel_event: Event | None = None,
+        blocked_tools: set[str] | None = None,
     ) -> None:
         if max_tool_result_bytes <= 0:
             raise ValueError("max_tool_result_bytes must be positive")
@@ -156,6 +157,7 @@ class BoundedRepositoryTools:
         self.max_patch_files = max_patch_files
         self.test_timeout_seconds = test_timeout_seconds
         self.cancel_event = cancel_event
+        self.blocked_tools = set(blocked_tools or ())
         self._allowlist = {self._normalize_declared_path(path) for path in task.files}
         if len(self._allowlist) > max_files:
             raise ToolPolicyError(f"task exceeds max_files={max_files}")
@@ -166,6 +168,9 @@ class BoundedRepositoryTools:
         return tuple(dict(event) for event in self._audit_events)
 
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name in self.blocked_tools:
+            self._record(name, arguments, False, f"tool '{name}' is blocked in read-only mode")
+            raise ToolPolicyError(f"tool '{name}' is blocked in read-only mode")
         if name not in {"list_files", "read_file", "search_text", "propose_patch", "run_tests"}:
             self._record(name, arguments, False, "unknown tool")
             raise ToolPolicyError(f"unknown tool: {name}")

@@ -938,6 +938,68 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaises(ToolPolicyError):
                 tools.execute("apply_patch", {"patch": "x"})
 
+    def test_controller_blocks_propose_patch_in_read_only_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / "src").mkdir()
+            (workspace / "src" / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+            task = TaskEnvelope(
+                id="readonly-block",
+                goal="изменить значение",
+                files=("src/value.py",),
+            )
+            patch = (
+                "diff --git a/src/value.py b/src/value.py\n"
+                "--- a/src/value.py\n"
+                "+++ b/src/value.py\n"
+                "@@ -1 +1 @@\n"
+                "-VALUE = 1\n"
+                "+VALUE = 2\n"
+            )
+            model = FakeModel(
+                [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "propose_patch",
+                                        "arguments": {"patch": patch},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "candidate",
+                                    "summary": "изменено значение",
+                                    "checks": [],
+                                    "risks": [],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    },
+                ]
+            )
+
+            result = Controller(model, workspace, blocked_tools={"propose_patch", "run_tests"}).run(task)
+
+        # The propose_patch tool call was blocked: no patch may be produced.
+        self.assertNotIn("VALUE = 2", result.get("patch") or "")
+        self.assertTrue(
+            any(e.get("event") == "tool_policy_error" for e in result["audit"])
+        )
+        policy_error = next(
+            e for e in result["audit"] if e.get("event") == "tool_policy_error"
+        )
+        self.assertIn("blocked in read-only mode", policy_error["error"])
+
     def test_retry_budget_rejects_above_hard_cap(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)

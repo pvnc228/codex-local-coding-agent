@@ -261,7 +261,15 @@ def build_parser() -> argparse.ArgumentParser:
     acp_p.add_argument("--profile", default="qwen2.5-1.5b", help="Default model profile")
     acp_p.add_argument("--framing", choices=["auto", "jsonl", "content-length"], default="auto", help="Framing mode")
 
-    # 22. scan-models
+    # 22. chat (R23 mode feature CLI parity)
+    chat_p = subparsers.add_parser("chat", help="Single-shot interactive mode classification + response")
+    chat_p.add_argument("prompt", nargs="?", default="", help="The user message")
+    chat_p.add_argument("--mode", choices=["chat", "build", "plan", "hybrid"], default="hybrid", help="Operational mode (default: hybrid auto-classifies)")
+    chat_p.add_argument("--profile", choices=list_profiles(), default="qwen2.5-1.5b", help="Model profile to use")
+    chat_p.add_argument("--workspace", type=Path, default=Path.cwd(), help="Workspace directory")
+    chat_p.add_argument("--json", action="store_true", help="Output result in JSON format")
+
+    # 23. scan-models
     scan_p = subparsers.add_parser("scan-models", help="Discover and index local GGUF models across drives")
     scan_p.add_argument("--deep", action="store_true", help="Perform deep filesystem scan across all system drives")
     scan_p.add_argument("--drives", help="Comma-separated drive letters to target (e.g. C,D,Q)")

@@ -242,6 +242,23 @@ local-agent lsp --operation symbols --file src/service.py --json
 local-agent lsp --operation definition --file src/app.py --line 42 --char 15 --json
 ```
 
+### Interactive Chat with Mode Routing (R31):
+```bash
+# Single-shot classified chat. Mode defaults to hybrid (auto-router to chat/build/plan):
+local-agent chat "fix off-by-one in sliding window" --json
+# Force a specific mode:
+local-agent chat "refactor calculate_total to integer cents" --mode build --json
+local-agent chat "explain what main.py does" --mode chat --json
+local-agent chat "plan the migration to the new API" --mode plan --json
+```
+The hybrid mode routes each prompt to `chat` (plain completion), `build` (Controller
+tool-loop → patch + external test evidence), or `plan` (read-only exploration →
+`PlanArtifact` with goal/steps/risks/files_to_modify). A small local model
+(`qwen2.5-1.5b` or `ling-3.0-tiny-q6k`) is consulted in an isolated context every
+N requests to auto-select the mode; on failure it falls back to deterministic
+heuristics. The desktop harness (`local-agent desktop`) exposes the same four
+modes via the Chat/Build/Plan/Auto selector.
+
 ### Install / Export Agent Skill:
 ```bash
 local-agent init-skill --write

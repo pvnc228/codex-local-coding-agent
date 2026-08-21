@@ -16,6 +16,23 @@ DESKTOP_CLIENT_JS = """
     let SESSIONS = [];
     let activeSession = null;
     let activeProfile = 'qwen2.5-coder';
+    let SELECTED_MODE = 'hybrid';
+
+    function setMode(mode, btn) {
+      SELECTED_MODE = mode;
+      document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.remove('bg-[var(--bg-card)]', 'text-[var(--text-main)]', 'shadow-sm', 'border', 'border-[var(--border-main)]');
+        b.classList.add('text-[var(--text-muted)]');
+      });
+      if (btn) {
+        btn.classList.add('bg-[var(--bg-card)]', 'text-[var(--text-main)]', 'shadow-sm', 'border', 'border-[var(--border-main)]');
+        btn.classList.remove('text-[var(--text-muted)]');
+      }
+      const badge = document.getElementById('modeBadge');
+      if (badge) badge.textContent = `Mode: ${mode === 'hybrid' ? 'auto' : mode}`;
+      const welcomeBadge = document.getElementById('welcomeModeLabel');
+      if (welcomeBadge) welcomeBadge.textContent = `Mode: ${mode === 'hybrid' ? 'auto' : mode}`;
+    }
 
     function openModal(modalId) {
       closeModals();
@@ -729,7 +746,7 @@ DESKTOP_CLIENT_JS = """
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: val, profile: activeProfile })
+          body: JSON.stringify({ prompt: val, profile: activeProfile, mode: SELECTED_MODE })
         });
         const data = await res.json();
         
@@ -842,6 +859,32 @@ DESKTOP_CLIENT_JS = """
       const aiDiv = document.createElement('div');
       aiDiv.className = 'flex items-start gap-2.5 max-w-2xl';
 
+      // Reflect the resolved mode in the badges
+      if (data.mode) {
+        const modeLabel = data.mode === 'hybrid' ? 'auto' : data.mode;
+        const badge = document.getElementById('modeBadge');
+        if (badge) badge.textContent = `Mode: ${modeLabel}`;
+        const welcomeBadge = document.getElementById('welcomeModeLabel');
+        if (welcomeBadge) welcomeBadge.textContent = `Mode: ${modeLabel}`;
+      }
+
+      let planCardHtml = '';
+      if (data.plan) {
+        const p = data.plan;
+        const steps = (p.steps || []).map((s, i) => `<li class="flex items-start gap-1.5"><span class="w-4 h-4 shrink-0 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-500 font-mono text-[9px] flex items-center justify-center font-semibold mt-0.5">${i + 1}</span><span class="text-zinc-300">${escapeHtml(s)}</span></li>`).join('');
+        const risks = (p.risks || []).map(r => `<li class="text-zinc-400">• ${escapeHtml(r)}</li>`).join('');
+        const files = (p.files_to_modify || []).map(f => `<span class="px-1.5 py-0.5 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] font-mono text-[10px] text-cyan-300">${escapeHtml(f)}</span>`).join('');
+        planCardHtml = `
+          <div class="rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-3 text-xs space-y-2.5">
+            <div class="flex items-center gap-1.5 text-cyan-400 font-semibold text-[11px]"><i data-lucide="route" class="w-3 h-3"></i> Execution Plan</div>
+            ${p.goal ? `<div class="text-[var(--text-main)]"><span class="text-zinc-500 font-mono text-[10px]">GOAL: </span>${escapeHtml(p.goal)}</div>` : ''}
+            ${steps ? `<div class="space-y-1"><div class="text-zinc-500 font-mono text-[10px]">STEPS</div><ol class="space-y-1">${steps}</ol></div>` : ''}
+            ${risks ? `<div class="space-y-0.5"><div class="text-zinc-500 font-mono text-[10px]">RISKS</div><ul class="space-y-0.5">${risks}</ul></div>` : ''}
+            ${files ? `<div class="space-y-1"><div class="text-zinc-500 font-mono text-[10px]">FILES TO MODIFY</div><div class="flex flex-wrap gap-1">${files}</div></div>` : ''}
+          </div>
+        `;
+      }
+
       let testCardHtml = '';
       if (data.checks && data.checks.length > 0 && data.testResult && data.testResult !== 'READY') {
         const isPass = data.testResult === 'PASSED' || data.testResult === 'ALL CHECKS GREEN';
@@ -879,6 +922,7 @@ DESKTOP_CLIENT_JS = """
             </div>
           ` : ''}
           ${testCardHtml}
+          ${planCardHtml}
           ${diffBadgeHtml}
           <div class="p-3.5 rounded-lg bg-[var(--bg-card)] border border-[var(--border-main)] text-xs text-[var(--text-main)] leading-relaxed space-y-2">
             ${formatMarkdown(data.message || '')}
@@ -896,6 +940,7 @@ DESKTOP_CLIENT_JS = """
     }
 
     // Startup
+    setMode(SELECTED_MODE, document.getElementById('mode-btn-hybrid'));
     loadSessions();
     fetchAndPopulateModels();
     pollStatus();

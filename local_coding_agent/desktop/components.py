@@ -101,7 +101,7 @@ def render_sidebar() -> str:
 
       <div class="p-2 border-t border-[var(--border-main)] text-[10px] font-mono text-zinc-500 flex items-center justify-between">
         <span id="sessionCounter">0 Sessions</span>
-        <span>Harness v0.7.0</span>
+        <span>Harness v0.8.0</span>
       </div>
     </aside>
 """
@@ -131,6 +131,7 @@ def render_chat_panel() -> str:
                 <div class="flex items-center gap-2 pt-1">
                   <span class="text-[10px] font-mono text-zinc-500">Active Engine:</span>
                   <span class="px-1.5 py-0.2 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] font-mono text-cyan-400 text-[10px]" id="welcomeModelLabel">qwen2.5-coder</span>
+                  <span class="px-1.5 py-0.2 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] font-mono text-cyan-400 text-[10px]" id="welcomeModeLabel">Mode: auto</span>
                   <button onclick="openModal('modelModal')" class="text-[10px] text-cyan-500 hover:underline">Change Model</button>
                 </div>
               </div>
@@ -154,6 +155,17 @@ def render_chat_panel() -> str:
 
         <!-- Input Bar -->
         <div class="p-3 bg-[var(--bg-app)] border-t border-[var(--border-main)]">
+          <!-- Mode Selector -->
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-zinc-500 text-[10px] font-mono shrink-0">Mode:</span>
+            <div class="inline-flex items-center p-0.5 bg-[var(--bg-card-subtle)] border border-[var(--border-main)] rounded-md font-sans">
+              <button onclick="setMode('chat', this)" id="mode-btn-chat" class="mode-btn px-2 py-0.5 text-[10px] font-medium rounded transition text-[var(--text-muted)] hover:text-[var(--text-main)]">Chat</button>
+              <button onclick="setMode('build', this)" id="mode-btn-build" class="mode-btn px-2 py-0.5 text-[10px] font-medium rounded transition text-[var(--text-muted)] hover:text-[var(--text-main)]">Build</button>
+              <button onclick="setMode('plan', this)" id="mode-btn-plan" class="mode-btn px-2 py-0.5 text-[10px] font-medium rounded transition text-[var(--text-muted)] hover:text-[var(--text-main)]">Plan</button>
+              <button onclick="setMode('hybrid', this)" id="mode-btn-hybrid" class="mode-btn px-2 py-0.5 text-[10px] font-medium rounded transition text-[var(--text-muted)] hover:text-[var(--text-main)]">Auto</button>
+            </div>
+            <span class="px-1.5 py-0.2 rounded bg-[var(--bg-card-subtle)] border border-[var(--border-main)] font-mono text-[10px] text-cyan-400" id="modeBadge">Mode: auto</span>
+          </div>
           <div class="relative flex items-center bg-[var(--bg-input)] border border-[var(--border-main)] rounded-lg focus-within:border-cyan-500 focus-within:ring-1 focus-within:ring-cyan-500/20 transition shadow-inner">
             <input id="chatInput" type="text" placeholder="Instruct local model to fix, refactor, or test (Enter to send)..." class="w-full bg-transparent px-3 py-2 text-xs text-[var(--text-main)] placeholder-zinc-500 outline-none" onkeydown="if(event.key==='Enter') handleUserSubmit()">
             <button onclick="handleUserSubmit()" id="btnSendChat" class="mr-1.5 px-2.5 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-zinc-950 font-semibold text-xs transition flex items-center justify-center">
@@ -478,7 +490,7 @@ def render_modals() -> str:
         <div class="p-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-main)] space-y-1 font-mono text-[10px] text-zinc-400">
           <div class="text-[11px] font-semibold text-[var(--text-main)] font-sans mb-1">Workspace Environment</div>
           <div>Path: <span class="text-zinc-300" id="setWorkspacePath">.</span></div>
-          <div>Harness Core: <span class="text-emerald-400">v0.7.0 (R23 Desktop)</span></div>
+          <div>Harness Core: <span class="text-emerald-400">v0.8.0 (R23 Desktop)</span></div>
         </div>
       </div>
 

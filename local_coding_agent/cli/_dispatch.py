@@ -17,6 +17,7 @@ from ._handlers import (
 )
 from ._handlers2 import (
     _handle_benchmark,
+    _handle_chat,
     _handle_desktop,
     _handle_doctor,
     _handle_init_mcp,
@@ -250,6 +251,7 @@ _HANDLERS = {
     "ui": _handle_monitor,
     "app": _handle_monitor,
     "desktop": _handle_desktop,
+    "chat": _handle_chat,
     "scan-models": _handle_scan_models,
     "benchmark": _handle_benchmark,
     "skeletonize": _handle_skeletonize,

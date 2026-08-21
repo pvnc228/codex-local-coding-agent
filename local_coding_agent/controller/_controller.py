@@ -48,6 +48,7 @@ class Controller:
         preflight_budget: TaskBudget = TaskBudget(),
         cancel_event: Event | None = None,
         system_contract: str | None = None,
+        blocked_tools: set[str] | None = None,
     ) -> None:
         if max_turns <= 0 or max_same_call <= 0 or max_retries < 0:
             raise ValueError("controller limits are invalid")
@@ -68,6 +69,7 @@ class Controller:
         self.preflight_budget = preflight_budget
         self.cancel_event = cancel_event
         self.system_contract = system_contract or SYSTEM_CONTRACT
+        self.blocked_tools = set(blocked_tools or ())
 
     def run(
         self,
@@ -106,6 +108,7 @@ class Controller:
                 max_patch_bytes=self.max_patch_bytes,
                 max_patch_files=self.max_patch_files,
                 cancel_event=active_cancel,
+                blocked_tools=self.blocked_tools,
             )
             seen_calls: dict[str, int] = {}
             observed_checks: dict[str, dict[str, Any]] = {}
@@ -710,15 +713,24 @@ class Controller:
             return None
         return {"function": {"name": name, "arguments": arguments}}
 
-    @staticmethod
-    def _tools_for_task(task: TaskEnvelope) -> list[dict[str, Any]]:
+    def _tools_for_task(self, task: TaskEnvelope) -> list[dict[str, Any]]:
         if task.checks:
-            return TOOL_DEFINITIONS
-        return [
-            definition
-            for definition in TOOL_DEFINITIONS
-            if definition["function"]["name"] != "run_tests"
-        ]
+            candidates = TOOL_DEFINITIONS
+        else:
+            candidates = [
+                definition
+                for definition in TOOL_DEFINITIONS
+                if definition["function"]["name"] != "run_tests"
+            ]
+        # Don't advertise tools that read-only/plan mode blocks — saves the model
+        # from wasting turns on calls that are guaranteed to raise ToolPolicyError.
+        if self.blocked_tools:
+            candidates = [
+                definition
+                for definition in candidates
+                if definition["function"]["name"] not in self.blocked_tools
+            ]
+        return candidates
 
     @staticmethod
     def _parse_final_result(content: Any) -> dict[str, Any]:

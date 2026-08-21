@@ -39,6 +39,9 @@ class DesktopServer:
         self.last_applied_files: list[str] = []
         self.last_applied_patch: str = ""
         self.apply_lock = threading.Lock()
+        # ponytail: monotonically-increasing counter drives the hybrid classifier's
+        # periodic re-evaluation cadence (classify_mode counter % n_every == 0).
+        self.hybrid_counter = 0
         self.sessions_file = Path(self.workspace) / ".local_agent_sessions.json"
         self._httpd = ThreadingHTTPServer((host, port), DesktopRequestHandler)
         self._httpd.desktop_server = self  # type: ignore[attr-defined]

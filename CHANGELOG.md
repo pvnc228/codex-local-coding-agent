@@ -44,6 +44,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-08-22
+
+### 🚀 Headline Features
+- **Four Interaction Modes (chat / build / plan / hybrid) (R31)**:
+  - `local_coding_agent.mode_router`: deterministic classifier (`classify_fast`) plus hybrid router (`classify_mode`) that consults a small local model in an isolated context every N requests, falling back to deterministic heuristics on failure or uncertainty.
+  - Desktop harness (`local-agent desktop`) gains a Chat / Build / Plan / Auto selector: `chat` → plain completion, `build` → Controller tool-loop (patch + external test evidence), `plan` → read-only exploration producing a `PlanArtifact` (goal/steps/risks/files_to_modify), `hybrid` → auto-routing across the three.
+  - New CLI subcommand `local-agent chat "<prompt>" [--mode chat|build|plan|hybrid] [--json]` for full CLI parity.
+  - `build_mode_router` factory wires a real small-model classifier (`qwen2.5-1.5b` / `ling-3.0-tiny-q6k`) into the hybrid path across desktop and CLI.
+
+### 🔬 Real-World Dogfooding & Field Insights (Agent Field Report)
+- **Small-model mode routing is cheap and reliable**: a 1.5B model returns a single `chat|build|plan` token with near-zero latency, so periodic re-classification (every 3 requests) adds negligible overhead while keeping deterministic fallback for hard or ambiguous prompts.
+- **Isolated context is the key**: the router sees only the recent user prompts (no workspace or task context), which prevents the small model from "helping" and keeps classification fast and scoped.
+
+---
+
 ## [0.7.0] - 2026-08-19
 
 ### 🚀 Headline Features

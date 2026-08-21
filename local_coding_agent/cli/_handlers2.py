@@ -12,10 +12,192 @@ from ..benchmark import run_benchmark, write_artifact
 from ..doctor import diagnose_environment
 from ..mcp_config import integrate_mcp_config
 from ..memory import ModelMemoryManager
+from ..mode_router import build_mode_router, classify_mode
 from ..ollama_adapter import OllamaError, build_client
 from ..profiles import get_profile
 from ..skill_config import integrate_skill_config
 from ..smoke import run_smoke_test
+from ..task import TaskEnvelope
+
+_SOURCE_EXTS = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".rb",
+    ".php", ".c", ".cpp", ".h", ".hpp", ".cs", ".sh", ".kt", ".swift",
+}
+_SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+
+
+def _detect_relevant_files(workspace: Path, prompt: str) -> list[str]:
+    """Mirror desktop auto-detection: bounded scan for source files to allowlist.
+
+    Returns relative POSIX paths (as accepted by TaskEnvelope) for source files
+    whose basename appears in the prompt; falls back to the first few source
+    files if none match. Never recurses into build/vendor/cache dirs.
+    """
+    source_files: list[Path] = []
+    for p in workspace.rglob("*"):
+        if not p.is_file():
+            continue
+        parts = p.relative_to(workspace).parts
+        if any(part in _SKIP_DIRS or part.startswith(".") for part in parts):
+            continue
+        if p.suffix.lower() in _SOURCE_EXTS:
+            source_files.append(p)
+    source_files.sort()
+    # ponytail: bounded scan, 200 files is plenty for an isolated-context allowlist.
+    source_files = source_files[:200]
+
+    matched = [
+        str(p.relative_to(workspace).as_posix())
+        for p in source_files
+        if p.name in prompt or p.stem in prompt
+    ]
+    # ponytail: cap at max_files=5 so BoundedRepositoryTools never rejects a
+    # prompt that names more files than the allowlist permits.
+    if matched:
+        return matched[:5]
+    return [str(p.relative_to(workspace).as_posix()) for p in source_files[:5]]
+
+
+def _detect_test_checks(workspace: Path) -> list[str]:
+    if (workspace / "tests").is_dir():
+        return ["pytest tests/"]
+    if (workspace / "test").is_dir():
+        return ["pytest test/"]
+    for p in workspace.rglob("test_*.py"):
+        if not p.is_file():
+            continue
+        if any(part in _SKIP_DIRS or part.startswith(".") for part in p.relative_to(workspace).parts):
+            continue
+        return [f"pytest {p.relative_to(workspace).as_posix()}"]
+    return []
+
+
+def _detect_files_or_raise(workspace: Path, prompt: str) -> list[str]:
+    files = _detect_relevant_files(workspace, prompt)
+    if files:
+        return files
+    raise ValueError(
+        "no source files detected in workspace; specify a workspace containing source files"
+    )
+
+
+def _handle_chat(args: argparse.Namespace) -> int:
+    if not args.prompt or not args.prompt.strip():
+        if getattr(args, "json", False):
+            print(json.dumps({"status": "failed", "message": "prompt is required"}, ensure_ascii=False, indent=2))
+        else:
+            print("Error: prompt is required", file=sys.stderr)
+        return 1
+
+    if args.mode == "hybrid":
+        try:
+            # ponytail: router uses the small default profile, not the main one.
+            router = build_mode_router()
+            mode = classify_mode(
+                args.prompt,
+                router=router,
+                counter=0,
+                recent_prompts=[args.prompt],
+            )
+        except Exception:
+            mode = classify_mode(args.prompt, router=None)
+    else:
+        mode = args.mode
+
+    try:
+        from ..controller import Controller
+
+        if mode == "plan":
+            # Read-only Controller path mirrors desktop: real allowlisted files,
+            # mutation tools blocked, output shaped like PlanArtifact.to_dict().
+            profile = get_profile(args.profile)
+            client = build_client(profile)
+            workspace = Path(args.workspace)
+            files = _detect_files_or_raise(workspace, args.prompt)
+            checks = _detect_test_checks(workspace)
+            task = TaskEnvelope(
+                id="chat-plan",
+                goal=args.prompt,
+                files=tuple(files),
+                checks=tuple(checks),
+            )
+            run = Controller(
+                client,
+                args.workspace,
+                max_turns=4,
+                blocked_tools={"propose_patch", "run_tests"},
+            ).run(task)
+            summary = run.get("summary") or ""
+            risks = run.get("risks") or []
+            files_to_modify = list(files)
+            plan = {
+                "goal": args.prompt,
+                "steps": [summary] if summary else [],
+                "risks": [
+                    str(r.get("message", "")) if isinstance(r, dict) else str(r)
+                    for r in risks
+                ],
+                "files_to_modify": [str(f) for f in files_to_modify],
+            }
+            result = {
+                "status": "completed" if run.get("status") == "accepted" else "failed",
+                "mode": mode,
+                "message": summary or f"Plan generated for '{args.prompt}'.",
+                "patch": "",
+                "plan": plan,
+                "checks": run.get("checks") or [],
+            }
+        elif mode == "chat":
+            client = build_client(get_profile(args.profile))
+            resp = client.chat([
+                {"role": "system", "content": "You are a concise local coding assistant."},
+                {"role": "user", "content": args.prompt},
+            ])
+            reply = (resp.get("message") or {}).get("content") or ""
+            result = {
+                "status": "completed",
+                "mode": mode,
+                "message": reply,
+                "patch": "",
+                "plan": None,
+                "checks": [],
+            }
+        else:  # build
+            profile = get_profile(args.profile)
+            client = build_client(profile)
+            workspace = Path(args.workspace)
+            files = _detect_files_or_raise(workspace, args.prompt)
+            checks = _detect_test_checks(workspace)
+            task = TaskEnvelope(
+                id="chat-build",
+                goal=args.prompt,
+                files=tuple(files),
+                checks=tuple(checks),
+            )
+            run = Controller(client, args.workspace, max_turns=4).run(task)
+            result = {
+                "status": "completed" if run.get("status") == "accepted" else "failed",
+                "mode": mode,
+                "message": run.get("summary") or "",
+                "patch": run.get("patch") or "",
+                "plan": None,
+                "checks": run.get("checks") or [],
+            }
+    except Exception as error:
+        if getattr(args, "json", False):
+            print(json.dumps({"status": "failed", "mode": mode, "message": str(error), "patch": "", "plan": None, "checks": []}, ensure_ascii=False, indent=2))
+        else:
+            print(f"Error: {error}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"[{mode.upper()}]")
+        print(result.get("message") or "(no response)")
+        if result.get("plan"):
+            print(json.dumps(result["plan"], ensure_ascii=False, indent=2))
+    return 0 if result["status"] == "completed" else 1
 
 
 def _handle_skill(args: argparse.Namespace) -> int:
